@@ -1,8 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 
-export default async function Page({ params }: any) {
-  console.log("🔥 REPORT PAGE EXECUTED", params?.id)
-
+export default async function Page({ params }: { params: { id: string } }) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -14,12 +12,18 @@ export default async function Page({ params }: any) {
     .eq("id", params.id)
     .single()
 
-  console.log("DATA:", data)
-  console.log("ERROR:", error)
+  if (error) {
+    console.error("SUPABASE ERROR:", error)
+    return <div>Erreur chargement</div>
+  }
 
-  if (!data) return <div>Not found</div>
+  if (!data || !data.pdf_url) {
+    return <div>Report introuvable</div>
+  }
 
   return (
     <iframe src={data.pdf_url} width="100%" height="800px" />
   )
-}
+}git add .
+git commit -m "fix final crash"
+git push
