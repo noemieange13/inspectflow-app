@@ -1,7 +1,7 @@
-export default function Page({ params }: { params: { id: string } }) {
+export default function Page({ params }: any) {
   return (
     <div>
-      Report ID: {params.id}
+      Report ID: {params?.id}
     </div>
   );
 }
