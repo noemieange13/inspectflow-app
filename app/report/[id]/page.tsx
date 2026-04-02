@@ -2,7 +2,6 @@ import { supabaseServer } from "@/lib/supabaseServer"
 
 export default async function Page({ params }: { params: { id: string } }) {
   const supabase = supabaseServer()
-
   const id = params.id.trim()
 
   const { data, error } = await supabase
