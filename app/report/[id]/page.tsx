@@ -1,28 +1,42 @@
 import { createClient } from "@supabase/supabase-js"
 
-export default async function Page({ params }: { params: { id: string } }) {
-  const id = params.id
+export default async function Page({ params }: any) {
+  try {
+    const id = params?.id
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+    if (!id) {
+      return <div>Report introuvable</div>
+    }
 
-  const { data, error } = await supabase
-    .from("reports")
-    .select("pdf_url")
-    .eq("id", id)
-    .maybeSingle()
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-  if (error) {
-    return <div>Erreur chargement</div>
+    if (!url || !key) {
+      return <div>Config serveur manquante</div>
+    }
+
+    const supabase = createClient(url, key)
+
+    const res = await supabase
+      .from("reports")
+      .select("pdf_url")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (res.error) {
+      return <div>Erreur base de données</div>
+    }
+
+    const pdfUrl = res.data?.pdf_url
+
+    if (!pdfUrl) {
+      return <div>Report introuvable</div>
+    }
+
+    return (
+      <iframe src={pdfUrl} width="100%" height="800px" />
+    )
+  } catch (e) {
+    return <div>Erreur serveur</div>
   }
-
-  if (!data?.pdf_url) {
-    return <div>Report introuvable</div>
-  }
-
-  return (
-    <iframe src={data.pdf_url} width="100%" height="800px" />
-  )
 }
