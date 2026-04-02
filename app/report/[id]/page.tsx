@@ -21,9 +21,7 @@ export default async function Page({
 
   const { data, error } = await supabase
     .from('reports')
-    .select(
-      'id, pdf_url, access_token, token_expires_at'
-    )
+    .select('id, pdf_url, access_token, token_expires_at')
     .eq('id', cleanId)
     .maybeSingle();
 
