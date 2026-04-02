@@ -1,57 +1,39 @@
-import { createServerClient } from '@/lib/supabaseServer';
+import { createServerClient } from "@/lib/supabaseServer";
 
-export default async function Page({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ token?: string | string[] }>;
-}) {
-  const { id } = await params;
-  const sp = await searchParams;
-
-  const token = Array.isArray(sp.token) ? sp.token[0] : sp.token;
-  const cleanId = id?.trim();
-
-  if (!cleanId || !token) {
-    return <div>Accès invalide</div>;
-  }
-
+export default async function Page() {
   const supabase = await createServerClient();
 
   const { data, error } = await supabase
-    .from('reports')
-    .select('id, pdf_url, access_token, token_expires_at')
-    .eq('id', cleanId)
-    .maybeSingle();
+    .from("reports")
+    .select("id, created_at, access_token")
+    .order("created_at", { ascending: false });
 
   if (error) {
-    console.error(error);
+    console.error("SUPABASE ERROR:", error);
     return <div>Erreur serveur</div>;
   }
 
-  if (!data || data.access_token !== token) {
-    return <div>Accès refusé</div>;
-  }
-
-  if (!data.pdf_url) {
-    return <div>PDF indisponible</div>;
-  }
-
-  let finalUrl = data.pdf_url;
-
-  if (!data.pdf_url.startsWith('http')) {
-    const { data: signed } = await supabase
-      .storage
-      .from('rapports-pdf')
-      .createSignedUrl(data.pdf_url, 3600);
-
-    finalUrl = signed?.signedUrl || '';
+  if (!data || data.length === 0) {
+    return <div>Aucun rapport trouvé</div>;
   }
 
   return (
-    <div className="w-full h-screen">
-      <iframe src={finalUrl} className="w-full h-full" />
+    <div className="p-4 space-y-4">
+      <h1 className="text-xl font-bold">Liste des rapports</h1>
+      <ul className="space-y-2">
+        {data.map((report) => (
+          <li key={report.id}>
+            <a
+              href={`/report/${report.id}?token=${report.access_token}`}
+              className="text-blue-600 underline"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Rapport du {new Date(report.created_at).toLocaleString()}
+            </a>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
