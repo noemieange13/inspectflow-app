@@ -1,15 +1,7 @@
-import { createClient } from "@supabase/supabase-js"
+import { supabaseServer } from "@/lib/supabaseServer"
 
 export default async function Page({ params }: { params: { id: string } }) {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
-    {
-      auth: {
-        persistSession: false
-      }
-    }
-  )
+  const supabase = supabaseServer()
 
   const id = params.id.trim()
 
@@ -20,6 +12,7 @@ export default async function Page({ params }: { params: { id: string } }) {
     .maybeSingle()
 
   if (error) {
+    console.error("Supabase error:", error)
     return <div>Erreur serveur</div>
   }
 
