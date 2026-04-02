@@ -1,24 +1,49 @@
 import { createClient } from "@supabase/supabase-js"
 import { redirect } from "next/navigation"
 
-export default async function Page({ params }: { params: { id: string } }) {
+export default async function Page({ params }: any) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const cleanId = String(params.id).trim()
+  // ✅ SAFE extraction (Next.js peut donner Promise)
+  const resolvedParams = await params
+  const id = String(resolvedParams?.id || "").trim()
 
-  const { data } = await supabase
-    .from("reports")
-    .select("pdf_url")
-    .eq("id", cleanId)
-    .maybeSingle()
-
-  if (!data?.pdf_url) {
-    return <div>Report introuvable</div>
+  // 🚨 sécurité
+  if (!id) {
+    return <div>ID manquant</div>
   }
 
-  // ✅ REDIRECTION DIRECTE vers le PDF
-  redirect(data.pdf_url)
+  // ✅ requête fiable
+  const { data, error } = await supabase
+    .from("reports")
+    .select("pdf_url")
+    .eq("id", id)
+    .limit(1)
+
+  const pdfUrl = data?.[0]?.pdf_url
+
+  if (error) {
+    return <pre>{JSON.stringify(error, null, 2)}</pre>
+  }
+
+  if (!pdfUrl) {
+    return (
+      <pre>
+        {JSON.stringify(
+          {
+            id_received: id,
+            found: data,
+          },
+          null,
+          2
+        )}
+      </pre>
+    )
+  }
+
+  // ✅ solution stable (pas iframe)
+  redirect(pdfUrl)
 }
