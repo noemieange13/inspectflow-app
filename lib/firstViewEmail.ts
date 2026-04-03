@@ -1,17 +1,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 
+import { sendReportOpenedWebhook } from "@/lib/reportWebhook";
+
+export type FirstViewSideEffectsResult = {
+  isFirstView: boolean;
+};
+
 /**
- * Après insert réussi dans `report_views` : si c’est la 1ʳᵉ ligne pour ce rapport,
- * envoie un email (Resend) et pose `first_view_notified` (anti race / doublon).
+ * Compte les vues après insert réussi ; notif email + webhook si 1ʳᵉ ouverture.
  */
-export async function notifyFirstReportViewIfNeeded(opts: {
+export async function runFirstViewSideEffects(opts: {
   supabase: SupabaseClient;
   reportId: string;
   clientEmail: string | null | undefined;
   firstViewNotified: boolean | null | undefined;
   viewInsertSucceeded: boolean;
-}): Promise<void> {
+}): Promise<FirstViewSideEffectsResult> {
   const {
     supabase,
     reportId,
@@ -20,10 +25,11 @@ export async function notifyFirstReportViewIfNeeded(opts: {
     viewInsertSucceeded,
   } = opts;
 
-  if (!viewInsertSucceeded) return;
-  if (firstViewNotified) return;
-  const to = clientEmail?.trim();
-  if (!to) return;
+  const result: FirstViewSideEffectsResult = { isFirstView: false };
+
+  if (!viewInsertSucceeded) {
+    return result;
+  }
 
   const { count, error: countError } = await supabase
     .from("report_views")
@@ -32,16 +38,40 @@ export async function notifyFirstReportViewIfNeeded(opts: {
 
   if (countError) {
     console.error("FIRST_VIEW_COUNT:", countError);
-    return;
+    return result;
   }
 
-  if (count !== 1) return;
+  const isFirstView = count === 1;
+  result.isFirstView = isFirstView;
+
+  if (!isFirstView) {
+    return result;
+  }
+
+  const viewedAt = new Date().toISOString();
+
+  if (process.env.WEBHOOK_REPORT_OPENED) {
+    await sendReportOpenedWebhook({
+      report_id: reportId,
+      viewed_at: viewedAt,
+      is_first_view: true,
+    });
+  }
+
+  if (firstViewNotified) {
+    return result;
+  }
+
+  const to = clientEmail?.trim();
+  if (!to) {
+    return result;
+  }
 
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM;
   if (!apiKey || !from) {
     console.warn("FIRST_VIEW_EMAIL: set RESEND_API_KEY and RESEND_FROM");
-    return;
+    return result;
   }
 
   const resend = new Resend(apiKey);
@@ -55,7 +85,7 @@ export async function notifyFirstReportViewIfNeeded(opts: {
     });
   } catch (e) {
     console.error("FIRST_VIEW_EMAIL:", e);
-    return;
+    return result;
   }
 
   const { error: updateError } = await supabase
@@ -67,4 +97,6 @@ export async function notifyFirstReportViewIfNeeded(opts: {
   if (updateError) {
     console.error("FIRST_VIEW_NOTIFIED_UPDATE:", updateError);
   }
+
+  return result;
 }
