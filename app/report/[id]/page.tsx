@@ -91,17 +91,12 @@ export default async function Page({
       .from("rapports-pdf")
       .createSignedUrl(pdfPath, 3600);
 
-    if (!signError && signed?.signedUrl) {
-      finalUrl = signed.signedUrl;
-    } else {
+    if (signError || !signed?.signedUrl) {
       console.error("SIGNED URL ERROR (pdf_path):", signError);
-      /** Fichier absent ou mauvais bucket : repli sur URL publique si présente. */
-      if (pdfSourceRaw.startsWith("http")) {
-        finalUrl = pdfSourceRaw;
-      } else {
-        return <div>Erreur accès PDF</div>;
-      }
+      return <div>Erreur accès PDF</div>;
     }
+
+    finalUrl = signed.signedUrl;
   } else {
     finalUrl = pdfSourceRaw;
 
