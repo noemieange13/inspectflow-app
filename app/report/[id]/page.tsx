@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 
+import { ReportPdfRedirect } from "@/components/ReportPdfRedirect";
 import { runFirstViewSideEffects } from "@/lib/firstViewEmail";
 import { createServerClient } from "@/lib/supabaseServer";
 
@@ -27,18 +28,27 @@ export default async function Page({
     return <div>Accès invalide</div>;
   }
 
-  const supabase = await createServerClient();
+  let supabase;
+  try {
+    supabase = await createServerClient();
+  } catch (e) {
+    console.error("SUPABASE_CLIENT:", e);
+    return <div>Configuration Supabase manquante</div>;
+  }
 
   const { data, error } = await supabase
     .from("reports")
-    .select(
-      "id, pdf_url, access_token, token_expires_at, client_email, first_view_notified",
-    )
+    .select("*")
     .eq("id", cleanId)
     .maybeSingle();
 
   if (error) {
-    console.error("SUPABASE ERROR:", error);
+    console.error("SUPABASE ERROR reports select:", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
     return <div>Erreur serveur</div>;
   }
 
@@ -46,36 +56,64 @@ export default async function Page({
     return <div>Accès invalide</div>;
   }
 
-  const now = new Date();
+  const row = data as Record<string, unknown>;
 
   if (
-    !data.access_token ||
-    data.access_token !== token ||
-    !data.token_expires_at ||
-    new Date(data.token_expires_at) < now
+    typeof row.access_token !== "string" ||
+    !row.access_token ||
+    row.access_token !== token ||
+    (row.token_expires_at != null &&
+      String(row.token_expires_at) !== "" &&
+      new Date(String(row.token_expires_at)) < new Date())
   ) {
     return <div>Accès refusé</div>;
   }
 
-  if (!data.pdf_url) {
+  /** Chemin dans le bucket Supabase (ex. user_id/report_id.pdf) — prioritaire si renseigné. */
+  const pdfPath =
+    typeof row.pdf_path === "string" && row.pdf_path.trim()
+      ? row.pdf_path.trim()
+      : "";
+
+  const pdfSourceRaw =
+    (typeof row.pdf_url === "string" && row.pdf_url.trim()) ||
+    (typeof row.file_url === "string" && row.file_url.trim()) ||
+    "";
+
+  if (!pdfPath && !pdfSourceRaw) {
     return <div>PDF indisponible</div>;
   }
 
-  let finalUrl = data.pdf_url;
+  let finalUrl: string;
 
-  const isFullUrl = data.pdf_url.startsWith("http");
-
-  if (!isFullUrl) {
+  if (pdfPath) {
     const { data: signed, error: signError } = await supabase.storage
       .from("rapports-pdf")
-      .createSignedUrl(data.pdf_url, 3600);
+      .createSignedUrl(pdfPath, 3600);
 
     if (signError || !signed?.signedUrl) {
-      console.error("SIGNED URL ERROR:", signError);
+      console.error("SIGNED URL ERROR (pdf_path):", signError);
       return <div>Erreur accès PDF</div>;
     }
 
     finalUrl = signed.signedUrl;
+  } else {
+    finalUrl = pdfSourceRaw;
+
+    const isFullUrl = pdfSourceRaw.startsWith("http");
+
+    if (!isFullUrl) {
+      const { data: signed, error: signError } = await supabase.storage
+        .from("rapports-pdf")
+        .createSignedUrl(pdfSourceRaw, 3600);
+
+      if (signError || !signed?.signedUrl) {
+        console.error("SIGNED URL ERROR:", signError);
+        return <div>Erreur accès PDF</div>;
+      }
+
+      finalUrl = signed.signedUrl;
+    }
   }
 
   const h = await headers();
@@ -95,13 +133,17 @@ export default async function Page({
     console.error("REPORT_VIEW_TRACK:", viewError);
   }
 
-  await runFirstViewSideEffects({
-    supabase,
-    reportId: data.id,
-    clientEmail: data.client_email,
-    firstViewNotified: data.first_view_notified ?? false,
-    viewInsertSucceeded: !viewError,
-  });
+  try {
+    await runFirstViewSideEffects({
+      supabase,
+      reportId: data.id,
+      clientEmail: undefined,
+      firstViewNotified: false,
+      viewInsertSucceeded: !viewError,
+    });
+  } catch (e) {
+    console.error("FIRST_VIEW_SIDE_EFFECTS:", e);
+  }
 
   return (
     <div className="flex h-screen w-full flex-col">
@@ -117,23 +159,10 @@ export default async function Page({
         </a>
       </div>
       <div className="relative min-h-0 flex-1">
-        <iframe
-          src={finalUrl}
-          className="h-full w-full"
-          title="Rapport PDF"
-        />
+        <ReportPdfRedirect url={finalUrl} />
       </div>
       <p className="shrink-0 px-4 py-2 text-center text-sm text-foreground/70">
-        Si le PDF ne s’affiche pas,{" "}
-        <a
-          href={finalUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline"
-        >
-          ouvrez-le dans un nouvel onglet
-        </a>
-        .
+        Le PDF s’ouvre dans cet onglet. Sinon utilisez le lien ci-dessus.
       </p>
     </div>
   );
