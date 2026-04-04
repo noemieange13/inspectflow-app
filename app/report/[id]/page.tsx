@@ -21,6 +21,11 @@ function normalizeTokenFromUrl(raw: string): string {
   }
 }
 
+/** Clé objet seule : `.from("rapports-pdf")` fournit déjà le bucket — pas de préfixe `rapports-pdf/`. */
+function normalizeRapportsPdfObjectPath(raw: string): string {
+  return raw.trim().replace(/^rapports-pdf\//i, "");
+}
+
 export default async function Page({
   params,
   searchParams,
@@ -91,7 +96,7 @@ export default async function Page({
   /** Chemin dans le bucket Supabase (ex. user_id/report_id.pdf) — prioritaire si renseigné. */
   const pdfPath =
     typeof row.pdf_path === "string" && row.pdf_path.trim()
-      ? row.pdf_path.trim()
+      ? normalizeRapportsPdfObjectPath(row.pdf_path)
       : "";
 
   const pdfSourceRaw =
@@ -122,9 +127,10 @@ export default async function Page({
     const isFullUrl = pdfSourceRaw.startsWith("http");
 
     if (!isFullUrl) {
+      const storageKey = normalizeRapportsPdfObjectPath(pdfSourceRaw);
       const { data: signed, error: signError } = await supabase.storage
         .from("rapports-pdf")
-        .createSignedUrl(pdfSourceRaw, 3600);
+        .createSignedUrl(storageKey, 3600);
 
       if (signError || !signed?.signedUrl) {
         console.error("SIGNED URL ERROR:", signError);
