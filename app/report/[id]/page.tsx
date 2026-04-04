@@ -85,7 +85,7 @@ export default async function Page({
     String(row.token_expires_at) !== "" &&
     new Date(String(row.token_expires_at)) < new Date()
   ) {
-    return <div>Accès refusé</div>;
+    return <div>Ce lien a expiré. Demandez un nouveau lien à l’organisme.</div>;
   }
 
   /** Chemin dans le bucket Supabase (ex. user_id/report_id.pdf) — prioritaire si renseigné. */
