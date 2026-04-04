@@ -12,6 +12,15 @@ function pickSearchParam(
   return undefined;
 }
 
+/** URL query + DB : même logique d’encodage/espaces peut diverger sans être « visibles ». */
+function normalizeTokenFromUrl(raw: string): string {
+  try {
+    return decodeURIComponent(raw || "").trim();
+  } catch {
+    return (raw || "").trim();
+  }
+}
+
 export default async function Page({
   params,
   searchParams,
@@ -56,15 +65,31 @@ export default async function Page({
     return <div>Accès invalide</div>;
   }
 
+  const report = data;
+  // Temporaire — test minimal token brut vs URL (retirer après diagnostic Vercel Logs)
+  console.log("DB TOKEN:", report?.access_token);
+  console.log("URL TOKEN:", token);
+  console.log("EQUAL:", report?.access_token === token);
+
   const row = data as Record<string, unknown>;
 
+  const rawAccess = row.access_token;
+  const dbToken =
+    typeof rawAccess === "string" ? rawAccess.trim() : "";
+  const cleanToken = normalizeTokenFromUrl(token);
+
   if (
-    typeof row.access_token !== "string" ||
-    !row.access_token ||
-    row.access_token !== token ||
-    (row.token_expires_at != null &&
-      String(row.token_expires_at) !== "" &&
-      new Date(String(row.token_expires_at)) < new Date())
+    typeof rawAccess !== "string" ||
+    !dbToken ||
+    dbToken !== cleanToken
+  ) {
+    return <div>Accès refusé</div>;
+  }
+
+  if (
+    row.token_expires_at != null &&
+    String(row.token_expires_at) !== "" &&
+    new Date(String(row.token_expires_at)) < new Date()
   ) {
     return <div>Accès refusé</div>;
   }
