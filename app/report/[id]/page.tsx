@@ -66,22 +66,25 @@ export default async function Page({
   }
 
   const report = data;
-  // Temporaire — test minimal token brut vs URL (retirer après diagnostic Vercel Logs)
-  console.log("DB TOKEN:", report?.access_token);
-  console.log("URL TOKEN:", token);
-  console.log("EQUAL:", report?.access_token === token);
-
   const row = data as Record<string, unknown>;
 
   const rawAccess = row.access_token;
-  const dbToken =
+  const dbNorm =
     typeof rawAccess === "string" ? rawAccess.trim() : "";
-  const cleanToken = normalizeTokenFromUrl(token);
+  const urlNorm = normalizeTokenFromUrl(token);
+
+  // Temporaire — diagnostic token (retirer ou passer derrière DEBUG_REPORT_TOKEN après validation)
+  console.log("DB TOKEN:", report?.access_token);
+  console.log("URL TOKEN:", token);
+  console.log("EQUAL (raw):", report?.access_token === token);
+  console.log("EQUAL (trim/norm):", dbNorm === urlNorm);
+  console.log("TYPE DB:", typeof report?.access_token);
+  console.log("TYPE URL:", typeof token);
 
   if (
     typeof rawAccess !== "string" ||
-    !dbToken ||
-    dbToken !== cleanToken
+    !dbNorm ||
+    dbNorm !== urlNorm
   ) {
     return <div>Accès refusé</div>;
   }
