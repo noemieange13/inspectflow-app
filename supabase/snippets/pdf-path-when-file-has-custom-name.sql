@@ -1,0 +1,8 @@
+-- Si le PDF a été uploadé avec un autre nom (ex. rapport-*.pdf) que user_id/report_id.pdf,
+-- aligne pdf_path sur la clé réelle dans le bucket rapports-pdf (sans préfixe "rapports-pdf/").
+--
+-- Exemple (adapter user_id + nom de fichier à ton Storage) :
+--
+-- update public.reports
+-- set pdf_path = '865bf60d-c423-4519-b38d-a267fafaf5d2/rapport-1774367622678.pdf'
+-- where id = 'f5cbc318-0b26-434b-afc4-f566b570a595';

@@ -1,6 +1,9 @@
 /**
  * Upload un PDF minimal (dummy W3C) vers Storage au chemin attendu par l’app.
  *
+ * Chemin objet : `${user_id}/${report_id}.pdf` — doit rester aligné avec
+ * `rapportsPdfStorageKey()` dans `lib/rapportsPdfPath.ts` et avec `reports.pdf_path`.
+ *
  * Prérequis dans .env.local (ou variables d’environnement) :
  *   NEXT_PUBLIC_SUPABASE_URL
  *   SUPABASE_SERVICE_ROLE_KEY   (obligatoire pour upload ; ne jamais commit)
@@ -58,6 +61,20 @@ async function main() {
 
   console.log("OK — fichier uploadé :", BUCKET, "/", OBJECT_PATH);
   console.log(data);
+
+  const { error: dbErr } = await supabase
+    .from("reports")
+    .update({ pdf_path: OBJECT_PATH })
+    .eq("id", REPORT_ID);
+
+  if (dbErr) {
+    console.warn(
+      "Upload OK mais mise à jour pdf_path en base échouée — exécute align-pdf-path-with-storage.sql ou vérifie RLS/service role :",
+      dbErr,
+    );
+  } else {
+    console.log("OK — pdf_path mis à jour pour le report", REPORT_ID);
+  }
 }
 
 main().catch((e) => {
