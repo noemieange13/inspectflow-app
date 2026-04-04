@@ -116,7 +116,10 @@ export default async function Page({
       .createSignedUrl(pdfPath, 3600);
 
     if (signError || !signed?.signedUrl) {
-      console.error("SIGNED URL ERROR (pdf_path):", signError);
+      console.error("SIGNED URL ERROR (pdf_path):", signError, {
+        bucket: "rapports-pdf",
+        objectPath: pdfPath,
+      });
       return <div>Erreur accès PDF</div>;
     }
 
@@ -133,7 +136,10 @@ export default async function Page({
         .createSignedUrl(storageKey, 3600);
 
       if (signError || !signed?.signedUrl) {
-        console.error("SIGNED URL ERROR:", signError);
+        console.error("SIGNED URL ERROR (pdf_url/file_url):", signError, {
+          bucket: "rapports-pdf",
+          objectPath: storageKey,
+        });
         return <div>Erreur accès PDF</div>;
       }
 
