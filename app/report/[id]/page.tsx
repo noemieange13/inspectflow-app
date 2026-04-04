@@ -65,21 +65,12 @@ export default async function Page({
     return <div>Accès invalide</div>;
   }
 
-  const report = data;
   const row = data as Record<string, unknown>;
 
   const rawAccess = row.access_token;
   const dbNorm =
     typeof rawAccess === "string" ? rawAccess.trim() : "";
   const urlNorm = normalizeTokenFromUrl(token);
-
-  // Temporaire — diagnostic token (retirer ou passer derrière DEBUG_REPORT_TOKEN après validation)
-  console.log("DB TOKEN:", report?.access_token);
-  console.log("URL TOKEN:", token);
-  console.log("EQUAL (raw):", report?.access_token === token);
-  console.log("EQUAL (trim/norm):", dbNorm === urlNorm);
-  console.log("TYPE DB:", typeof report?.access_token);
-  console.log("TYPE URL:", typeof token);
 
   if (
     typeof rawAccess !== "string" ||
