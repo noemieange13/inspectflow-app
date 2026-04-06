@@ -20,7 +20,8 @@ const { createClient } = require("@supabase/supabase-js");
 const REPORT_ID = "f5cbc318-0b26-434b-afc4-f566b570a595";
 const USER_ID = "865bf60d-c423-4519-b38d-a267fafaf5d2";
 const BUCKET = "rapports-pdf";
-const OBJECT_PATH = `${USER_ID}/${REPORT_ID}.pdf`;
+const reportFile = REPORT_ID.replace(/\.pdf$/i, "");
+const OBJECT_PATH = `${USER_ID}/${reportFile}.pdf`;
 const DUMMY_PDF_URL =
   "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
 

@@ -1,6 +1,9 @@
 -- Si le PDF a été uploadé avec un autre nom (ex. rapport-*.pdf) que user_id/report_id.pdf,
 -- aligne pdf_path sur la clé réelle dans le bucket rapports-pdf (sans préfixe "rapports-pdf/").
 --
+-- Vérifie le nom exact dans Storage (casse + extension). Une seule `.pdf` en fin de nom,
+-- sauf si le fichier est vraiment nommé `…​.pdf.pdf` (rare — erreur de concat).
+--
 -- Exemple (adapter user_id + nom de fichier à ton Storage) :
 --
 -- update public.reports
