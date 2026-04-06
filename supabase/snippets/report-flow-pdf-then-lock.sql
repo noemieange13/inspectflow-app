@@ -1,0 +1,11 @@
+-- Ordre recommandé quand un trigger empêche UPDATE si is_locked = true :
+--
+-- 1) INSERT public.reports (..., is_locked = false, ...)  ;
+-- 2) Upload fichier → clé = user_id/rapport-....pdf puis UPDATE reports SET pdf_path = '<cette clé>' WHERE id = ... ;
+-- 3) UPDATE public.reports SET is_locked = true, finalized_at = now() WHERE id = ... ;
+--
+-- Ne pas faire pdf_path + is_locked = true dans le même UPDATE si le trigger bloque.
+-- Si un report a été créé locked avec pdf_path NULL : débloquer temporairement (à manier avec prudence) :
+--
+-- update public.reports set is_locked = false where id = '...' and pdf_path is null;
+-- puis upload + set pdf_path, puis finalize (lock).

@@ -11,7 +11,10 @@ type UploadBody = Blob | ArrayBuffer | Buffer;
  * Upload vers `rapports-pdf` puis `reports.pdf_path = filePath` (même chaîne que Storage).
  * À appeler côté serveur avec un client service role (ou policy adaptée).
  *
- * Si `reports` est verrouillé (trigger / RLS), l’update peut échouer — gérer côté DB ou bypass.
+ * Ordre typique : créer le report avec `is_locked = false` → cette fonction →
+ * `finalizeReportAfterPdfUpload` (voir `lib/reportFinalize.ts`).
+ *
+ * Si `reports` est verrouillé (trigger / RLS), l’update peut échouer — gérer côté DB ou ordre d’exécution.
  */
 export async function uploadReportPdfAndSetPath(
   supabase: SupabaseClient,
