@@ -1,8 +1,11 @@
 /**
  * Upload un PDF minimal (dummy W3C) vers Storage au chemin attendu par l’app.
  *
- * Chemin objet : `${user_id}/${report_id}.pdf` — doit rester aligné avec
- * `rapportsPdfStorageKey()` dans `lib/rapportsPdfPath.ts` et avec `reports.pdf_path`.
+ * Chemin objet : `${user_id}/${report_id}.pdf` — aligné avec
+ * `rapportsPdfStorageKey()` dans `lib/rapportsPdfPath.ts`.
+ *
+ * Pour les nouveaux rapports avec nom dynamique (`rapport-${Date.now()}.pdf`), utiliser
+ * côté serveur `uploadReportPdfAndSetPath` dans `lib/uploadReportPdf.ts` (même `filePath` upload + DB).
  *
  * Prérequis dans .env.local (ou variables d’environnement) :
  *   NEXT_PUBLIC_SUPABASE_URL
