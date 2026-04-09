@@ -11,14 +11,11 @@ export async function invokeReportsPdf(reportId: string): Promise<Response> {
   const slug = process.env.REPORTS_PDF_SLUG ?? "reports-pdf";
   const endpoint = `${base}/functions/v1/${slug}`;
 
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!key) {
-    throw new Error(
-      "Missing SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    );
-  }
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!key) {
+  throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+}
 
   return fetch(endpoint, {
     method: "POST",

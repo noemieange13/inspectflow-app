@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-/** Basic auth attendu pour comparaison (UTF-8 safe, sans Buffer — Edge). */
+/** Basic auth attendu pour comparaison (UTF-8 safe, Edge compatible) */
 function basicAuthExpectedHeader(user: string, pass: string): string {
   const credentials = `${user}:${pass}`;
   const bytes = new TextEncoder().encode(credentials);
@@ -13,26 +13,35 @@ function basicAuthExpectedHeader(user: string, pass: string): string {
 }
 
 export function middleware(req: NextRequest) {
-  const user = process.env.DASHBOARD_USER;
-  const pass = process.env.DASHBOARD_PASS;
+  const url = req.nextUrl;
 
-  if (!user || !pass) {
-    return new NextResponse("Dashboard auth not configured", {
-      status: 503,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-    });
+  // ✅ Laisse passer TOUTES les routes API
+  if (url.pathname.startsWith("/api/")) {
+    return NextResponse.next();
   }
 
-  const auth = req.headers.get("authorization");
-  const expected = basicAuthExpectedHeader(user, pass);
+  // 🔒 Protection uniquement dashboard
+  if (url.pathname.startsWith("/dashboard")) {
+    const user = process.env.DASHBOARD_USER;
+    const pass = process.env.DASHBOARD_PASS;
 
-  if (auth !== expected) {
-    return new NextResponse("Auth required", {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": 'Basic realm="InspectFlow Dashboard"',
-      },
-    });
+    if (!user || !pass) {
+      return new NextResponse("Dashboard auth not configured", {
+        status: 503,
+      });
+    }
+
+    const auth = req.headers.get("authorization");
+    const expected = basicAuthExpectedHeader(user, pass);
+
+    if (auth !== expected) {
+      return new NextResponse("Auth required", {
+        status: 401,
+        headers: {
+          "WWW-Authenticate": 'Basic realm="InspectFlow Dashboard"',
+        },
+      });
+    }
   }
 
   return NextResponse.next();
