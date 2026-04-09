@@ -1,4 +1,4 @@
-import { invokeInspectionUltimate } from "@/lib/triggerInspectionUltimate";
+import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
 
 /**
  * POST { "reportId": "uuid" } ou { "report_id": "uuid" }
@@ -37,14 +37,29 @@ export async function POST(req: Request) {
   }
 
   try {
-    const res = await invokeInspectionUltimate(reportId.trim());
-    const text = await res.text();
-    const ct =
-      res.headers.get("content-type") ?? "application/json; charset=utf-8";
-    return new Response(text, { status: res.status, headers: { "Content-Type": ct } });
+    console.log("CALLING REPORTS PDF", reportId.trim());
+    const upstream = await invokeReportsPdf(reportId.trim());
+    const text = await upstream.text();
+    const contentType =
+      upstream.headers.get("content-type") ??
+      (text.trim().startsWith("{")
+        ? "application/json; charset=utf-8"
+        : "text/plain; charset=utf-8");
+
+    if (!upstream.ok) {
+      console.error("trigger-inspection upstream error:", upstream.status, text);
+    }
+
+    return new Response(text, {
+      status: upstream.status,
+      headers: { "Content-Type": contentType },
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("trigger-inspection:", e);
-    return Response.json({ error: msg }, { status: 500 });
+    return Response.json(
+      { error: msg, where: "trigger-inspection route catch" },
+      { status: 500 },
+    );
   }
 }
