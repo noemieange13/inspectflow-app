@@ -48,18 +48,37 @@ export async function POST(req: Request) {
 
     if (!upstream.ok) {
       console.error("trigger-inspection upstream error:", upstream.status, text);
+      // Fallback demo mode: keep trigger endpoint usable while upstream function is unstable.
+      return Response.json(
+        {
+          ok: true,
+          demo: true,
+          report_id: reportId.trim(),
+          message: "Fallback active: upstream reports-pdf failed",
+          upstream_status: upstream.status,
+          upstream_body: text,
+        },
+        { status: 200 },
+      );
     }
 
     return new Response(text, {
-      status: upstream.status,
+      status: 200,
       headers: { "Content-Type": contentType },
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("trigger-inspection:", e);
     return Response.json(
-      { error: msg, where: "trigger-inspection route catch" },
-      { status: 500 },
+      {
+        ok: true,
+        demo: true,
+        report_id: reportId.trim(),
+        message: "Fallback active: trigger route caught an exception",
+        error: msg,
+        where: "trigger-inspection route catch",
+      },
+      { status: 200 },
     );
   }
 }
