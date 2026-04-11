@@ -1,0 +1,11 @@
+# Modèle pour variables Postman / notes locales (sans secrets)
+# Copiez vers `Access codes.txt` à la racine (fichier gitignored) et remplissez.
+
+SUPABASE_PROJECT_REF = <ref-projet-uniquement-sans-domaine>
+SUPABASE_ANON_KEY = <clé anon dashboard Supabase>
+ACCESS_TOKEN = <JWT utilisateur après login — sans préfixe Bearer dans la variable Postman>
+
+# URL login (exemple)
+# https://<SUPABASE_PROJECT_REF>.supabase.co/auth/v1/token?grant_type=password
+
+# Si un jeton a été commité par erreur : révoquez les sessions dans Supabase Auth et reconnectez-vous.

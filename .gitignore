@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# Local secrets / Postman vars (never commit)
+Access codes.txt
+
 # debug
 .cursor/debug.log
 npm-debug.log*
