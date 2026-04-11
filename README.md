@@ -10,6 +10,8 @@ Contrat, réponse (`cached` vs signed URL régénérée), flux Mermaid et storag
 
 Vision d’ensemble (pipeline unique, dépollution des Edge Functions, phases) : **[docs/integration-roadmap.md](docs/integration-roadmap.md)**.
 
+Variables d’environnement (modèle sans secrets) : **`.env.example`** → copier vers `.env.local` ou configurer sur Vercel.
+
 ## Getting Started
 
 First, run the development server:
