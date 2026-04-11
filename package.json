@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "upload:report-pdf": "node --env-file=.env.local scripts/upload-report-pdf.cjs"
+    "upload:report-pdf": "node --env-file=.env.local scripts/upload-report-pdf.cjs",
+    "supabase:deploy:reports-pdf": "supabase functions deploy reports-pdf",
+    "supabase:db:push": "supabase db push"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

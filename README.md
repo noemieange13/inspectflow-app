@@ -12,6 +12,8 @@ Vision d’ensemble (pipeline unique, dépollution des Edge Functions, phases) :
 
 Variables d’environnement (modèle sans secrets) : **`.env.example`** → copier vers `.env.local` ou configurer sur Vercel.
 
+Déploiement Vercel + Edge `reports-pdf` : **[docs/deployment.md](docs/deployment.md)**.
+
 ## Getting Started
 
 First, run the development server:
