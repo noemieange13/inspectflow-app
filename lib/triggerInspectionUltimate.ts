@@ -1,6 +1,14 @@
 /**
- * Appelle l’Edge Function Supabase `reports-pdf` (slug surchargé via REPORTS_PDF_SLUG).
- * Utilise `SUPABASE_SERVICE_ROLE_KEY` si présent, sinon `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+ * Appelle l’Edge Function Supabase `reports-pdf` (slug surchargeable via `REPORTS_PDF_SLUG`).
+ *
+ * **Contrat attendu (Edge Function)** — `POST /functions/v1/{slug}` :
+ * ```json
+ * { "report_id": "<uuid>" }
+ * ```
+ * Le rapport doit exister en base ; l’inspection et l’état PDF sont portés par la ligne `reports`.
+ *
+ * **Sécurité** : réservé au serveur uniquement. Ne jamais appeler depuis le client.
+ * **Obligatoire** : `SUPABASE_SERVICE_ROLE_KEY` (pas de repli sur la clé anon).
  */
 export async function invokeReportsPdf(reportId: string): Promise<Response> {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
@@ -12,10 +20,9 @@ export async function invokeReportsPdf(reportId: string): Promise<Response> {
   const endpoint = `${base}/functions/v1/${slug}`;
 
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!key) {
-  throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
-}
+  if (!key) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+  }
 
   return fetch(endpoint, {
     method: "POST",

@@ -2,6 +2,14 @@ import { headers } from "next/headers";
 
 import { ReportPdfRedirect } from "@/components/ReportPdfRedirect";
 import { runFirstViewSideEffects } from "@/lib/firstViewEmail";
+import {
+  createSignedUrlForReportPdf,
+  DEFAULT_SIGNED_URL_TTL_SEC,
+} from "@/lib/rapportsPdfStorage";
+import {
+  parseClientEmailFromRow,
+  parseFirstViewNotifiedFromRow,
+} from "@/lib/reportRowParse";
 import { createServerClient } from "@/lib/supabaseServer";
 
 function pickSearchParam(
@@ -12,18 +20,12 @@ function pickSearchParam(
   return undefined;
 }
 
-/** URL query + DB : même logique d’encodage/espaces peut diverger sans être « visibles ». */
 function normalizeTokenFromUrl(raw: string): string {
   try {
     return decodeURIComponent(raw || "").trim();
   } catch {
     return (raw || "").trim();
   }
-}
-
-/** Clé objet seule : `.from("rapports-pdf")` fournit déjà le bucket — pas de préfixe `rapports-pdf/`. */
-function normalizeRapportsPdfObjectPath(raw: string): string {
-  return raw.trim().replace(/^rapports-pdf\//i, "");
 }
 
 export default async function Page({
@@ -39,7 +41,7 @@ export default async function Page({
   const token = pickSearchParam(sp.token);
 
   if (!cleanId || !token) {
-    return <div>Accès invalide</div>;
+    return <div className="p-6">Accès invalide</div>;
   }
 
   let supabase;
@@ -47,7 +49,7 @@ export default async function Page({
     supabase = await createServerClient();
   } catch (e) {
     console.error("SUPABASE_CLIENT:", e);
-    return <div>Configuration Supabase manquante</div>;
+    return <div className="p-6">Configuration Supabase manquante</div>;
   }
 
   const { data, error } = await supabase
@@ -63,26 +65,21 @@ export default async function Page({
       details: error.details,
       hint: error.hint,
     });
-    return <div>Erreur serveur</div>;
+    return <div className="p-6">Erreur serveur</div>;
   }
 
   if (!data || !data.id) {
-    return <div>Accès invalide</div>;
+    return <div className="p-6">Accès invalide</div>;
   }
 
   const row = data as Record<string, unknown>;
 
   const rawAccess = row.access_token;
-  const dbNorm =
-    typeof rawAccess === "string" ? rawAccess.trim() : "";
+  const dbNorm = typeof rawAccess === "string" ? rawAccess.trim() : "";
   const urlNorm = normalizeTokenFromUrl(token);
 
-  if (
-    typeof rawAccess !== "string" ||
-    !dbNorm ||
-    dbNorm !== urlNorm
-  ) {
-    return <div>Accès refusé</div>;
+  if (typeof rawAccess !== "string" || !dbNorm || dbNorm !== urlNorm) {
+    return <div className="p-6">Accès refusé</div>;
   }
 
   if (
@@ -90,62 +87,26 @@ export default async function Page({
     String(row.token_expires_at) !== "" &&
     new Date(String(row.token_expires_at)) < new Date()
   ) {
-    return <div>Ce lien a expiré. Demandez un nouveau lien à l’organisme.</div>;
+    return (
+      <div className="p-6">Ce lien a expiré. Demandez un nouveau lien à l’organisme.</div>
+    );
   }
 
-  /** Chemin dans le bucket Supabase (ex. user_id/report_id.pdf) — prioritaire si renseigné. */
-  const pdfPath =
-    typeof row.pdf_path === "string" && row.pdf_path.trim()
-      ? normalizeRapportsPdfObjectPath(row.pdf_path)
-      : "";
+  const pdfResult = await createSignedUrlForReportPdf(
+    supabase,
+    row,
+    DEFAULT_SIGNED_URL_TTL_SEC,
+  );
 
-  const pdfSourceRaw =
-    (typeof row.pdf_url === "string" && row.pdf_url.trim()) ||
-    (typeof row.file_url === "string" && row.file_url.trim()) ||
-    "";
-
-  if (!pdfPath && !pdfSourceRaw) {
-    return <div>PDF indisponible</div>;
-  }
-
-  let finalUrl: string;
-
-  if (pdfPath) {
-    const { data: signed, error: signError } = await supabase.storage
-      .from("rapports-pdf")
-      .createSignedUrl(pdfPath, 3600);
-
-    if (signError || !signed?.signedUrl) {
-      console.error("SIGNED URL ERROR (pdf_path):", signError, {
-        bucket: "rapports-pdf",
-        objectPath: pdfPath,
-      });
-      return <div>Erreur accès PDF</div>;
+  if ("error" in pdfResult) {
+    if (pdfResult.error === "no_pdf") {
+      return <div className="p-6">PDF indisponible</div>;
     }
-
-    finalUrl = signed.signedUrl;
-  } else {
-    finalUrl = pdfSourceRaw;
-
-    const isFullUrl = pdfSourceRaw.startsWith("http");
-
-    if (!isFullUrl) {
-      const storageKey = normalizeRapportsPdfObjectPath(pdfSourceRaw);
-      const { data: signed, error: signError } = await supabase.storage
-        .from("rapports-pdf")
-        .createSignedUrl(storageKey, 3600);
-
-      if (signError || !signed?.signedUrl) {
-        console.error("SIGNED URL ERROR (pdf_url/file_url):", signError, {
-          bucket: "rapports-pdf",
-          objectPath: storageKey,
-        });
-        return <div>Erreur accès PDF</div>;
-      }
-
-      finalUrl = signed.signedUrl;
-    }
+    console.error("SIGNED URL ERROR:", pdfResult.log);
+    return <div className="p-6">Erreur accès PDF</div>;
   }
+
+  const finalUrl = pdfResult.signedUrl;
 
   const h = await headers();
   const ip =
@@ -168,8 +129,8 @@ export default async function Page({
     await runFirstViewSideEffects({
       supabase,
       reportId: data.id,
-      clientEmail: undefined,
-      firstViewNotified: false,
+      clientEmail: parseClientEmailFromRow(row),
+      firstViewNotified: parseFirstViewNotifiedFromRow(row),
       viewInsertSucceeded: !viewError,
     });
   } catch (e) {
@@ -190,7 +151,11 @@ export default async function Page({
         </a>
       </div>
       <div className="relative min-h-0 flex-1">
-        <ReportPdfRedirect url={finalUrl} />
+        <ReportPdfRedirect
+          url={finalUrl}
+          reportId={data.id}
+          linkToken={urlNorm}
+        />
       </div>
       <p className="shrink-0 px-4 py-2 text-center text-sm text-foreground/70">
         Le PDF s’ouvre dans cet onglet. Sinon utilisez le lien ci-dessus.

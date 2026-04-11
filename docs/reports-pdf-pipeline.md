@@ -1,0 +1,94 @@
+# Pipeline rapport PDF (`reports-pdf`)
+
+Documentation interne — évite la dérive entre app Next, Edge Function Supabase et schéma `reports`.
+
+## Décision figée
+
+- **Source de vérité pour l’appel** : `report_id` (UUID d’une ligne `public.reports` existante).
+- L’**inspection** est un contexte métier porté par le rapport, pas l’inverse pour ce contrat.
+- Le code serveur d’appel vit dans `lib/triggerInspectionUltimate.ts` (`invokeReportsPdf`).
+
+## Edge Function
+
+- **Slug par défaut** : `reports-pdf` (surchargeable via `REPORTS_PDF_SLUG` côté déploiement / env).
+- **Endpoint** : `POST /functions/v1/{slug}` sur l’URL projet Supabase.
+
+### Corps attendu
+
+```json
+{
+  "report_id": "uuid"
+}
+```
+
+### Sécurité (repo)
+
+- Appels **uniquement côté serveur** (Route Handler, Server Action, job).
+- **Obligatoire** : `SUPABASE_SERVICE_ROLE_KEY` — pas de repli sur la clé anon.
+- La fonction Edge peut avoir `verify_jwt` désactivé si seul le backend appelle avec la service role ; dans tous les cas, **ne pas exposer** cette URL comme API publique sans autre garde-fou.
+
+## Réponse cible (contrat logique)
+
+```json
+{
+  "success": true,
+  "report_id": "uuid",
+  "signed_url": "https://...",
+  "expires_in": 60,
+  "cached": true
+}
+```
+
+**Nuance importante — `cached`**
+
+- `cached: true` lorsque le PDF est déjà en base **au sens** : une `pdf_path` (ou équivalent) existe déjà et on ne régénère pas le fichier.
+- **Même dans ce cas**, la réponse peut inclure une **nouvelle signed URL** : l’accès temporaire est **régénéré à chaque appel**. On ne persiste **pas** une signed URL comme vérité durable ; seul le fichier dans le storage privé + la ligne `reports` font foi.
+
+## Flux de génération (vue métier)
+
+```mermaid
+flowchart TD
+  A["POST reports-pdf\nbody: report_id"] --> B["Charger report en DB"]
+  B --> C{pdf_path renseigné ?}
+  C -->|oui| D["signed URL régénérée\ncached = true"]
+  C -->|non| E["Charger inspection / payload"]
+  E --> F["Générer HTML puis PDF"]
+  F --> G["Upload bucket privé\n(pas d’URL publique persistante)"]
+  G --> H["Mettre à jour reports.pdf_path"]
+  H --> I["signed URL\ncached = false"]
+  D --> J["Réponse JSON"]
+  I --> J
+```
+
+**À retenir** : si `pdf_path` existe → retour du PDF **via signed URL** ; **aucune** URL publique persistante ne doit remplacer ce modèle.
+
+## Storage
+
+- Bucket **privé** (pas d’accès public anonyme au fichier).
+- Nom d’objet stable recommandé (ex. dérivé de `report_id`) pour idempotence et overwrite contrôlé côté Edge.
+
+## API Next : régénérer une signed URL (viewer)
+
+Les URLs Storage sont **temporaires**. Si l’utilisateur reste longtemps sur `/report/[id]?token=...`, le lien peut expirer.
+
+- **Route** : `POST /api/regenerate-signed-url`
+- **Corps JSON** : `{ "reportId": "<uuid>", "token": "<access_token du lien viewer>" }` (même jeton que le query `token`).
+- **Réponse** : `{ "success": true, "pdf_signed_url": "https://...", "expires_in_seconds": 3600 }`
+- **Sécurité** : le serveur vérifie `access_token` + `token_expires_at` comme la page viewer ; pas d’exposition de la service role au client.
+
+Implémentation : `app/api/regenerate-signed-url/route.ts`, logique partagée `lib/rapportsPdfStorage.ts`, bouton « Rafraîchir le lien PDF » dans `components/ReportPdfRedirect.tsx`.
+
+## Code versionné dans le repo
+
+- `supabase/functions/reports-pdf/index.ts` — à déployer avec `supabase functions deploy reports-pdf`.
+- Cache : signed URL basée sur **`reports.pdf_path`** lorsqu’il est présent (alignement DB ↔ Storage).
+
+## Alignement code app
+
+| Élément | Détail |
+|--------|--------|
+| Appel | `invokeReportsPdf(reportId)` |
+| Body | `{ "report_id": "<uuid>" }` |
+| Env | `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optionnel `REPORTS_PDF_SLUG` |
+| Edge | `PDF_API_KEY` (html2pdf.app), RPC `claim_report_lock` / `release_report_lock` |
+| Viewer / refresh | `POST /api/regenerate-signed-url` — même anon côté client ; service role uniquement dans le Route Handler |
