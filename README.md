@@ -10,6 +10,8 @@ Contrat, réponse (`cached` vs signed URL régénérée), flux Mermaid et storag
 
 Vision d’ensemble (pipeline unique, dépollution des Edge Functions, phases) : **[docs/integration-roadmap.md](docs/integration-roadmap.md)**.
 
+Inventaire des Edge Functions Supabase (liste projet + ce que ce repo référence) : **[docs/edge-functions-inventory.md](docs/edge-functions-inventory.md)**.
+
 Variables d’environnement (modèle sans secrets) : **`.env.example`** → copier vers `.env.local` ou configurer sur Vercel.
 
 Déploiement Vercel + Edge `reports-pdf` : **[docs/deployment.md](docs/deployment.md)**.
