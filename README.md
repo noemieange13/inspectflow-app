@@ -1,5 +1,15 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Rapports PDF (Supabase Edge)
+
+- **Entrée unique** pour l’app : `report_id` (ligne `reports` existante).
+- **Appel serveur uniquement** : `lib/triggerInspectionUltimate.ts` — requiert `SUPABASE_SERVICE_ROLE_KEY`.
+- **Slug** par défaut : `reports-pdf` (surcharge : `REPORTS_PDF_SLUG`).
+
+Contrat, réponse (`cached` vs signed URL régénérée), flux Mermaid et storage privé : **[docs/reports-pdf-pipeline.md](docs/reports-pdf-pipeline.md)**.
+
+Vision d’ensemble (pipeline unique, dépollution des Edge Functions, phases) : **[docs/integration-roadmap.md](docs/integration-roadmap.md)**.
+
 ## Getting Started
 
 First, run the development server:

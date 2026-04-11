@@ -1,0 +1,79 @@
+Access Token
+Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6IjBhMDFlM2U2LWE4MTMtNDdkNy1hMmUxLTE4ZDI1NmMwMzRjMCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL3FrenJsZmdxZHNwZWNmZ2d1eWpkLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIzMmZmZjFjYy0zY2NmLTQ2ZDQtOTA1MS1kNGViNTY5M2UyNzciLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzc1ODY0MjI3LCJpYXQiOjE3NzU4NjA2MjcsImVtYWlsIjoibm9lbWllMjAwMWFuZ2VAZ21haWwuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbF92ZXJpZmllZCI6dHJ1ZX0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoicGFzc3dvcmQiLCJ0aW1lc3RhbXAiOjE3NzU4NjA2Mjd9XSwic2Vzc2lvbl9pZCI6IjYyNjI1ZDBlLWMzZmUtNDdiOS04YTU2LWRkNTgxMjFkNzc0MiIsImlzX2Fub255bW91cyI6ZmFsc2V9.sqFrNFkpRpYjKA2ijWXIuGxRgMiT1xL6r4wsHeVttDPyF270dQYxLKScRDlEQ9F3o23Bkh2GE6VDk9KK9cunKw
+
+Variables
+SUPABASUPABASE_PROJECT_REF = qkzrlfgqdspecfgguyjd
+SUPABASE_ANON_KEY = <ta vraie anon key>
+ACCESS_TOKEN = <rempli automatiquement après login>
+
+URL de Supabase Login
+https://{{SUPABASE_PROJECT_REF}}.supabase.co/auth/v1/token?grant_type=password
+
+Headers login :
+Authorization: Bearer {{ACCESS_TOKEN}}
+apikey: {{SUPABASE_ANON_KEY}}
+Content-Type: application/json
+
+Dans 
+My Collection
+ > Variables :
+
+Notes importantes :
+
+pour SUPABASE_PROJECT_REF, mets seulement qkzrlfgqdspecfgguyjd
+ne mets pas https://
+ne mets pas .supabase.co
+pour ACCESS_TOKEN, laisse vide au départ
+plus tard, il contiendra seulement le JWT brut, sans Bearer
+Dans ta requête login, vérifie :
+
+URL
+
+Headers
+
+Body > raw > JSON
+
+Script de test de la requête login :
+
+Dans ta requête protégée pour le PDF :
+
+URL
+
+Headers
+
+Body
+
+selon ce que ta fonction attend
+si tu veux juste tester, commence avec :
+Checklist anti-erreurs
+
+Variable projet
+correct :
+incorrect :
+Access token
+correct :
+incorrect :
+Header Authorization
+correct :
+incorrect :
+ou
+
+URL finale
+correct :
+incorrect :
+Si tu as encore Invalid JWT, les causes les plus probables sont :
+
+ACCESS_TOKEN contient encore Bearer ...
+le login n’a pas bien sauvegardé le token
+tu utilises un ancien token expiré
+l’URL de la fonction est bonne mais la fonction attend un JWT utilisateur valide obtenu juste avant
+Fais dans cet ordre :
+
+lance la requête login
+vérifie que ACCESS_TOKEN a été rempli
+lance ensuite la requête PDF
+Si tu veux, je peux maintenant te donner aussi le script de visualisation Postman à coller dans ta requête pour afficher joliment :
+
+soit les erreurs 401 / Invalid JWT
+soit la réponse JSON de génération PDF.
+You've used 75% of your monthly AI credits. Upgrade now to keep Agent Mode running without interruption.

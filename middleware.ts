@@ -1,10 +1,9 @@
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-/** Basic auth attendu pour comparaison (UTF-8 safe, Edge compatible) */
+/** Basic auth header attendu (Edge-safe, ASCII user/pass). */
 function basicAuthExpectedHeader(user: string, pass: string): string {
-  const credentials = `${user}:${pass}`;
-  const bytes = new TextEncoder().encode(credentials);
+  const raw = `${user}:${pass}`;
+  const bytes = new TextEncoder().encode(raw);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]!);
@@ -15,33 +14,29 @@ function basicAuthExpectedHeader(user: string, pass: string): string {
 export function middleware(req: NextRequest) {
   const url = req.nextUrl;
 
-  // ✅ Laisse passer TOUTES les routes API
-  if (url.pathname.startsWith("/api/")) {
+  if (!url.pathname.startsWith("/dashboard")) {
     return NextResponse.next();
   }
 
-  // 🔒 Protection uniquement dashboard
-  if (url.pathname.startsWith("/dashboard")) {
-    const user = process.env.DASHBOARD_USER;
-    const pass = process.env.DASHBOARD_PASS;
+  const user = process.env.DASHBOARD_USER;
+  const pass = process.env.DASHBOARD_PASS;
 
-    if (!user || !pass) {
-      return new NextResponse("Dashboard auth not configured", {
-        status: 503,
-      });
-    }
+  if (!user || !pass) {
+    return new NextResponse("Dashboard auth not configured", {
+      status: 503,
+    });
+  }
 
-    const auth = req.headers.get("authorization");
-    const expected = basicAuthExpectedHeader(user, pass);
+  const auth = req.headers.get("authorization");
+  const expected = basicAuthExpectedHeader(user, pass);
 
-    if (auth !== expected) {
-      return new NextResponse("Auth required", {
-        status: 401,
-        headers: {
-          "WWW-Authenticate": 'Basic realm="InspectFlow Dashboard"',
-        },
-      });
-    }
+  if (auth !== expected) {
+    return new NextResponse("Auth required", {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": 'Basic realm="InspectFlow Dashboard"',
+      },
+    });
   }
 
   return NextResponse.next();
