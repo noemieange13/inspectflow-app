@@ -1,108 +1,93 @@
-"use client";
+"use client"
 
-import { createClient } from "@supabase/supabase-js";
-import { useCallback, useState } from "react";
+import { useState } from "react"
 
-function getBrowserSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key);
+function pickError(data: Record<string, unknown>): string | null {
+  if (typeof data.error === "string" && data.error) return data.error
+  const body = data.body
+  if (body && typeof body === "object" && body !== null) {
+    const e = (body as { error?: unknown }).error
+    if (typeof e === "string" && e) return e
+  }
+  return null
 }
 
-type Props = { reportId: string };
+export default function GeneratePdfButton({
+  reportId,
+}: {
+  reportId: string
+}) {
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
 
-/**
- * En **dev**, le bouton appelle d’abord `POST /api/dev/invoke-reports-pdf` (service role côté serveur) :
- * c’est le même mécanisme que `lib/triggerInspectionUltimate.ts` et ça contourne les blocages JWT de l’Edge.
- *
- * Tu peux aussi forcer l’appel **direct** `functions.invoke` (anon) — souvent en erreur tant que
- * l’Edge a « Verify JWT » activé dans le dashboard Supabase.
- */
-export default function GeneratePdfButton({ reportId }: Props) {
-  const [log, setLog] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const handleClick = async () => {
+    setLoading(true)
+    setMessage(null)
 
-  const runViaServer = useCallback(async () => {
-    setLoading(true);
-    setLog(null);
     try {
-      const res = await fetch("/api/dev/invoke-reports-pdf", {
+      const res = await fetch("/api/trigger-inspection", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportId }),
-      });
-      const json = (await res.json()) as unknown;
-      console.log("RESULT (serveur dev):", json);
-      setLog(JSON.stringify(json, null, 2));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setLog(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [reportId]);
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          report_id: reportId,
+        }),
+      })
 
-  const runViaAnonInvoke = useCallback(async () => {
-    setLoading(true);
-    setLog(null);
-    try {
-      const supabase = getBrowserSupabase();
-      if (!supabase) {
-        setLog(
-          "NEXT_PUBLIC_SUPABASE_URL ou NEXT_PUBLIC_SUPABASE_ANON_KEY manquant dans .env.local",
-        );
-        return;
+      const data = (await res.json()) as Record<string, unknown>
+
+      console.log("RESULT:", data)
+
+      const signed =
+        typeof data.signed_url === "string" ? data.signed_url : null
+      if (res.ok && signed) {
+        window.open(signed, "_blank")
+        setMessage("PDF prêt — nouvel onglet ouvert.")
+        return
       }
-      const { data, error } = await supabase.functions.invoke("reports-pdf", {
-        body: { report_id: reportId },
-      });
-      const payload = { data, error };
-      console.log("RESULT (anon invoke):", payload);
-      setLog(JSON.stringify(payload, null, 2));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setLog(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [reportId]);
 
-  const isDev = process.env.NODE_ENV === "development";
+      if (res.ok && data.success === false) {
+        setMessage(
+          typeof data.error === "string"
+            ? data.error
+            : "La génération PDF a échoué.",
+        )
+        return
+      }
+
+      const err = pickError(data)
+      setMessage(
+        err ??
+          (res.ok
+            ? "Réponse inattendue du serveur."
+            : `Erreur ${res.status}`),
+      )
+    } catch (err) {
+      console.error("ERROR:", err)
+      setMessage("Erreur réseau ou réponse invalide.")
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
-    <div className="space-y-3">
-      {isDev ? (
-        <button
-          type="button"
-          onClick={runViaServer}
-          disabled={loading}
-          className="rounded border border-foreground/20 px-3 py-2 text-sm disabled:opacity-50"
-        >
-          {loading ? "…" : "Générer PDF (via serveur — recommandé en dev)"}
-        </button>
-      ) : null}
-
+    <div className="flex flex-col gap-2">
       <button
         type="button"
-        onClick={runViaAnonInvoke}
+        onClick={handleClick}
         disabled={loading}
-        className="rounded border border-foreground/20 px-3 py-2 text-sm disabled:opacity-50"
+        className="rounded border border-foreground/20 px-3 py-2 text-sm hover:bg-foreground/5 disabled:opacity-50"
       >
-        {loading ? "…" : "Tester Edge (anon, functions.invoke)"}
+        {loading ? "Génération..." : "Générer PDF"}
       </button>
-
-      <p className="max-w-xl text-xs text-foreground/60">
-        Si « anon » échoue avec 401 : dans Supabase → Edge Functions →{" "}
-        <code className="font-mono">reports-pdf</code> → désactiver temporairement la vérification
-        JWT, ou n’utiliser que le bouton serveur en dev.
-      </p>
-
-      {log ? (
-        <pre className="max-h-64 overflow-auto rounded border border-foreground/15 bg-foreground/[0.03] p-3 text-xs">
-          {log}
-        </pre>
+      {message ? (
+        <p
+          className={`text-sm ${message.includes("prêt") ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+        >
+          {message}
+        </p>
       ) : null}
     </div>
-  );
+  )
 }
