@@ -40,9 +40,59 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [pdfLink, setPdfLink] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   const generated = useMemo(() => buildStructuredReport(entries), [entries]);
+  const completion = Math.min(100, Math.max(15, Math.round((entries.length / 6) * 100)));
+  const riskBadgeClass = generated.risk_level === "high"
+    ? "bg-red-100 text-red-700 border-red-200"
+    : generated.risk_level === "medium"
+    ? "bg-amber-100 text-amber-700 border-amber-200"
+    : "bg-emerald-100 text-emerald-700 border-emerald-200";
+  const labels = language === "en"
+    ? {
+      title: "Automated report mode",
+      subtitle:
+        "Select findings and the system drafts observation/analysis/recommendation sections automatically.",
+      reportTitle: "Report title",
+      inspectorNote: "Field note (optional)",
+      language: "Language",
+      jurisdiction: "Jurisdiction",
+      finding: "Finding",
+      remove: "Remove",
+      addFinding: "Add finding",
+      previewTitle: "Auto-generated preview",
+      recommendation: "Recommendation",
+      moreSections: "more section(s)",
+      generate: "Generate full report + PDF",
+      processing: "Processing...",
+      localDraft: "Local draft saved at",
+      openPdf: "Open generated PDF",
+      risk: "Risk",
+      quality: "Draft quality",
+    }
+    : {
+      title: "Mode zero redaction",
+      subtitle:
+        "Selectionne les constats, puis le systeme redige automatiquement les sections observation/analyse/recommandation.",
+      reportTitle: "Titre du rapport",
+      inspectorNote: "Note terrain (optionnelle)",
+      language: "Langue",
+      jurisdiction: "Juridiction",
+      finding: "Constat",
+      remove: "Supprimer",
+      addFinding: "Ajouter un constat",
+      previewTitle: "Apercu auto-genere",
+      recommendation: "Recommandation",
+      moreSections: "section(s) supplementaire(s)",
+      generate: "Generer le rapport complet + PDF",
+      processing: "Traitement en cours...",
+      localDraft: "Brouillon local enregistre a",
+      openPdf: "Ouvrir le PDF genere",
+      risk: "Risque",
+      quality: "Qualite du brouillon",
+    };
 
   useEffect(() => {
     setHostInfo(window.location.host);
@@ -126,22 +176,11 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
     setEntries((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
   };
 
-  const parseErrorMessage = async (res: Response): Promise<string> => {
-    try {
-      const data = (await res.json()) as {
-        error?: string;
-        body?: { error?: string };
-      };
-      return data.error ?? data.body?.error ?? `Erreur HTTP ${res.status}`;
-    } catch {
-      return `Erreur HTTP ${res.status}`;
-    }
-  };
-
   const handleGenerate = async () => {
     try {
       setLoading(true);
       setError(null);
+      setPdfLink(null);
       setStatus("Etape 1/2: generation du contenu structure...");
       // #region agent log
       fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
@@ -207,6 +246,8 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
         success?: boolean;
         error?: string;
         pdf_url?: string;
+        signed_url?: string;
+        body?: { error?: string };
       };
       // #region agent log
       fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
@@ -231,12 +272,16 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       }).catch(() => {});
       // #endregion
       if (!pdfRes.ok || pdfBody.success === false) {
-        const fallbackMsg = await parseErrorMessage(pdfRes);
-        throw new Error(pdfBody.error ?? fallbackMsg ?? "Echec generation PDF");
+        throw new Error(
+          pdfBody.error ?? pdfBody.body?.error ??
+            `Echec generation PDF (${pdfRes.status})`,
+        );
       }
 
-      if (pdfBody.pdf_url) {
-        window.open(pdfBody.pdf_url, "_blank");
+      const nextPdfLink = pdfBody.signed_url ?? pdfBody.pdf_url ?? null;
+      if (nextPdfLink) {
+        window.open(nextPdfLink, "_blank");
+        setPdfLink(nextPdfLink);
       }
       setStatus("Rapport genere avec succes. Le PDF est pret.");
       localStorage.removeItem(storageKey);
@@ -251,18 +296,27 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-900">Mode zero redaction</h2>
+        <h2 className="text-xl font-semibold text-slate-900">{labels.title}</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Selectionne les constats, puis le systeme redige automatiquement les sections
-          observation/analyse/recommandation.
+          {labels.subtitle}
         </p>
         <p className="mt-1 text-xs text-slate-500">Environnement actif: {hostInfo || "n/a"}</p>
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-xs font-medium text-slate-600">{labels.quality}</span>
+          <div className="h-2 flex-1 rounded-full bg-slate-200">
+            <div
+              className="h-2 rounded-full bg-slate-900 transition-all"
+              style={{ width: `${completion}%` }}
+            />
+          </div>
+          <span className="text-xs font-semibold text-slate-700">{completion}%</span>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <label className="block text-sm font-medium text-slate-700">
-            Titre du rapport
+            {labels.reportTitle}
             <input
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
               value={title}
@@ -272,7 +326,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
 
           <div className="grid gap-2 md:grid-cols-2">
             <label className="block text-sm font-medium text-slate-700">
-              Langue
+              {labels.language}
               <select
                 className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
                 value={language}
@@ -284,7 +338,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
               </select>
             </label>
             <label className="block text-sm font-medium text-slate-700">
-              Juridiction
+              {labels.jurisdiction}
               <select
                 className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
                 value={jurisdiction}
@@ -298,7 +352,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
           </div>
 
           <label className="block text-sm font-medium text-slate-700">
-            Note terrain (optionnelle)
+            {labels.inspectorNote}
             <textarea
               className="mt-1 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
               value={inspectorNote}
@@ -311,14 +365,14 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
             {entries.map((entry, idx) => (
               <div key={idx} className="rounded-lg border border-slate-200 p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-slate-800">Constat #{idx + 1}</p>
+                  <p className="text-sm font-semibold text-slate-800">{labels.finding} #{idx + 1}</p>
                   <button
                     type="button"
                     className="text-xs text-red-600 disabled:text-slate-400"
                     disabled={entries.length === 1 || loading}
                     onClick={() => removeEntry(idx)}
                   >
-                    Supprimer
+                    {labels.remove}
                   </button>
                 </div>
 
@@ -380,12 +434,17 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
             onClick={addEntry}
             disabled={loading}
           >
-            Ajouter un constat
+            {labels.addFinding}
           </button>
         </div>
 
         <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
-          <h3 className="text-base font-semibold text-slate-900">Apercu auto-genere</h3>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-base font-semibold text-slate-900">{labels.previewTitle}</h3>
+            <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${riskBadgeClass}`}>
+              {labels.risk}: {generated.risk_level}
+            </span>
+          </div>
           <p className="text-sm text-slate-700">{generated.summary}</p>
 
           <div className="space-y-3">
@@ -395,13 +454,13 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
                 <p className="mt-1 text-xs text-slate-700">{section.observation}</p>
                 <p className="mt-1 text-xs text-slate-700">{section.analysis}</p>
                 <p className="mt-1 text-xs font-medium text-slate-800">
-                  Recommandation: {section.recommendation}
+                  {labels.recommendation}: {section.recommendation}
                 </p>
               </div>
             ))}
             {generated.sections.length > 3 ? (
               <p className="text-xs text-slate-500">
-                + {generated.sections.length - 3} section(s) supplementaire(s)
+                + {generated.sections.length - 3} {labels.moreSections}
               </p>
             ) : null}
           </div>
@@ -412,14 +471,24 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
             onClick={handleGenerate}
             className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {loading ? "Traitement en cours..." : "Generer le rapport complet + PDF"}
+            {loading ? labels.processing : labels.generate}
           </button>
 
           {lastSavedAt ? (
-            <p className="text-xs text-slate-500">Brouillon local enregistre a {lastSavedAt}</p>
+            <p className="text-xs text-slate-500">{labels.localDraft} {lastSavedAt}</p>
           ) : null}
           {status ? <p className="text-sm text-emerald-700">{status}</p> : null}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {pdfLink ? (
+            <a
+              href={pdfLink}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100"
+            >
+              {labels.openPdf}
+            </a>
+          ) : null}
         </div>
       </div>
     </div>
