@@ -8,6 +8,9 @@ import {
   SEVERITIES,
   ZONES,
   type IssueCode,
+  normalizeReportLanguage,
+  type JurisdictionProfile,
+  type ReportLanguage,
   type ReportEntryInput,
   type Severity,
   type ZoneCode,
@@ -27,18 +30,49 @@ function defaultEntry(): ReportEntryInput {
 }
 
 export default function ZeroDraftReportComposer({ reportId }: Props) {
+  const storageKey = `zero-draft:${reportId}`;
   const [hostInfo, setHostInfo] = useState<string>("");
   const [title, setTitle] = useState("Rapport d'inspection automatise");
   const [inspectorNote, setInspectorNote] = useState("");
   const [entries, setEntries] = useState<ReportEntryInput[]>([defaultEntry()]);
+  const [language, setLanguage] = useState<ReportLanguage>("fr");
+  const [jurisdiction, setJurisdiction] = useState<JurisdictionProfile>("ca_general");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   const generated = useMemo(() => buildStructuredReport(entries), [entries]);
 
   useEffect(() => {
     setHostInfo(window.location.host);
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          title?: string;
+          inspectorNote?: string;
+          entries?: ReportEntryInput[];
+          language?: ReportLanguage;
+          jurisdiction?: JurisdictionProfile;
+        };
+        if (typeof parsed.title === "string") setTitle(parsed.title);
+        if (typeof parsed.inspectorNote === "string") {
+          setInspectorNote(parsed.inspectorNote);
+        }
+        if (Array.isArray(parsed.entries) && parsed.entries.length > 0) {
+          setEntries(parsed.entries);
+        }
+        if (parsed.language) {
+          setLanguage(normalizeReportLanguage(parsed.language));
+        }
+        if (parsed.jurisdiction === "ca_qc" || parsed.jurisdiction === "ca_general") {
+          setJurisdiction(parsed.jurisdiction);
+        }
+      }
+    } catch {
+      // Ignore local draft parsing failure.
+    }
     // #region agent log
     fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
       method: "POST",
@@ -63,6 +97,20 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
     // #endregion
   }, [reportId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload = {
+      title,
+      inspectorNote,
+      entries,
+      language,
+      jurisdiction,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(storageKey, JSON.stringify(payload));
+    setLastSavedAt(new Date().toLocaleTimeString());
+  }, [entries, inspectorNote, jurisdiction, language, storageKey, title]);
+
   const updateEntry = <K extends keyof ReportEntryInput>(
     index: number,
     key: K,
@@ -78,11 +126,23 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
     setEntries((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
   };
 
+  const parseErrorMessage = async (res: Response): Promise<string> => {
+    try {
+      const data = (await res.json()) as {
+        error?: string;
+        body?: { error?: string };
+      };
+      return data.error ?? data.body?.error ?? `Erreur HTTP ${res.status}`;
+    } catch {
+      return `Erreur HTTP ${res.status}`;
+    }
+  };
+
   const handleGenerate = async () => {
     try {
       setLoading(true);
       setError(null);
-      setStatus("Generation du contenu structure...");
+      setStatus("Etape 1/2: generation du contenu structure...");
       // #region agent log
       fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
         method: "POST",
@@ -110,6 +170,8 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
           title,
           inspector_note: inspectorNote,
           entries,
+          language,
+          jurisdiction,
         }),
       });
       const saveBody = (await saveRes.json()) as { success?: boolean; error?: string };
@@ -132,10 +194,10 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       }).catch(() => {});
       // #endregion
       if (!saveRes.ok || !saveBody.success) {
-        throw new Error(saveBody.error ?? "Impossible d'enregistrer le contenu");
+        throw new Error(saveBody.error ?? `Impossible d'enregistrer le contenu (${saveRes.status})`);
       }
 
-      setStatus("Generation du PDF...");
+      setStatus("Etape 2/2: generation du PDF...");
       const pdfRes = await fetch("/api/trigger-inspection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -169,13 +231,15 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       }).catch(() => {});
       // #endregion
       if (!pdfRes.ok || pdfBody.success === false) {
-        throw new Error(pdfBody.error ?? "Echec generation PDF");
+        const fallbackMsg = await parseErrorMessage(pdfRes);
+        throw new Error(pdfBody.error ?? fallbackMsg ?? "Echec generation PDF");
       }
 
       if (pdfBody.pdf_url) {
         window.open(pdfBody.pdf_url, "_blank");
       }
-      setStatus("Rapport genere. Le PDF est pret.");
+      setStatus("Rapport genere avec succes. Le PDF est pret.");
+      localStorage.removeItem(storageKey);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus(null);
@@ -206,6 +270,33 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
             />
           </label>
 
+          <div className="grid gap-2 md:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-700">
+              Langue
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as ReportLanguage)}
+                disabled={loading}
+              >
+                <option value="fr">Francais</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <label className="block text-sm font-medium text-slate-700">
+              Juridiction
+              <select
+                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
+                value={jurisdiction}
+                onChange={(e) => setJurisdiction(e.target.value as JurisdictionProfile)}
+                disabled={loading}
+              >
+                <option value="ca_general">Canada (general)</option>
+                <option value="ca_qc">Quebec (Canada)</option>
+              </select>
+            </label>
+          </div>
+
           <label className="block text-sm font-medium text-slate-700">
             Note terrain (optionnelle)
             <textarea
@@ -224,7 +315,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
                   <button
                     type="button"
                     className="text-xs text-red-600 disabled:text-slate-400"
-                    disabled={entries.length === 1}
+                    disabled={entries.length === 1 || loading}
                     onClick={() => removeEntry(idx)}
                   >
                     Supprimer
@@ -236,6 +327,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
                     className="rounded-md border border-slate-300 px-2 py-2 text-sm"
                     value={entry.zone}
                     onChange={(e) => updateEntry(idx, "zone", e.target.value as ZoneCode)}
+                    disabled={loading}
                   >
                     {ZONES.map((zone) => (
                       <option key={zone.value} value={zone.value}>
@@ -248,6 +340,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
                     className="rounded-md border border-slate-300 px-2 py-2 text-sm"
                     value={entry.issue}
                     onChange={(e) => updateEntry(idx, "issue", e.target.value as IssueCode)}
+                    disabled={loading}
                   >
                     {ISSUES.map((issue) => (
                       <option key={issue.value} value={issue.value}>
@@ -260,6 +353,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
                     className="rounded-md border border-slate-300 px-2 py-2 text-sm"
                     value={entry.severity}
                     onChange={(e) => updateEntry(idx, "severity", e.target.value as Severity)}
+                    disabled={loading}
                   >
                     {SEVERITIES.map((severity) => (
                       <option key={severity.value} value={severity.value}>
@@ -274,6 +368,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
                   value={entry.note ?? ""}
                   onChange={(e) => updateEntry(idx, "note", e.target.value)}
                   placeholder="Note optionnelle pour ce constat..."
+                  disabled={loading}
                 />
               </div>
             ))}
@@ -283,6 +378,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
             type="button"
             className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             onClick={addEntry}
+            disabled={loading}
           >
             Ajouter un constat
           </button>
@@ -319,6 +415,9 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
             {loading ? "Traitement en cours..." : "Generer le rapport complet + PDF"}
           </button>
 
+          {lastSavedAt ? (
+            <p className="text-xs text-slate-500">Brouillon local enregistre a {lastSavedAt}</p>
+          ) : null}
           {status ? <p className="text-sm text-emerald-700">{status}</p> : null}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
         </div>
