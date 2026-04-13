@@ -222,9 +222,17 @@ function buildAiSectionHtml(
       narrative.recommendations.map((r) => `<li>${escapeHtml(r)}</li>`).join("")
     }</ul>`
     : "";
+  const bilingualAiFoot =
+    `<aside style="margin-top:1em;font-size:0.88em;border-top:1px solid #ccc;padding-top:0.6em">` +
+    `<p lang="fr"><strong>FR</strong> — ${escapeHtml(
+      "Texte genere ou assiste par IA : outil de redaction seulement. Il ne remplace pas une inspection conforme aux pratiques du Canada ni une validation des codes (CNB, provinciaux, CSA).",
+    )}</p>` +
+    `<p lang="en"><strong>EN</strong> — ${escapeHtml(
+      "AI-generated or assisted text: drafting aid only. It does not replace inspection practices in Canada or code validation (NBC, provincial codes, CSA).",
+    )}</p></aside>`;
   return `<section><h2>${labels.section}</h2><p>${
     escapeHtml(narrative.summary)
-  }</p>${critical}${recommendations}</section>`;
+  }</p>${critical}${recommendations}${bilingualAiFoot}</section>`;
 }
 
 function mergeAiSectionIntoHtml(
@@ -415,13 +423,13 @@ async function buildAiNarrativeFromPhotoAnalyses(
 
   try {
     const jurisdictionHint = jurisdiction === "ca_qc"
-      ? "Jurisdiction context: Quebec, Canada."
-      : "Jurisdiction context: Canada (province/territory-specific validation required).";
+      ? "Jurisdiction: Quebec, Canada. Reference Quebec Construction Code / RBQ expectations only as context; do not claim code compliance."
+      : "Jurisdiction: Canada. Reference NBC (National Building Code of Canada), provincial/territorial adopted codes, and CSA standards only as context; do not claim legal compliance.";
     const prompt = language === "en"
       ? [
         "You are writing an ultra-short inspection report for field operators.",
         "From the photo analyses, return only valid JSON.",
-        "Do not claim legal certification or definitive code compliance.",
+        "Do not claim legal certification or definitive building-code compliance. Use Canadian inspection vocabulary (visual assessment, recommend licensed trades, NBC/provincial codes to be verified on site).",
         "Strict schema:",
         '{"summary":"string","critical_points":["string"],"recommendations":["string"]}',
         "Constraints:",
@@ -439,7 +447,7 @@ async function buildAiNarrativeFromPhotoAnalyses(
       : [
         "Tu rediges un rapport d'inspection ultra court pour operateur terrain.",
         "A partir des analyses photo, retourne uniquement un JSON valide.",
-        "N'affirme jamais une certification legale ou une conformite definitive.",
+        "N'affirme jamais une certification legale ou une conformite definitive aux codes. Utilise le vocabulaire d'inspection batiment au Canada (evaluation visuelle, mandater des metiers competents, CNB / codes provinciaux a valider sur place).",
         "Schema strict:",
         '{"summary":"string","critical_points":["string"],"recommendations":["string"]}',
         "Contraintes:",
@@ -677,9 +685,10 @@ Deno.serve(async (req) => {
             summary: aiNarrative.summary,
             critical_points: aiNarrative.critical_points,
             recommendations: aiNarrative.recommendations,
-            compliance_notice: language === "en"
-              ? "AI content is a draft support only. Final compliance must be validated by a qualified professional."
-              : "Le contenu IA est un brouillon d'aide seulement. La conformite finale doit etre validee par un professionnel qualifie.",
+            compliance_notice_fr:
+              "Contenu IA : brouillon d'aide a la redaction. Conformite au CNB, codes provinciaux/territoriaux et normes CSA : a valider sur place par des professionnels competents au Canada.",
+            compliance_notice_en:
+              "AI-generated draft for writing support. Compliance with NBC, provincial/territorial codes, and CSA standards must be validated on site by qualified professionals in Canada.",
           };
           payload.html = htmlForPdf;
 

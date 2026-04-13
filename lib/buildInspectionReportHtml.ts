@@ -29,6 +29,8 @@ function i18n(language: ReportLanguage) {
       defectsTitle: "Issues",
       observationsTitle: "Observations",
       complianceTitle: "Compliance checks (Canada)",
+      bilingualFrameworkTitle:
+        "Bilingual notice — Canadian building inspection framework",
       legalNoticeTitle: "Legal notice",
       referencesTitle: "Reference candidates",
       elementFallback: "Item",
@@ -41,6 +43,8 @@ function i18n(language: ReportLanguage) {
       defectsTitle: "Defauts",
       observationsTitle: "Observations",
       complianceTitle: "Points de conformite (Canada)",
+      bilingualFrameworkTitle:
+        "Avis bilingue — cadre d'inspection des batiments au Canada",
       legalNoticeTitle: "Avis legal",
       referencesTitle: "References candidates",
       elementFallback: "Element",
@@ -63,6 +67,36 @@ type ComplianceChecklistItem = {
   status?: unknown;
   reference_candidates?: unknown;
 };
+
+function renderBilingualNoticeParagraphs(
+  compliance: Record<string, unknown>,
+  t: ReturnType<typeof i18n>,
+): string {
+  const raw = compliance.bilingual_notice;
+  if (!raw || typeof raw !== "object") return "";
+
+  const rec = raw as Record<string, unknown>;
+  const fr = Array.isArray(rec.fr)
+    ? rec.fr.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : [];
+  const en = Array.isArray(rec.en)
+    ? rec.en.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : [];
+  if (fr.length === 0 && en.length === 0) return "";
+
+  const frBlock = fr.length > 0
+    ? `<div lang="fr" style="margin-bottom:1.25em"><strong>Français</strong>${
+      fr.map((p) => `<p>${escapeHtml(p)}</p>`).join("")
+    }</div>`
+    : "";
+  const enBlock = en.length > 0
+    ? `<div lang="en" style="margin-bottom:1.25em"><strong>English</strong>${
+      en.map((p) => `<p>${escapeHtml(p)}</p>`).join("")
+    }</div>`
+    : "";
+
+  return `<h2>${escapeHtml(t.bilingualFrameworkTitle)}</h2>${frBlock}${enBlock}`;
+}
 
 export type GenericRow = Record<string, unknown>;
 
@@ -204,6 +238,9 @@ export function buildHtmlFromReportPayload(
         }
         parts.push("</ul>");
       }
+
+      const bilingualHtml = renderBilingualNoticeParagraphs(compliance, t);
+      if (bilingualHtml) parts.push(bilingualHtml);
     }
 
     parts.push("</body></html>");

@@ -368,6 +368,39 @@ function jurisdictionTag(jurisdiction: JurisdictionProfile): string {
     : "Provincial/territorial requirements to validate";
 }
 
+/** Avis bilingue FR/EN : cadre inspection bâtiment au Canada (non juridique, à valider sur site). */
+export function getCanadianInspectionBilingualNotice(
+  jurisdiction: JurisdictionProfile,
+): { fr: string[]; en: string[] } {
+  const qcFr =
+    jurisdiction === "ca_qc"
+      ? [
+        "Au Québec, valider toute exigence applicable avec le Code du bâtiment du Québec, la réglementation municipale, la RBQ et les normes CSA citées en référence.",
+      ]
+      : [];
+  const qcEn =
+    jurisdiction === "ca_qc"
+      ? [
+        "In Quebec, validate applicable requirements against the Quebec Construction Code, municipal regulations, RBQ rules, and referenced CSA standards.",
+      ]
+      : [];
+
+  return {
+    fr: [
+      "Le présent rapport décrit des constats visuels à la date d’inspection. Il ne constitue pas une certification de conformité ni un avis juridique.",
+      "La conformité aux exigences canadiennes (Code national du bâtiment — CNB, codes provinciaux ou territoriaux adoptés localement, sécurité incendie, santé et sécurité au travail, normes CSA notamment pour l’électricité, etc.) doit être confirmée par des professionnels habilités selon l’usage du bâtiment et la juridiction.",
+      "Les pratiques d’inspection recommandées (documentation photographique, limitation aux éléments accessibles, suivi des anomalies) s’alignent sur les attentes usuelles du secteur au Canada sans se substituer à une expertise de conception.",
+      ...qcFr,
+    ],
+    en: [
+      "This report documents visual findings at the time of inspection. It is not a compliance certificate or legal opinion.",
+      "Compliance with Canadian requirements (National Building Code of Canada — NBC, locally adopted provincial/territorial codes, fire safety, occupational health and safety, CSA standards including electrical safety, etc.) must be confirmed by qualified professionals according to building use and jurisdiction.",
+      "Recommended inspection practices (photo documentation, accessible components only, follow-up on deficiencies) reflect common Canadian industry expectations and do not replace design-level engineering.",
+      ...qcEn,
+    ],
+  };
+}
+
 function complianceTexts(
   issue: IssueCode,
   language: ReportLanguage,
@@ -552,6 +585,7 @@ export function buildStructuredReport(
       legal_notice: language === "en"
         ? "This automated content is a decision-support draft and does not constitute legal certification. Final compliance validation must be performed by a qualified professional according to applicable laws and regulations."
         : "Ce contenu automatise est un brouillon d'aide a la decision et ne constitue pas une certification legale. La validation finale de conformite doit etre faite par un professionnel qualifie selon les lois et reglements applicables.",
+      bilingual_notice: getCanadianInspectionBilingualNotice(jurisdiction),
       checklist: buildComplianceChecklist(entries, language, jurisdiction),
     },
   };

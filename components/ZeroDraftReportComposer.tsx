@@ -93,6 +93,8 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       openPdf: "Open generated PDF",
       risk: "Risk",
       quality: "Draft quality",
+      complianceBilingual:
+        "PDF includes a bilingual (FR/EN) Canadian building inspection framework notice and code references (NBC, provincial, CSA) — not a legal certificate.",
     }
     : {
       title: "Mode zero redaction",
@@ -116,6 +118,8 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       openPdf: "Ouvrir le PDF genere",
       risk: "Risque",
       quality: "Qualite du brouillon",
+      complianceBilingual:
+        "Le PDF inclut un encadrement bilingue (FR/EN) sur le cadre d'inspection batiment au Canada et des references codes (CNB, provincial, CSA) — sans valeur de certification legale.",
     };
 
   useEffect(() => {
@@ -342,6 +346,9 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
         <h2 className="text-xl font-semibold text-slate-900">{labels.title}</h2>
         <p className="mt-1 text-sm text-slate-600">
           {labels.subtitle}
+        </p>
+        <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+          {labels.complianceBilingual}
         </p>
         <p className="mt-1 text-xs text-slate-500">Environnement actif: {hostInfo || "n/a"}</p>
         <div className="mt-3 flex items-center gap-2">
