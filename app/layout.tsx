@@ -13,8 +13,28 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "InspectFlow",
-  description: "Rapports d’inspection et accès sécurisé aux PDF.",
+  title: {
+    default: "InspectFlow — Rapports d'inspection automatisés",
+    template: "%s | InspectFlow",
+  },
+  description:
+    "Générez des rapports d'inspection de bâtiments professionnels, bilingues (FR/EN), conformes aux pratiques canadiennes. PDF sécurisé, IA intégrée, zéro rédaction.",
+  keywords: [
+    "inspection bâtiment",
+    "rapport inspection",
+    "Canada",
+    "CNB",
+    "building inspection",
+    "PDF",
+    "bilingue",
+  ],
+  openGraph: {
+    title: "InspectFlow — Rapports d'inspection automatisés",
+    description:
+      "Rapports professionnels bilingues FR/EN. Conforme aux pratiques canadiennes. PDF sécurisé.",
+    type: "website",
+    locale: "fr_CA",
+  },
 };
 
 export default function RootLayout({

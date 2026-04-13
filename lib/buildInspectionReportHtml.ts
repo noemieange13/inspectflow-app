@@ -134,28 +134,6 @@ export function buildHtmlFromReportPayload(
           "analysis" in (sec as Record<string, unknown>) ||
           "recommendation" in (sec as Record<string, unknown>)),
     ).length;
-    // #region agent log
-    fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "0c2b62",
-      },
-      body: JSON.stringify({
-        sessionId: "0c2b62",
-        runId: "ui-zero-draft-debug-1",
-        hypothesisId: "H5",
-        location: "lib/buildInspectionReportHtml.ts:sections-branch",
-        message: "sections format detected",
-        data: {
-          sectionsCount: sectionsRaw.length,
-          sectionsWithItems,
-          sectionsWithNarrativeFields,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     const parts: string[] = [];
     parts.push(
@@ -170,7 +148,7 @@ export function buildHtmlFromReportPayload(
       typeof payload.title === "string" && payload.title.trim()
         ? payload.title
         : t.defaultTitle;
-    parts.push(`<h1>${escapeHtml(title)}</h1>`);
+    parts.push(`<div class="header"><h1>Inspect<span class="brand">Flow</span></h1><p class="subtitle">${escapeHtml(title)}</p></div>`);
 
     if (payload.score != null && String(payload.score).length > 0) {
       parts.push(`<h2>${t.scoreLabel}: ${escapeHtml(String(payload.score))}</h2>`);
@@ -243,6 +221,11 @@ export function buildHtmlFromReportPayload(
       if (bilingualHtml) parts.push(bilingualHtml);
     }
 
+    parts.push(`<div class="footer">Inspect<strong>Flow</strong> — ${
+      t.htmlLang === "en"
+        ? "Automated building inspection report. This document does not constitute legal certification."
+        : "Rapport d'inspection automatisé. Ce document ne constitue pas une certification légale."
+    }</div>`);
     parts.push("</body></html>");
     return parts.join("");
   }

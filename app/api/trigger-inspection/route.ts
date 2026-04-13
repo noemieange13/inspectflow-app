@@ -2,7 +2,17 @@ import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
 
 export async function POST(req: Request) {
-  console.info("[debug-0c2b62] trigger-inspection POST hit");
+  const secret = process.env.TRIGGER_INSPECTION_SECRET;
+  if (secret) {
+    const provided = req.headers.get("x-trigger-secret");
+    if (provided !== secret) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+  }
+
   let body: unknown;
   try {
     body = await req.json();

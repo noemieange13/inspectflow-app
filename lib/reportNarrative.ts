@@ -10,7 +10,12 @@ export type IssueCode =
   | "ventilation_issue"
   | "roof_wear"
   | "window_seal_failure"
-  | "structure_movement";
+  | "structure_movement"
+  | "plumbing_issue"
+  | "insulation_deficiency"
+  | "fire_safety"
+  | "exterior_damage"
+  | "other";
 
 export type ZoneCode =
   | "toiture"
@@ -20,7 +25,12 @@ export type ZoneCode =
   | "salle_de_bain"
   | "sous_sol"
   | "installation_electrique"
-  | "fondation";
+  | "fondation"
+  | "garage"
+  | "exterieur"
+  | "plomberie"
+  | "grenier"
+  | "autre";
 
 export type ReportEntryInput = {
   zone: ZoneCode;
@@ -53,24 +63,34 @@ type ZoneTemplate = {
 
 export const ZONES: Array<{ value: ZoneCode; label: string }> = [
   { value: "toiture", label: "Toiture" },
-  { value: "facade", label: "Facade" },
+  { value: "facade", label: "Façade" },
   { value: "salon", label: "Salon" },
   { value: "cuisine", label: "Cuisine" },
   { value: "salle_de_bain", label: "Salle de bain" },
   { value: "sous_sol", label: "Sous-sol" },
-  { value: "installation_electrique", label: "Installation electrique" },
+  { value: "installation_electrique", label: "Installation électrique" },
   { value: "fondation", label: "Fondation" },
+  { value: "garage", label: "Garage" },
+  { value: "exterieur", label: "Extérieur / terrain" },
+  { value: "plomberie", label: "Plomberie" },
+  { value: "grenier", label: "Grenier / combles" },
+  { value: "autre", label: "Autre" },
 ];
 
 export const ISSUES: Array<{ value: IssueCode; label: string }> = [
   { value: "water_infiltration", label: "Infiltration d'eau" },
   { value: "crack_wall", label: "Fissuration murale" },
-  { value: "electrical_risk", label: "Risque electrique" },
-  { value: "humidity_mold", label: "Humidite / moisissure" },
+  { value: "electrical_risk", label: "Risque électrique" },
+  { value: "humidity_mold", label: "Humidité / moisissure" },
   { value: "ventilation_issue", label: "Ventilation insuffisante" },
   { value: "roof_wear", label: "Usure de toiture" },
-  { value: "window_seal_failure", label: "Defaut d'etancheite fenetres" },
+  { value: "window_seal_failure", label: "Défaut d'étanchéité fenêtres" },
   { value: "structure_movement", label: "Mouvement structurel suspect" },
+  { value: "plumbing_issue", label: "Problème de plomberie" },
+  { value: "insulation_deficiency", label: "Déficience d'isolation" },
+  { value: "fire_safety", label: "Sécurité incendie" },
+  { value: "exterior_damage", label: "Dommage extérieur" },
+  { value: "other", label: "Autre constat" },
 ];
 
 export const SEVERITIES: Array<{ value: Severity; label: string }> = [
@@ -188,6 +208,66 @@ const ISSUE_MAP: Record<IssueCode, IssueTemplate> = {
       high: "Demander une expertise structurale immediate et appliquer les mesures de mitigation recommandees.",
     },
   },
+  plumbing_issue: {
+    label: "Probleme de plomberie",
+    observation:
+      "Des anomalies de plomberie ont ete constatees (fuites, corrosion, raccords non conformes ou drainage insuffisant).",
+    analysis:
+      "Les defauts de plomberie peuvent entrainer des dommages par l'eau, une perte de pression ou un risque sanitaire.",
+    recommendation: {
+      low: "Planifier une verification par un plombier qualifie dans les 30 jours.",
+      medium: "Faire corriger les anomalies par un plombier licencie dans un delai court.",
+      high: "Couper l'alimentation si necessaire et faire intervenir un plombier en urgence.",
+    },
+  },
+  insulation_deficiency: {
+    label: "Deficience d'isolation",
+    observation:
+      "L'isolation thermique semble insuffisante ou degradee dans la zone inspectee (ponts thermiques, materiaux absents ou affaisses).",
+    analysis:
+      "Une isolation deficiente augmente les pertes energetiques et peut favoriser la condensation et les moisissures.",
+    recommendation: {
+      low: "Evaluer la performance thermique et planifier une amelioration lors de travaux futurs.",
+      medium: "Faire verifier et completer l'isolation par un professionnel qualifie.",
+      high: "Corriger rapidement les zones non isolees pour prevenir des dommages structurels ou sanitaires.",
+    },
+  },
+  fire_safety: {
+    label: "Securite incendie",
+    observation:
+      "Des lacunes en matiere de securite incendie ont ete relevees (detecteurs absents, issues obstruees, materiaux non conformes).",
+    analysis:
+      "Ces conditions peuvent compromettre l'evacuation et augmenter le risque en cas d'incendie.",
+    recommendation: {
+      low: "Verifier et mettre a jour les detecteurs de fumee et le plan d'evacuation.",
+      medium: "Faire corriger les non-conformites par un professionnel en securite incendie.",
+      high: "Intervenir immediatement pour retablir les conditions minimales de securite incendie.",
+    },
+  },
+  exterior_damage: {
+    label: "Dommage exterieur",
+    observation:
+      "Des dommages sont visibles sur les composantes exterieures (revetement, balcon, escalier, terrain ou drainage).",
+    analysis:
+      "L'etat observe peut affecter l'integrite de l'enveloppe du batiment et la securite des occupants.",
+    recommendation: {
+      low: "Planifier un entretien correctif saisonnier.",
+      medium: "Faire evaluer et reparer par un entrepreneur qualifie.",
+      high: "Securiser la zone et programmer une reparation prioritaire.",
+    },
+  },
+  other: {
+    label: "Autre constat",
+    observation:
+      "Un constat ne correspondant pas aux categories predefinies a ete releve lors de l'inspection.",
+    analysis:
+      "Ce constat merite une attention particuliere et pourrait necessiter une evaluation specialisee.",
+    recommendation: {
+      low: "Documenter et surveiller l'evolution.",
+      medium: "Consulter un professionnel pour evaluation approfondie.",
+      high: "Faire evaluer en priorite par un specialiste du domaine concerne.",
+    },
+  },
 };
 
 const SEVERITY_LABELS: Record<ReportLanguage, Record<Severity, string>> = {
@@ -204,6 +284,11 @@ const ZONE_LABELS_EN: Record<ZoneCode, string> = {
   sous_sol: "Basement",
   installation_electrique: "Electrical installation",
   fondation: "Foundation",
+  garage: "Garage",
+  exterieur: "Exterior / grounds",
+  plomberie: "Plumbing",
+  grenier: "Attic",
+  autre: "Other",
 };
 
 const ISSUE_MAP_EN: Record<IssueCode, IssueTemplate> = {
@@ -312,12 +397,59 @@ const ISSUE_MAP_EN: Record<IssueCode, IssueTemplate> = {
     analysis:
       "This condition may indicate evolving structural stress requiring specialized verification.",
     recommendation: {
-      low:
-        "Monitor with periodic records and document any visible progression.",
-      medium:
-        "Request a targeted technical assessment to determine local stability.",
-      high:
-        "Request immediate structural expertise and apply recommended mitigation measures.",
+      low: "Monitor with periodic records and document any visible progression.",
+      medium: "Request a targeted technical assessment to determine local stability.",
+      high: "Request immediate structural expertise and apply recommended mitigation measures.",
+    },
+  },
+  plumbing_issue: {
+    label: "Plumbing issue",
+    observation: "Plumbing anomalies were identified (leaks, corrosion, non-compliant connections, or insufficient drainage).",
+    analysis: "Plumbing defects can lead to water damage, pressure loss, or sanitary risk.",
+    recommendation: {
+      low: "Schedule a plumber inspection within 30 days.",
+      medium: "Have anomalies corrected by a licensed plumber promptly.",
+      high: "Shut off water supply if needed and call a plumber urgently.",
+    },
+  },
+  insulation_deficiency: {
+    label: "Insulation deficiency",
+    observation: "Thermal insulation appears insufficient or degraded in the inspected area (thermal bridges, missing or sagging material).",
+    analysis: "Deficient insulation increases energy loss and can promote condensation and mold growth.",
+    recommendation: {
+      low: "Assess thermal performance and plan improvement during future work.",
+      medium: "Have insulation verified and supplemented by a qualified professional.",
+      high: "Correct uninsulated areas promptly to prevent structural or health damage.",
+    },
+  },
+  fire_safety: {
+    label: "Fire safety",
+    observation: "Fire safety gaps were identified (missing detectors, obstructed exits, non-compliant materials).",
+    analysis: "These conditions can compromise evacuation and increase risk in case of fire.",
+    recommendation: {
+      low: "Verify and update smoke detectors and evacuation plan.",
+      medium: "Have non-compliance items corrected by a fire safety professional.",
+      high: "Act immediately to restore minimum fire safety conditions.",
+    },
+  },
+  exterior_damage: {
+    label: "Exterior damage",
+    observation: "Damage is visible on exterior components (siding, balcony, stairs, grounds, or drainage).",
+    analysis: "The observed condition may affect envelope integrity and occupant safety.",
+    recommendation: {
+      low: "Plan seasonal corrective maintenance.",
+      medium: "Have a qualified contractor evaluate and repair.",
+      high: "Secure the area and schedule priority repair.",
+    },
+  },
+  other: {
+    label: "Other finding",
+    observation: "A finding that does not match predefined categories was noted during inspection.",
+    analysis: "This finding deserves attention and may require specialized evaluation.",
+    recommendation: {
+      low: "Document and monitor progression.",
+      medium: "Consult a professional for in-depth evaluation.",
+      high: "Have the relevant specialist evaluate as a priority.",
     },
   },
 };
@@ -356,6 +488,27 @@ function baseReferencesForIssue(issue: IssueCode): string[] {
       return [
         "NBC Part 4/9 (structural safety requirements)",
         "Engineer assessment requirements where structural risk is suspected",
+      ];
+    case "plumbing_issue":
+      return [
+        "National Plumbing Code of Canada (NPC)",
+        "Provincial/territorial plumbing regulations",
+      ];
+    case "insulation_deficiency":
+      return [
+        "NBC Part 9 (insulation and energy efficiency)",
+        "National Energy Code of Canada for Buildings (NECB) where applicable",
+      ];
+    case "fire_safety":
+      return [
+        "National Fire Code of Canada (NFC)",
+        "Provincial/territorial fire safety regulations",
+        "CSA standards for fire detection and alarm systems",
+      ];
+    case "exterior_damage":
+      return [
+        "NBC Part 5/9 (envelope performance)",
+        "Municipal property maintenance standards where applicable",
       ];
     default:
       return ["Applicable Canadian building and safety regulations"];
@@ -446,6 +599,26 @@ function complianceTexts(
       requirement:
         "Obtenir une evaluation d'ingenierie si signes de mouvement actif ou risque pour la securite.",
     },
+    plumbing_issue: {
+      title: "Plomberie",
+      requirement: "Verifier la conformite des installations de plomberie selon le Code national de plomberie du Canada.",
+    },
+    insulation_deficiency: {
+      title: "Isolation thermique",
+      requirement: "Evaluer la performance isolante et corriger les deficiences selon les exigences du CNB et CNEB.",
+    },
+    fire_safety: {
+      title: "Securite incendie",
+      requirement: "Verifier la conformite aux exigences du Code national de prevention des incendies et reglements provinciaux.",
+    },
+    exterior_damage: {
+      title: "Composantes exterieures",
+      requirement: "Evaluer l'integrite de l'enveloppe et des composantes exterieures selon les normes applicables.",
+    },
+    other: {
+      title: "Autre constat",
+      requirement: "Evaluer le constat selon les normes et reglements applicables a la juridiction.",
+    },
   };
 
   const mapEn: Record<IssueCode, { title: string; requirement: string }> = {
@@ -488,6 +661,26 @@ function complianceTexts(
       title: "Structural movement",
       requirement:
         "Obtain engineering review when active movement or safety risk indicators are present.",
+    },
+    plumbing_issue: {
+      title: "Plumbing",
+      requirement: "Verify plumbing compliance according to the National Plumbing Code of Canada.",
+    },
+    insulation_deficiency: {
+      title: "Thermal insulation",
+      requirement: "Assess insulation performance and correct deficiencies per NBC and NECB requirements.",
+    },
+    fire_safety: {
+      title: "Fire safety",
+      requirement: "Verify compliance with the National Fire Code and provincial/territorial fire regulations.",
+    },
+    exterior_damage: {
+      title: "Exterior components",
+      requirement: "Assess envelope and exterior component integrity per applicable standards.",
+    },
+    other: {
+      title: "Other finding",
+      requirement: "Evaluate finding per applicable codes and regulations for the jurisdiction.",
     },
   };
 

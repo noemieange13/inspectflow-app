@@ -5,5 +5,5 @@ create unique index if not exists report_views_dedupe
 on public.report_views (
   report_id,
   coalesce(ip, ''),
-  (date_trunc('minute', viewed_at))
+  (date_trunc('minute', viewed_at at time zone 'UTC'))
 );

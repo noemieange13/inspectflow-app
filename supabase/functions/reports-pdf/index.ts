@@ -397,6 +397,69 @@ async function fetchPhotoAnalysesForReport(
   return { rows: [], source: "none" };
 }
 
+function scorePhotoQuality(row: PhotoAnalysisRow): number {
+  let score = 0;
+  if (!row.analysis) return 0;
+
+  const snippets: string[] = [];
+  collectTextSnippets(row.analysis, snippets);
+  score += Math.min(snippets.length * 2, 10);
+
+  const text = snippets.join(" ").toLowerCase();
+  const defectKeywords = [
+    "crack", "fissure", "leak", "fuite", "mold", "moisissure",
+    "damage", "dommage", "rust", "corrosion", "stain", "tache",
+    "broken", "defect", "anomaly", "anomalie", "wear", "usure",
+  ];
+  for (const kw of defectKeywords) {
+    if (text.includes(kw)) score += 3;
+  }
+
+  const severityKeywords = ["high", "critical", "urgent", "elevee", "critique"];
+  for (const kw of severityKeywords) {
+    if (text.includes(kw)) score += 5;
+  }
+
+  return score;
+}
+
+function selectBestPhotos(
+  rows: PhotoAnalysisRow[],
+  maxPerCategory: number = 2,
+  maxTotal: number = AI_MAX_PHOTOS,
+): PhotoAnalysisRow[] {
+  const scored = rows.map((row) => ({
+    row,
+    score: scorePhotoQuality(row),
+  }));
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const selected: PhotoAnalysisRow[] = [];
+  const seenCategories = new Map<string, number>();
+
+  for (const { row, score } of scored) {
+    if (selected.length >= maxTotal) break;
+    if (score === 0) continue;
+
+    const snippets: string[] = [];
+    collectTextSnippets(row.analysis, snippets);
+    const category = snippets[0]?.slice(0, 30) ?? "unknown";
+
+    const count = seenCategories.get(category) ?? 0;
+    if (count >= maxPerCategory) continue;
+
+    seenCategories.set(category, count + 1);
+    selected.push(row);
+  }
+
+  if (selected.length === 0 && scored.length > 0) {
+    return scored.slice(0, maxTotal).map((s) => s.row);
+  }
+
+  return selected;
+}
+
 async function buildAiNarrativeFromPhotoAnalyses(
   rows: PhotoAnalysisRow[],
   language: ReportLanguage,
@@ -669,8 +732,14 @@ Deno.serve(async (req) => {
     try {
       const photoAnalyses = await fetchPhotoAnalysesForReport(supabase, reportId);
       if (photoAnalyses.rows.length > 0) {
+        const bestPhotos = selectBestPhotos(photoAnalyses.rows);
+        logStructured("info", "photo_selection", {
+          report_id: reportId,
+          total: photoAnalyses.rows.length,
+          selected: bestPhotos.length,
+        });
         aiNarrative = await buildAiNarrativeFromPhotoAnalyses(
-          photoAnalyses.rows,
+          bestPhotos,
           language,
           jurisdiction,
         );

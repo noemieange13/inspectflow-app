@@ -47,7 +47,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 export default function ZeroDraftReportComposer({ reportId }: Props) {
   const storageKey = `zero-draft:${reportId}`;
   const [hostInfo, setHostInfo] = useState<string>("");
-  const [title, setTitle] = useState("Rapport d'inspection automatise");
+  const [title, setTitle] = useState("Rapport d'inspection automatisé");
   const [inspectorNote, setInspectorNote] = useState("");
   const [entries, setEntries] = useState<ReportEntryInput[]>([defaultEntry()]);
   const [language, setLanguage] = useState<ReportLanguage>("fr");
@@ -97,9 +97,9 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
         "PDF includes a bilingual (FR/EN) Canadian building inspection framework notice and code references (NBC, provincial, CSA) — not a legal certificate.",
     }
     : {
-      title: "Mode zero redaction",
+      title: "Mode zéro rédaction",
       subtitle:
-        "Selectionne les constats, puis le systeme redige automatiquement les sections observation/analyse/recommandation.",
+        "Sélectionnez les constats, puis le système rédige automatiquement les sections observation/analyse/recommandation.",
       reportTitle: "Titre du rapport",
       inspectorNote: "Note terrain (optionnelle)",
       language: "Langue",
@@ -107,19 +107,19 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       finding: "Constat",
       remove: "Supprimer",
       addFinding: "Ajouter un constat",
-      previewTitle: "Apercu auto-genere",
+      previewTitle: "Aperçu auto-généré",
       recommendation: "Recommandation",
-      moreSections: "section(s) supplementaire(s)",
-      generate: "Generer le rapport complet + PDF",
-      processing: "Traitement en cours...",
-      retryPdf: "Relancer la generation PDF",
+      moreSections: "section(s) supplémentaire(s)",
+      generate: "Générer le rapport complet + PDF",
+      processing: "Traitement en cours…",
+      retryPdf: "Relancer la génération PDF",
       clearDraft: "Effacer le brouillon local",
-      localDraft: "Brouillon local enregistre a",
-      openPdf: "Ouvrir le PDF genere",
+      localDraft: "Brouillon local enregistré à",
+      openPdf: "Ouvrir le PDF généré",
       risk: "Risque",
-      quality: "Qualite du brouillon",
+      quality: "Qualité du brouillon",
       complianceBilingual:
-        "Le PDF inclut un encadrement bilingue (FR/EN) sur le cadre d'inspection batiment au Canada et des references codes (CNB, provincial, CSA) — sans valeur de certification legale.",
+        "Le PDF inclut un encadrement bilingue (FR/EN) sur le cadre d'inspection bâtiment au Canada et des références codes (CNB, provincial, CSA) — sans valeur de certification légale.",
     };
 
   useEffect(() => {
@@ -151,28 +151,6 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
     } catch {
       // Ignore local draft parsing failure.
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "0c2b62",
-      },
-      body: JSON.stringify({
-        sessionId: "0c2b62",
-        runId: "ui-zero-draft-debug-3",
-        hypothesisId: "H9",
-        location: "components/ZeroDraftReportComposer.tsx:mount",
-        message: "zero draft composer mounted",
-        data: {
-          reportIdPresent: Boolean(reportId),
-          origin: window.location.origin,
-          path: window.location.pathname,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
   }, [reportId, storageKey]);
 
   useEffect(() => {
@@ -238,7 +216,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
 
   const clearLocalDraft = () => {
     localStorage.removeItem(storageKey);
-    setTitle(language === "en" ? "Automated inspection report" : "Rapport d'inspection automatise");
+    setTitle(language === "en" ? "Automated inspection report" : "Rapport d'inspection automatisé");
     setInspectorNote("");
     setEntries([defaultEntry()]);
     setError(null);
@@ -262,25 +240,6 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       setPdfLink(null);
       setRetryAvailable(false);
       setStatus("Etape 1/2: generation du contenu structure...");
-      // #region agent log
-      fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "0c2b62",
-        },
-        body: JSON.stringify({
-          sessionId: "0c2b62",
-          runId: "ui-zero-draft-debug-2",
-          hypothesisId: "H6",
-          location: "components/ZeroDraftReportComposer.tsx:handleGenerate-start",
-          message: "ui generation clicked",
-          data: { reportIdPresent: Boolean(reportId), entriesCount: entries.length },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-
       const saveRes = await withTimeout(
         fetch("/api/report-content", {
           method: "POST",
@@ -298,24 +257,6 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
         "report-content",
       );
       const saveBody = await readJsonSafe<{ success?: boolean; error?: string }>(saveRes);
-      // #region agent log
-      fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "0c2b62",
-        },
-        body: JSON.stringify({
-          sessionId: "0c2b62",
-          runId: "ui-zero-draft-debug-2",
-          hypothesisId: "H7",
-          location: "components/ZeroDraftReportComposer.tsx:after-report-content",
-          message: "report-content response",
-          data: { status: saveRes.status, success: Boolean(saveBody?.success) },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       if (!saveRes.ok || !saveBody?.success) {
         throw new Error(
           saveBody?.error ??
@@ -329,7 +270,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
         window.open(nextPdfLink, "_blank");
         setPdfLink(nextPdfLink);
       }
-      setStatus("Rapport genere avec succes. Le PDF est pret.");
+      setStatus("Rapport généré avec succès. Le PDF est prêt.");
       localStorage.removeItem(storageKey);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

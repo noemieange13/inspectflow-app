@@ -12,7 +12,6 @@ import {
 export async function ensureReportPayloadHtml(
   reportId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const runId = "ui-zero-draft-debug-1";
   let supabase;
   try {
     supabase = await createServiceRoleClient();
@@ -31,29 +30,6 @@ export async function ensureReportPayloadHtml(
   if (!report) return { ok: false, error: "Rapport introuvable" };
 
   const payload = (report.payload ?? {}) as Record<string, unknown>;
-  // #region agent log
-  fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "0c2b62",
-    },
-    body: JSON.stringify({
-      sessionId: "0c2b62",
-      runId,
-      hypothesisId: "H4",
-      location: "lib/ensureReportPayloadHtml.ts:before-build",
-      message: "payload source shape before html build",
-      data: {
-        hasHtml: typeof payload.html === "string",
-        hasSections: Array.isArray(payload.sections),
-        hasDefects: Array.isArray(payload.defects),
-        hasObservations: Array.isArray(payload.observations),
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   const built = buildHtmlFromReportPayload(payload);
 
   if (!built || !isHtmlLongEnough(built)) {
@@ -70,24 +46,6 @@ export async function ensureReportPayloadHtml(
 
   const current = typeof payload.html === "string" ? payload.html : "";
   if (built === current) {
-    // #region agent log
-    fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "0c2b62",
-      },
-      body: JSON.stringify({
-        sessionId: "0c2b62",
-        runId,
-        hypothesisId: "H5",
-        location: "lib/ensureReportPayloadHtml.ts:skip-update",
-        message: "html unchanged",
-        data: { htmlLength: built.length },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     return { ok: true };
   }
 

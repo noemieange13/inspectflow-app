@@ -9,6 +9,7 @@ cloudResources:
     ..\postman\collections\My Collection: 53929588-f6b50495-d9bb-4e8b-a6ee-60145f1a971a
   environments:
     ..\postman\environments\New Environment.environment.yaml: 53929588-79718ac5-e753-4c37-a600-330bd18cd0c4
+    ..\postman\environments\New Environment 1.environment.yaml: 1ba222bc-fc31-49f8-a0b0-010d9584edd7
 
 # All resources in the `postman/` folder are automatically registered in Local View.
 # Point to additional files outside the `postman/` folder to register them individually. Example:

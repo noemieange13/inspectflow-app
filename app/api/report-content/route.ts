@@ -47,7 +47,6 @@ function normalizeEntries(rawEntries: unknown): ReportEntryInput[] {
 }
 
 export async function POST(req: Request) {
-  const runId = "ui-zero-draft-debug-1";
   console.info("[debug-0c2b62] report-content POST hit");
   let body: unknown;
   try {
@@ -108,29 +107,6 @@ export async function POST(req: Request) {
   }
 
   try {
-    // #region agent log
-    fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "0c2b62",
-      },
-      body: JSON.stringify({
-        sessionId: "0c2b62",
-        runId,
-        hypothesisId: "H1",
-        location: "app/api/report-content/route.ts:POST",
-        message: "report-content request parsed",
-        data: {
-          reportIdPresent: Boolean(reportId),
-          entriesCount: entries.length,
-          hasInspectorNote: Boolean(inspectorNote),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
     const supabase = await createServiceRoleClient();
     const { data: report, error: readError } = await supabase
       .from("reports")
@@ -139,24 +115,6 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (readError) {
-      // #region agent log
-      fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "0c2b62",
-        },
-        body: JSON.stringify({
-          sessionId: "0c2b62",
-          runId,
-          hypothesisId: "H2",
-          location: "app/api/report-content/route.ts:read-report",
-          message: "report read failed",
-          data: { message: readError.message },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       return Response.json({ success: false, error: readError.message }, { status: 500 });
     }
     if (!report) {
@@ -189,48 +147,8 @@ export async function POST(req: Request) {
       .eq("id", reportId);
 
     if (updateError) {
-      // #region agent log
-      fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "0c2b62",
-        },
-        body: JSON.stringify({
-          sessionId: "0c2b62",
-          runId,
-          hypothesisId: "H3",
-          location: "app/api/report-content/route.ts:update-report",
-          message: "report payload update failed",
-          data: { message: updateError.message, sectionsCount: generated.sections.length },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       return Response.json({ success: false, error: updateError.message }, { status: 500 });
     }
-
-    // #region agent log
-    fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "0c2b62",
-      },
-      body: JSON.stringify({
-        sessionId: "0c2b62",
-        runId,
-        hypothesisId: "H1",
-        location: "app/api/report-content/route.ts:success",
-        message: "report payload updated",
-        data: {
-          sectionsCount: generated.sections.length,
-          riskLevel: generated.risk_level,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     return Response.json({
       success: true,

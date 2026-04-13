@@ -1,14 +1,31 @@
+import type { Metadata } from "next";
 import ZeroDraftReportComposer from "@/components/ZeroDraftReportComposer";
 
-export default function Page({ params }: { params: { id: string } }) {
-  const id = params.id;
+type Props = { params: Promise<{ id: string }> };
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { id } = await params;
+  return { title: `Rapport ${id.slice(0, 8)}…` };
+}
+
+export default async function Page({ params }: Props) {
+  const { id } = await params;
 
   return (
-    <div className="p-6">
-      <h1 className="mb-1 text-2xl font-bold text-slate-900">Rapport {id}</h1>
-      <p className="mb-6 text-sm text-slate-600">
-        Objectif: generer un rapport complet, bilingue et traçable, sans redaction manuelle longue.
-      </p>
+    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <header className="mb-8">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Inspect<span className="text-blue-600">Flow</span>
+          </h1>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+            Rapport
+          </span>
+        </div>
+        <p className="mt-2 text-sm text-slate-600">
+          Générez un rapport complet, bilingue et traçable — sans rédaction manuelle.
+        </p>
+      </header>
       <ZeroDraftReportComposer reportId={id} />
     </div>
   );
