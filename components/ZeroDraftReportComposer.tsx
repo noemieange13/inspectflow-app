@@ -307,12 +307,12 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
           hypothesisId: "H7",
           location: "components/ZeroDraftReportComposer.tsx:after-report-content",
           message: "report-content response",
-          data: { status: saveRes.status, success: Boolean(saveBody.success) },
+          data: { status: saveRes.status, success: Boolean(saveBody?.success) },
           timestamp: Date.now(),
         }),
       }).catch(() => {});
       // #endregion
-      if (!saveRes.ok || !saveBody.success) {
+      if (!saveRes.ok || !saveBody?.success) {
         throw new Error(
           saveBody?.error ??
             `Impossible d'enregistrer le contenu (${saveRes.status})`,
