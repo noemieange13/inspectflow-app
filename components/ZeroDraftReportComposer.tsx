@@ -43,7 +43,10 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
   const [pdfLink, setPdfLink] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
-  const generated = useMemo(() => buildStructuredReport(entries), [entries]);
+  const generated = useMemo(
+    () => buildStructuredReport(entries, language, jurisdiction),
+    [entries, jurisdiction, language],
+  );
   const completion = Math.min(100, Math.max(15, Math.round((entries.length / 6) * 100)));
   const riskBadgeClass = generated.risk_level === "high"
     ? "bg-red-100 text-red-700 border-red-200"
@@ -145,7 +148,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       }),
     }).catch(() => {});
     // #endregion
-  }, [reportId]);
+  }, [reportId, storageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -177,6 +180,13 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
   };
 
   const handleGenerate = async () => {
+    const readJsonSafe = async <T,>(res: Response): Promise<T | null> => {
+      try {
+        return (await res.json()) as T;
+      } catch {
+        return null;
+      }
+    };
     try {
       setLoading(true);
       setError(null);
@@ -213,7 +223,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
           jurisdiction,
         }),
       });
-      const saveBody = (await saveRes.json()) as { success?: boolean; error?: string };
+      const saveBody = await readJsonSafe<{ success?: boolean; error?: string }>(saveRes);
       // #region agent log
       fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
         method: "POST",
@@ -233,7 +243,10 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       }).catch(() => {});
       // #endregion
       if (!saveRes.ok || !saveBody.success) {
-        throw new Error(saveBody.error ?? `Impossible d'enregistrer le contenu (${saveRes.status})`);
+        throw new Error(
+          saveBody?.error ??
+            `Impossible d'enregistrer le contenu (${saveRes.status})`,
+        );
       }
 
       setStatus("Etape 2/2: generation du PDF...");
@@ -242,13 +255,13 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ report_id: reportId }),
       });
-      const pdfBody = (await pdfRes.json()) as {
+      const pdfBody = (await readJsonSafe<{
         success?: boolean;
         error?: string;
         pdf_url?: string;
         signed_url?: string;
         body?: { error?: string };
-      };
+      }>(pdfRes)) ?? {};
       // #region agent log
       fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
         method: "POST",
