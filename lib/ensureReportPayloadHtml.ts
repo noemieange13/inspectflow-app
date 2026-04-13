@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 import {
   buildHtmlFromReportPayload,
@@ -12,15 +12,14 @@ import {
 export async function ensureReportPayloadHtml(
   reportId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!base || !key) {
-    return { ok: false, error: "Configuration Supabase manquante" };
+  const runId = "ui-zero-draft-debug-1";
+  let supabase;
+  try {
+    supabase = await createServiceRoleClient();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
   }
-
-  const supabase = createClient(base, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
 
   const { data: report, error } = await supabase
     .from("reports")
@@ -32,18 +31,63 @@ export async function ensureReportPayloadHtml(
   if (!report) return { ok: false, error: "Rapport introuvable" };
 
   const payload = (report.payload ?? {}) as Record<string, unknown>;
+  // #region agent log
+  fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "0c2b62",
+    },
+    body: JSON.stringify({
+      sessionId: "0c2b62",
+      runId,
+      hypothesisId: "H4",
+      location: "lib/ensureReportPayloadHtml.ts:before-build",
+      message: "payload source shape before html build",
+      data: {
+        hasHtml: typeof payload.html === "string",
+        hasSections: Array.isArray(payload.sections),
+        hasDefects: Array.isArray(payload.defects),
+        hasObservations: Array.isArray(payload.observations),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
   const built = buildHtmlFromReportPayload(payload);
 
   if (!built || !isHtmlLongEnough(built)) {
+    const language = payload.language === "en" || payload.lang === "en"
+      ? "en"
+      : "fr";
     return {
       ok: false,
-      error:
-        "Impossible de produire le HTML du rapport : renseignez payload.html, payload.sections ou défauts/observations.",
+      error: language === "en"
+        ? "Unable to build report HTML: provide payload.html, payload.sections, or defects/observations."
+        : "Impossible de produire le HTML du rapport : renseignez payload.html, payload.sections ou defauts/observations.",
     };
   }
 
   const current = typeof payload.html === "string" ? payload.html : "";
   if (built === current) {
+    // #region agent log
+    fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "0c2b62",
+      },
+      body: JSON.stringify({
+        sessionId: "0c2b62",
+        runId,
+        hypothesisId: "H5",
+        location: "lib/ensureReportPayloadHtml.ts:skip-update",
+        message: "html unchanged",
+        data: { htmlLength: built.length },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     return { ok: true };
   }
 

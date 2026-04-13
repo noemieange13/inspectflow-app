@@ -8,6 +8,8 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 Contrat, réponse (`cached` vs signed URL régénérée), flux Mermaid et storage privé : **[docs/reports-pdf-pipeline.md](docs/reports-pdf-pipeline.md)**.
 
+Architecture (sources de vérité, flux canon, liens) : **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. État prod à maintenir : **[docs/PROD_STATE.md](docs/PROD_STATE.md)**.
+
 Vision d’ensemble (pipeline unique, dépollution des Edge Functions, phases) : **[docs/integration-roadmap.md](docs/integration-roadmap.md)**.
 
 Inventaire des Edge Functions Supabase (liste projet + ce que ce repo référence) : **[docs/edge-functions-inventory.md](docs/edge-functions-inventory.md)**.
@@ -15,6 +17,8 @@ Inventaire des Edge Functions Supabase (liste projet + ce que ce repo référenc
 Variables d’environnement (modèle sans secrets) : **`.env.example`** → copier vers `.env.local` ou configurer sur Vercel.
 
 Déploiement Vercel + Edge `reports-pdf` : **[docs/deployment.md](docs/deployment.md)**.
+
+Où est créée la table `reports` (write path) : ce dépôt ne fait pas l’`insert` — voir **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** ; recherche locale : **`npm run find:reports-writer`** (ou `powershell -File scripts/find-reports-writer.ps1` sous Windows).
 
 ## Getting Started
 

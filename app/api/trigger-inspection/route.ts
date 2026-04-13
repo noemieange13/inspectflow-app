@@ -2,11 +2,15 @@ import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
 
 export async function POST(req: Request) {
+  console.info("[debug-0c2b62] trigger-inspection POST hit");
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json(
+      { success: false, error: "Invalid JSON body" },
+      { status: 400 },
+    );
   }
 
   const raw =
@@ -19,7 +23,10 @@ export async function POST(req: Request) {
 
   const report_id = raw.trim();
   if (!report_id) {
-    return Response.json({ error: "Missing report_id" }, { status: 400 });
+    return Response.json(
+      { success: false, error: "Missing report_id" },
+      { status: 400 },
+    );
   }
 
   try {
@@ -40,6 +47,7 @@ export async function POST(req: Request) {
     if (!res.ok) {
       return Response.json(
         {
+          success: false,
           error: "reports-pdf returned an error",
           status: res.status,
           body: parsed,
@@ -52,6 +60,9 @@ export async function POST(req: Request) {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("trigger-inspection:", e);
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json(
+      { success: false, error: message },
+      { status: 500 },
+    );
   }
 }

@@ -1,0 +1,30 @@
+---
+description: Contexte InspectFlow — éviter la réinvention et protéger prod
+alwaysApply: true
+---
+
+# InspectFlow (Supabase + Next + PDF)
+
+## Avant de coder ou refactorer
+
+1. Lire **`docs/ARCHITECTURE.md`** et **`docs/PROD_STATE.md`** (état réel vs repo).
+2. Vérifier si la fonction / table / migration **existe déjà** : `supabase/migrations/`, `supabase/functions/`, grep.
+3. Ne pas supposer que le dashboard Supabase = ce dépôt : les Edge **versionnées ici** incluent **`reports-pdf`**, **`upload-photo`**, **`create-report`** (insert `reports` avec garde-fous). Les autres slugs sont dans **`docs/edge-functions-inventory.md`**.
+
+## Priorités
+
+- **Corriger et aligner** plutôt que recréer une deuxième chaîne PDF ou une deuxième table “events”.
+- **Ne pas casser** le contrat ledger une fois déployé : `report_events`, `append_event`, `verify_report_chain` — pas de contournement silencieux qui invalide la chaîne.
+
+## Création des lignes `public.reports`
+
+- **Writer versionné** : Edge **`create-report`** (`supabase/functions/create-report/index.ts`) — exige `inspection_id` et/ou `job_id` valide pour remplir `inspection_id` (et propage `job_id` / `photo_id`). Tout autre `insert` ailleurs reste à tracer avec **`npm run find:reports-writer`** et **`docs/ARCHITECTURE.md`**.
+
+## PDF
+
+- Un seul flux applicatif documenté : **trigger → `invokeReportsPdf` → Edge `reports-pdf`** (verrous `claim_report_lock` / `release_report_lock`). Voir **`docs/reports-pdf-pipeline.md`**.
+- Les noms `*-v2`, `*-v3` ailleurs = **legacy / à consolider**, pas des sources de vérité dans ce repo tant qu’ils n’y sont pas versionnés.
+
+## Next.js
+
+- Respecter **`AGENTS.md`** : ce projet peut diverger des conventions Next.js “classiques” ; consulter `node_modules/next/dist/docs/` si besoin.

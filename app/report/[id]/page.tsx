@@ -1,21 +1,15 @@
-import GeneratePdfButton from "./GeneratePdfButton"
+import ZeroDraftReportComposer from "@/components/ZeroDraftReportComposer";
 
-export default async function Page({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
-  const { id } = await params
-
-  if (!id) {
-    return <div className="p-6">Accès invalide</div>
-  }
+export default function Page({ params }: { params: { id: string } }) {
+  const id = params.id;
 
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Report {id}</h1>
-
-      <GeneratePdfButton reportId={id} />
+    <div className="p-6">
+      <h1 className="mb-1 text-2xl font-bold text-slate-900">Rapport {id}</h1>
+      <p className="mb-6 text-sm text-slate-600">
+        Objectif: generer un rapport complet sans redaction manuelle longue.
+      </p>
+      <ZeroDraftReportComposer reportId={id} />
     </div>
-  )
+  );
 }

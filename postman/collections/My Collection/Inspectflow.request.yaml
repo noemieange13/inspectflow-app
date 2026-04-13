@@ -1,0 +1,31 @@
+$kind: http-request
+description: Inspectflow
+url: https://{{SUPABASE_PROJECT_REF}}.supabase.co/rest/v1/reports?select=*
+method: GET
+headers:
+  apikey: "{{SUPABASE_ANON_KEY}}"
+  Authorization: Bearer {{SUPABASE_ANON_KEY}}
+  Accept: application/json
+queryParams:
+  select: "*"
+body:
+  type: json
+  content: ""
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Response status is successful", function () {
+          pm.expect(pm.response.code).to.be.oneOf([200, 206]);
+      });
+
+      const contentType = pm.response.headers.get('Content-Type') || '';
+      if (contentType.includes('application/json')) {
+          const json = pm.response.json();
+          pm.test("Response is JSON", function () {
+              pm.expect(json).to.exist;
+          });
+      }
+    language: text/javascript
+order: 4000

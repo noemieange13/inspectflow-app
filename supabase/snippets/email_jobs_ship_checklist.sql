@@ -1,0 +1,39 @@
+-- =============================================================================
+-- Checklist « email_jobs + send-email-worker » — revue avant ship
+-- =============================================================================
+--
+-- A) Colonne email sur reports
+--    Ce dépôt utilise **client_email** (migration 20260402160000), pas `email`.
+--    Soit tu renommes en migration, soit tu copies **client_email** dans email_jobs.email.
+--
+-- B) Index unique partiel (sent_at IS NULL)
+--    Une ligne en **status = error** avec **sent_at NULL** occupe l’unicité :
+--    un second INSERT pour le même report_id **échoue**. C’est OK si tu **ne fais
+--    jamais** qu’un second INSERT : tu **réutilises** la même ligne (claim + retry).
+--    Sinon : élargir la condition (ex. unique seulement pending) ou policy ON CONFLICT.
+--
+-- C) claim_email_jobs — après bloc catch erreur
+--    Le claim met **processing_at = now()**. En cas d’échec, si tu ne remets pas
+--    **processing_at** à NULL, le prochain passage ne reprend la ligne qu’après
+--    **10 minutes** (stale lock) — acceptable comme backoff grossier ; sinon
+--    **processing_at = null** dans le catch pour retry immédiat au prochain cron.
+--
+-- D) RPC : droits
+--    grant execute on function public.claim_email_jobs() to service_role;
+--
+-- E) Edge Deno
+--    Préférer **Deno.serve** + **npm:@supabase/supabase-js@2** (comme reports-pdf).
+--    createClient(..., { auth: { persistSession: false, autoRefreshToken: false } })
+--    **RESEND_FROM** en env (comme lib/firstViewEmail.ts), pas un from en dur.
+--
+-- F) pdf_path → signed URL
+--    Normaliser la clé comme **normalizeRapportsPdfObjectPath** (lib/rapportsPdfStorage.ts)
+--    si des valeurs contiennent le préfixe bucket.
+--
+-- G) RLS
+--    **enable row level security** sur email_jobs ; aucune policy anon — seul
+--    service_role (Edge) écrit/claim.
+--
+-- H) Idempotence Resend
+--    Option : idempotency-key = job.id (si supporté) pour éviter double envoi réseau.
+-- =============================================================================

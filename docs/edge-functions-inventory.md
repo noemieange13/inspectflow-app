@@ -7,8 +7,9 @@ Ce document liste les fonctions déployées sur le projet Supabase **telles qu�
 | Fait ici | Détail |
 |----------|--------|
 | **Inventaire + statut** | Tableau ci-dessous, à compléter (colonne *Appelé par*). |
-| **Code versionné** | Seulement `supabase/functions/reports-pdf/` et `supabase/functions/upload-photo/`. |
+| **Code versionné** | `supabase/functions/reports-pdf/`, `upload-photo/`, **`create-report/`** (insert `reports` + garde-fous `inspection_id` / `job_id`). |
 | **Références code Next** | Grep : ce repo n’invoque **`reports-pdf`** via `supabase.functions.invoke` / `invokeReportsPdf` — voir section *Références dans inspectflow-web*. |
+| **Création `public.reports`** | **Pas dans ce dépôt** (aucun `.insert` / `upsert` sur `reports` — vérifier avec `npm run find:reports-writer`). Le *writer* est une autre Edge (dashboard), un autre repo, ou du SQL/trigger — voir `docs/ARCHITECTURE.md` et `supabase/snippets/find-reports-writers.sql`. |
 
 ## Ce qui nécessite votre environnement
 

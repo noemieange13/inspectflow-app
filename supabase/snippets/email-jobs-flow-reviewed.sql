@@ -1,0 +1,50 @@
+-- =============================================================================
+-- Revue : flow UI → PDF → email_jobs → cron → send-email-worker
+-- =============================================================================
+-- Ce dépôt n’a ni /api/generate-report ni table email_jobs versionnées aujourd’hui ;
+-- aligner les noms sur trigger-inspection + reports-pdf + create-report si besoin.
+--
+-- Points critiques (prod) :
+--
+-- 1) Pièce jointe Resend + Supabase Storage
+--    Resend n’accepte PAS une « clé » pdf_path comme chemin magique. Il faut soit :
+--    - télécharger le PDF côté worker (service role) depuis le bucket privé
+--      puis joindre en base64 / Buffer selon l’API Resend,
+--    - soit envoyer un LIEN (signed URL courte durée) — souvent meilleur (poids,
+--      anti-spam, UX mobile). Voir lib/rapportsPdfStorage.ts.
+--
+-- 2) Edge Deno + Resend
+--    import depuis npm pour Deno : ex. npm:resend (ou fetch HTTP Resend) ;
+--    pas le même bundling que Next.
+--
+-- 3) claim_email_jobs
+--    Même pattern que claim_reports_email_batch : CTE + FOR UPDATE SKIP LOCKED +
+--    UPDATE … FROM … RETURNING (voir email-queue-claim-batch-reviewed.sql).
+--
+-- 4) Idempotence
+--    .is('sent_at', null) sur les UPDATE — bon. Ajouter contrainte UNIQUE
+--    partielle si une seule job « pending » par report_id est requise :
+--    unique (report_id) WHERE sent_at IS NULL (selon PG / version).
+--
+-- 5) Cron + secret
+--    Préférer un secret dédié (header) pour send-email-worker plutôt que
+--    d’exposer la service_role dans pg_cron si possible.
+--
+-- 6) Double vérité
+--    email_jobs vs colonnes sur reports (pdf_notified_at) : choisir une source
+--    de vérité pour l’état « email envoyé » ou synchroniser explicitement.
+-- =============================================================================
+
+-- Exemple de schéma (commenté — à adapter avant exécution)
+-- create table if not exists public.email_jobs (
+--   id uuid primary key default gen_random_uuid(),
+--   report_id uuid not null references public.reports (id) on delete cascade,
+--   client_email text not null,
+--   pdf_path text,
+--   locked_at timestamptz,
+--   retry_count int not null default 0,
+--   next_retry_at timestamptz,
+--   sent_at timestamptz,
+--   failed_at timestamptz,
+--   created_at timestamptz not null default now()
+-- );

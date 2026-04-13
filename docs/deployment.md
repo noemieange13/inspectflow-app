@@ -30,14 +30,17 @@ Après modification : **Redeploy** sur Vercel ou pousser un commit sur `main`.
 | `SUPABASE_URL` | Souvent fourni par l’environnement ; sinon URL projet |
 | `SUPABASE_SERVICE_ROLE_KEY` | Accès DB + Storage |
 | `PDF_API_KEY` | Clé **html2pdf.app** (appel `https://api.html2pdf.app/v1/generate`) |
+| `REPORTS_PDF_LEDGER` | Optionnel : `true` ou `1` — après génération, appelle `append_event` (`pdf.generated`). Exige la migration `report_events` + fonctions ledger en base. |
 
 ### Code source
 
 `supabase/functions/reports-pdf/index.ts` — contrat : `POST` JSON `{ "report_id": "<uuid>" }`.
 
+`supabase/functions/create-report/index.ts` — contrat : `POST` JSON avec `user_id` (uuid) et **`inspection_id` et/ou `job_id`** (le job doit exister ; `inspection_id` peut être déduit du job). Crée la ligne `reports` avec `inspection_id`, `job_id`, `photo_id` quand connus.
+
 ### Prérequis base
 
-- Migrations : `claim_report_lock` / `release_report_lock` (fichiers dans `supabase/migrations/`).
+- Migrations : `claim_report_lock` / `release_report_lock` (fichiers dans `supabase/migrations/`). Ledger optionnel : `20260409170000_report_events_ledger.sql` puis correctif `20260410120000_fix_report_events_digest_extensions.sql` si tu avais l’erreur `digest(bytea, text) does not exist` (pgcrypto dans le schéma `extensions`).
 - Bucket **`rapports-pdf`** (privé).
 - Table **`reports`** avec `payload.html` pour la génération (≥ 20 caractères utiles).
 

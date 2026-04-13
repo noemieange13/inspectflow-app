@@ -39,10 +39,33 @@ Documentation interne — évite la dérive entre app Next, Edge Function Supaba
 }
 ```
 
+Si **`REPORTS_PDF_LEDGER=true`** sur l’Edge (et migration ledger appliquée), une génération fraîche peut inclure : `"ledger": { "ok": true, "event_id": "uuid" }` ou `"ledger": { "ok": false, "error": "..." }` (le PDF est quand même livré ; surveiller les échecs ledger).
+
 **Nuance importante — `cached`**
 
 - `cached: true` lorsque le PDF est déjà en base **au sens** : une `pdf_path` (ou équivalent) existe déjà et on ne régénère pas le fichier.
 - **Même dans ce cas**, la réponse peut inclure une **nouvelle signed URL** : l’accès temporaire est **régénéré à chaque appel**. On ne persiste **pas** une signed URL comme vérité durable ; seul le fichier dans le storage privé + la ligne `reports` font foi.
+
+## Sous-flux IA minimal (Edge)
+
+Sur génération fraîche (`cached: false`), `reports-pdf` peut enrichir `payload.html` avec un bloc "Rapport IA minimal".
+
+- **Source photo prioritaire** : `reports.photo_id`.
+- **Fallback 1** : `jobs.photo_id` via `reports.job_id`.
+- **Fallback 2** : photos de la même inspection via `reports.inspection_id`.
+- **Entrée IA** : `photos.analysis` (pas d’analyse image binaire à ce stade).
+- **Sortie attendue** : JSON structuré `{ summary, critical_points[], recommendations[] }`.
+
+Variables d’environnement optionnelles :
+
+- `REPORTS_AI_API_KEY` (ou fallback `OPENAI_API_KEY`)
+- `REPORTS_AI_MODEL` (défaut `gpt-4o-mini`)
+- `REPORTS_AI_ENDPOINT` (défaut API Chat Completions OpenAI)
+
+Mode dégradé :
+
+- Si l’appel IA échoue (timeout, réponse invalide, clé absente), la fonction bascule sur une synthèse locale minimaliste.
+- Ce sous-flux est **non bloquant** : la génération PDF continue si `payload.html` reste valide.
 
 ## Flux de génération (vue métier)
 
@@ -52,12 +75,15 @@ flowchart TD
   B --> C{pdf_path renseigné ?}
   C -->|oui| D["signed URL régénérée\ncached = true"]
   C -->|non| E["Charger inspection / payload"]
-  E --> F["Générer HTML puis PDF"]
-  F --> G["Upload bucket privé\n(pas d’URL publique persistante)"]
-  G --> H["Mettre à jour reports.pdf_path"]
-  H --> I["signed URL\ncached = false"]
+  E --> F["Récupérer analyses photo liées au report"]
+  F --> G["Synthèse IA minimale (ou fallback local)"]
+  G --> H["Mettre à jour payload.html"]
+  H --> I["Générer HTML puis PDF"]
+  I --> J["Upload bucket privé\n(pas d’URL publique persistante)"]
+  J --> K["Mettre à jour reports.pdf_path"]
+  K --> L["signed URL\ncached = false"]
   D --> J["Réponse JSON"]
-  I --> J
+  L --> J
 ```
 
 **À retenir** : si `pdf_path` existe → retour du PDF **via signed URL** ; **aucune** URL publique persistante ne doit remplacer ce modèle.
@@ -92,3 +118,11 @@ Implémentation : `app/api/regenerate-signed-url/route.ts`, logique partagée `l
 | Env | `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, optionnel `REPORTS_PDF_SLUG` |
 | Edge | `PDF_API_KEY` (html2pdf.app), RPC `claim_report_lock` / `release_report_lock` |
 | Viewer / refresh | `POST /api/regenerate-signed-url` — même anon côté client ; service role uniquement dans le Route Handler |
+
+## Checklist non-régression
+
+- `cached: true` : aucun appel IA, retour signed URL immédiat.
+- `cached: false` + photos avec `analysis` : enrichissement `payload.html` puis génération PDF.
+- `cached: false` + IA indisponible : fallback local, pas d’échec dur si HTML final valide.
+- `cached: false` + aucune source photo + HTML invalide : erreur explicite `Invalid HTML payload`.
+- Verrous SQL (`claim_report_lock` / `release_report_lock`) toujours respectés.

@@ -1,0 +1,15 @@
+name: New Environment
+values:
+  - key: SUPABASE_ANON_KEY
+    value: ""
+    enabled: true
+  - key: Content-Type
+    value: application/json
+    enabled: true
+  - key: baseUrl
+    value: http://localhost:3000
+    enabled: true
+  - key: report_id
+    value: b7dc542f-6783-40e2-81d0-c194b2f4feb8
+    enabled: true
+color: 0

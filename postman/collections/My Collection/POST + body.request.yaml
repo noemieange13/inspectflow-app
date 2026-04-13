@@ -1,0 +1,51 @@
+$kind: http-request
+url: https://{{Project Host}}/functions/v1/report-pdf
+method: POST
+headers:
+  apikey: "{{SUPABASE_ANON_KEY}}"
+  Authorization: Bearer {{SUPABASE_ANON_KEY}}
+  Accept: application/json
+  Content-Type: application/json
+body:
+  type: json
+  content: "{\r
+
+    \  \"html\": \"<h1>HELLO PDF</h1>\",\r
+
+    \  \"report_id\": \"test\"\r
+
+    }"
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    code: >-
+      const contentType = (pm.response.headers.get('Content-Type') ||
+      '').toLowerCase();
+
+
+      pm.test('Response status is expected for Supabase Edge Function success',
+      function () {
+          pm.expect(pm.response.code).to.be.oneOf([200, 201, 202, 204, 206]);
+      });
+
+
+      if (contentType.includes('application/json')) {
+          pm.test('Response is valid JSON when JSON is returned', function () {
+              const json = pm.response.json();
+              pm.expect(json).to.exist;
+          });
+      } else if (contentType.includes('application/pdf') ||
+      contentType.includes('application/octet-stream')) {
+          pm.test('Response is binary/pdf when binary content is returned', function () {
+              pm.expect(pm.response.stream).to.exist;
+          });
+      } else {
+          pm.test('Response content type is recognized', function () {
+              pm.expect(contentType).to.satisfy(function (value) {
+                  return value === '' || value.includes('application/json') || value.includes('application/pdf') || value.includes('application/octet-stream');
+              });
+          });
+      }
+    language: text/javascript
+order: 5000

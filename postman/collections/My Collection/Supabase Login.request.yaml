@@ -1,0 +1,32 @@
+$kind: http-request
+description: |-
+  Generated from cURL: curl --request POST --url 'https://{{SUPABASE_PROJECT_REF}}.supabase.co/auth/v1/token?grant_type=password' --header 'apikey: {{SUPABASE_ANON_KEY}}' --header 'Content-Type: application/json' --data '{  
+  "email": "[test@inspection.com](https://mailto:test@inspection.com)",  
+  "password": "{{USER_PASSWORD}}"  
+  }'
+url: https://{{SUPABASE_PROJECT_REF}}.supabase.co/auth/v1/token?grant_type=password
+method: POST
+headers:
+  apikey: "{{SUPABASE_ANON_KEY}}"
+  Content-Type: application/json
+queryParams:
+  grant_type: password
+body:
+  type: json
+  content: |-
+    {
+      "email": "test@inspection.com",
+      "password": "{{USER_PASSWORD}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Login returns an access token", function () {
+          pm.response.to.have.status(200);
+          const json = pm.response.json();
+          pm.expect(json).to.have.property("access_token");
+          pm.expect(json.access_token).to.be.a("string").and.not.empty;
+          pm.collectionVariables.set("ACCESS_TOKEN", json.access_token);
+      });
+    language: text/javascript
+order: 3000
