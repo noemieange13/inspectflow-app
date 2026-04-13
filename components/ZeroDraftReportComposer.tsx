@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   buildStructuredReport,
@@ -29,6 +29,21 @@ function defaultEntry(): ReportEntryInput {
   };
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+    promise.then((value) => {
+      clearTimeout(timer);
+      resolve(value);
+    }).catch((err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 export default function ZeroDraftReportComposer({ reportId }: Props) {
   const storageKey = `zero-draft:${reportId}`;
   const [hostInfo, setHostInfo] = useState<string>("");
@@ -42,11 +57,13 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [pdfLink, setPdfLink] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [retryAvailable, setRetryAvailable] = useState(false);
 
   const generated = useMemo(
     () => buildStructuredReport(entries, language, jurisdiction),
     [entries, jurisdiction, language],
   );
+  const canGenerate = title.trim().length > 2 && entries.length > 0 && !loading;
   const completion = Math.min(100, Math.max(15, Math.round((entries.length / 6) * 100)));
   const riskBadgeClass = generated.risk_level === "high"
     ? "bg-red-100 text-red-700 border-red-200"
@@ -70,6 +87,8 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       moreSections: "more section(s)",
       generate: "Generate full report + PDF",
       processing: "Processing...",
+      retryPdf: "Retry PDF generation",
+      clearDraft: "Clear local draft",
       localDraft: "Local draft saved at",
       openPdf: "Open generated PDF",
       risk: "Risk",
@@ -91,6 +110,8 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       moreSections: "section(s) supplementaire(s)",
       generate: "Generer le rapport complet + PDF",
       processing: "Traitement en cours...",
+      retryPdf: "Relancer la generation PDF",
+      clearDraft: "Effacer le brouillon local",
       localDraft: "Brouillon local enregistre a",
       openPdf: "Ouvrir le PDF genere",
       risk: "Risque",
@@ -179,6 +200,50 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
     setEntries((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
   };
 
+  const requestPdfGeneration = useCallback(async () => {
+    const pdfRes = await withTimeout(
+      fetch("/api/trigger-inspection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report_id: reportId }),
+      }),
+      40_000,
+      "trigger-inspection",
+    );
+    const readJsonSafe = async <T,>(res: Response): Promise<T | null> => {
+      try {
+        return (await res.json()) as T;
+      } catch {
+        return null;
+      }
+    };
+    const pdfBody = (await readJsonSafe<{
+      success?: boolean;
+      error?: string;
+      pdf_url?: string;
+      signed_url?: string;
+      body?: { error?: string };
+    }>(pdfRes)) ?? {};
+    if (!pdfRes.ok || pdfBody.success === false) {
+      throw new Error(
+        pdfBody.error ?? pdfBody.body?.error ?? `Echec generation PDF (${pdfRes.status})`,
+      );
+    }
+    return pdfBody.signed_url ?? pdfBody.pdf_url ?? null;
+  }, [reportId]);
+
+  const clearLocalDraft = () => {
+    localStorage.removeItem(storageKey);
+    setTitle(language === "en" ? "Automated inspection report" : "Rapport d'inspection automatise");
+    setInspectorNote("");
+    setEntries([defaultEntry()]);
+    setError(null);
+    setStatus(null);
+    setPdfLink(null);
+    setLastSavedAt(null);
+    setRetryAvailable(false);
+  };
+
   const handleGenerate = async () => {
     const readJsonSafe = async <T,>(res: Response): Promise<T | null> => {
       try {
@@ -191,6 +256,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       setLoading(true);
       setError(null);
       setPdfLink(null);
+      setRetryAvailable(false);
       setStatus("Etape 1/2: generation du contenu structure...");
       // #region agent log
       fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
@@ -211,18 +277,22 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       }).catch(() => {});
       // #endregion
 
-      const saveRes = await fetch("/api/report-content", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          report_id: reportId,
-          title,
-          inspector_note: inspectorNote,
-          entries,
-          language,
-          jurisdiction,
+      const saveRes = await withTimeout(
+        fetch("/api/report-content", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: reportId,
+            title,
+            inspector_note: inspectorNote,
+            entries,
+            language,
+            jurisdiction,
+          }),
         }),
-      });
+        25_000,
+        "report-content",
+      );
       const saveBody = await readJsonSafe<{ success?: boolean; error?: string }>(saveRes);
       // #region agent log
       fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
@@ -250,48 +320,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
       }
 
       setStatus("Etape 2/2: generation du PDF...");
-      const pdfRes = await fetch("/api/trigger-inspection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ report_id: reportId }),
-      });
-      const pdfBody = (await readJsonSafe<{
-        success?: boolean;
-        error?: string;
-        pdf_url?: string;
-        signed_url?: string;
-        body?: { error?: string };
-      }>(pdfRes)) ?? {};
-      // #region agent log
-      fetch("http://127.0.0.1:7625/ingest/93e0adad-2739-42ed-bed5-4fa06fb3b9b7", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "0c2b62",
-        },
-        body: JSON.stringify({
-          sessionId: "0c2b62",
-          runId: "ui-zero-draft-debug-2",
-          hypothesisId: "H8",
-          location: "components/ZeroDraftReportComposer.tsx:after-trigger-inspection",
-          message: "trigger-inspection response",
-          data: {
-            status: pdfRes.status,
-            success: pdfBody.success !== false,
-            hasPdfUrl: Boolean(pdfBody.pdf_url),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      if (!pdfRes.ok || pdfBody.success === false) {
-        throw new Error(
-          pdfBody.error ?? pdfBody.body?.error ??
-            `Echec generation PDF (${pdfRes.status})`,
-        );
-      }
-
-      const nextPdfLink = pdfBody.signed_url ?? pdfBody.pdf_url ?? null;
+      const nextPdfLink = await requestPdfGeneration();
       if (nextPdfLink) {
         window.open(nextPdfLink, "_blank");
         setPdfLink(nextPdfLink);
@@ -301,6 +330,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus(null);
+      setRetryAvailable(true);
     } finally {
       setLoading(false);
     }
@@ -334,6 +364,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              disabled={loading}
             />
           </label>
 
@@ -371,6 +402,7 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
               value={inspectorNote}
               onChange={(e) => setInspectorNote(e.target.value)}
               placeholder="Contexte global, acces, contraintes..."
+              disabled={loading}
             />
           </label>
 
@@ -441,14 +473,24 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
             ))}
           </div>
 
-          <button
-            type="button"
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            onClick={addEntry}
-            disabled={loading}
-          >
-            {labels.addFinding}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              onClick={addEntry}
+              disabled={loading}
+            >
+              {labels.addFinding}
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              onClick={clearLocalDraft}
+              disabled={loading}
+            >
+              {labels.clearDraft}
+            </button>
+          </div>
         </div>
 
         <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
@@ -480,9 +522,9 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
 
           <button
             type="button"
-            disabled={loading}
+            disabled={!canGenerate}
             onClick={handleGenerate}
-            className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {loading ? labels.processing : labels.generate}
           </button>
@@ -490,8 +532,35 @@ export default function ZeroDraftReportComposer({ reportId }: Props) {
           {lastSavedAt ? (
             <p className="text-xs text-slate-500">{labels.localDraft} {lastSavedAt}</p>
           ) : null}
-          {status ? <p className="text-sm text-emerald-700">{status}</p> : null}
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          {status ? <p className="text-sm text-emerald-700" aria-live="polite">{status}</p> : null}
+          {error ? <p className="text-sm text-red-600" role="alert">{error}</p> : null}
+          {retryAvailable && !loading ? (
+            <button
+              type="button"
+              className="inline-flex rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-100"
+              onClick={async () => {
+                try {
+                  setLoading(true);
+                  setError(null);
+                  setStatus("Relance de la generation PDF...");
+                  const nextPdfLink = await requestPdfGeneration();
+                  if (nextPdfLink) {
+                    window.open(nextPdfLink, "_blank");
+                    setPdfLink(nextPdfLink);
+                  }
+                  setStatus("PDF regenere avec succes.");
+                  setRetryAvailable(false);
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                  setStatus(null);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+            >
+              {labels.retryPdf}
+            </button>
+          ) : null}
           {pdfLink ? (
             <a
               href={pdfLink}
