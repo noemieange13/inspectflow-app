@@ -1,5 +1,9 @@
+import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { updateReportPayloadWithUnlock } from "@/lib/updateReportPayloadWithUnlock";
 import {
+  buildClientFacingSection,
   buildStructuredReport,
   ISSUES,
   SEVERITIES,
@@ -13,6 +17,52 @@ import {
   type Severity,
   type ZoneCode,
 } from "@/lib/reportNarrative";
+import {
+  refineClientSectionAi,
+  type PolishClientSectionSkipReason,
+} from "@/lib/refineClientSectionAi";
+
+/** Vercel / hébergeur : compilation à froid + OpenAI polish peuvent dépasser 60s en local. */
+export const maxDuration = 240;
+
+class ReportContentTimeoutError extends Error {
+  override readonly name = "ReportContentTimeout";
+  constructor() {
+    super("report-content timeout");
+  }
+}
+
+function isReportContentTimeout(error: unknown): boolean {
+  return (
+    error instanceof ReportContentTimeoutError ||
+    (error instanceof Error && error.name === "ReportContentTimeout")
+  );
+}
+
+/** Retourne une réponse HTTP ou rejette ; en cas de timeout externe, ignore le rejet tardif de `work`. */
+function raceWithTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  onTimeout: () => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      onTimeout();
+      void work.catch(() => {});
+      reject(new ReportContentTimeoutError());
+    }, ms);
+    work.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
 
 type IncomingEntry = {
   zone?: unknown;
@@ -47,7 +97,6 @@ function normalizeEntries(rawEntries: unknown): ReportEntryInput[] {
 }
 
 export async function POST(req: Request) {
-  console.info("[debug-0c2b62] report-content POST hit");
   let body: unknown;
   try {
     body = await req.json();
@@ -83,6 +132,20 @@ export async function POST(req: Request) {
       ? (body as { inspector_note: string }).inspector_note.trim()
       : "";
 
+  const clientSectionFromBody =
+    typeof body === "object" &&
+    body !== null &&
+    "client_section" in body &&
+    typeof (body as { client_section: unknown }).client_section === "string"
+      ? (body as { client_section: string }).client_section.trim()
+      : "";
+
+  const polishClient =
+    typeof body === "object" &&
+    body !== null &&
+    "polish_client" in body &&
+    (body as { polish_client: unknown }).polish_client === true;
+
   const entries = normalizeEntries(
     typeof body === "object" && body !== null && "entries" in body
       ? (body as { entries: unknown }).entries
@@ -106,61 +169,163 @@ export async function POST(req: Request) {
     );
   }
 
+  const reportContentTimeoutMs = (() => {
+    const raw = process.env.REPORT_CONTENT_TIMEOUT_MS?.trim();
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n >= 5_000 ? n : 120_000;
+  })();
+
+  const routeAbort = new AbortController();
+
+  const accessTokenRaw =
+    typeof body === "object" &&
+    body !== null &&
+    "access_token" in body &&
+    typeof (body as { access_token: unknown }).access_token === "string"
+      ? (body as { access_token: string }).access_token
+      : "";
+
   try {
-    const supabase = await createServiceRoleClient();
-    const { data: report, error: readError } = await supabase
-      .from("reports")
-      .select("id, payload")
-      .eq("id", reportId)
-      .maybeSingle();
+    return await raceWithTimeout(
+      (async () => {
+        const supabase = await createServiceRoleClient();
+        const { data: report, error: readError } = await supabase
+          .from("reports")
+          .select("id, payload, is_locked, access_token, token_expires_at")
+          .eq("id", reportId)
+          .maybeSingle();
 
-    if (readError) {
-      return Response.json({ success: false, error: readError.message }, { status: 500 });
-    }
-    if (!report) {
-      return Response.json({ success: false, error: "Report not found" }, { status: 404 });
-    }
+        if (readError) {
+          return Response.json({ success: false, error: readError.message }, { status: 500 });
+        }
+        if (!report) {
+          return Response.json({ success: false, error: "Report not found" }, { status: 404 });
+        }
 
-    const generated = buildStructuredReport(entries, language, jurisdiction);
-    const currentPayload =
-      report.payload && typeof report.payload === "object"
-        ? (report.payload as Record<string, unknown>)
-        : {};
+        const rec = report as Record<string, unknown>;
+        const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
 
-    const nextPayload = {
-      ...currentPayload,
-      title,
-      summary: generated.summary,
-      sections: generated.sections,
-      risk_level: generated.risk_level,
-      compliance: generated.compliance,
-      inspector_note: inspectorNote || null,
-      language,
-      jurisdiction,
-      generation_mode: "zero-draft-ui",
-      generated_at: new Date().toISOString(),
-    };
+        if (dbToken) {
+          if (!reportAccessTokensMatch(accessTokenRaw, dbToken)) {
+            return Response.json(
+              { success: false, error: "Invalid access token", code: "access_denied" },
+              { status: 403 },
+            );
+          }
+          if (
+            rec.token_expires_at != null &&
+            String(rec.token_expires_at) !== "" &&
+            new Date(String(rec.token_expires_at)) < new Date()
+          ) {
+            return Response.json(
+              { success: false, error: "Access token expired", code: "access_denied" },
+              { status: 403 },
+            );
+          }
+        }
 
-    const { error: updateError } = await supabase
-      .from("reports")
-      .update({ payload: nextPayload })
-      .eq("id", reportId);
+        const generated = buildStructuredReport(entries, language, jurisdiction);
+        const currentPayload =
+          report.payload && typeof report.payload === "object"
+            ? (report.payload as Record<string, unknown>)
+            : {};
 
-    if (updateError) {
-      return Response.json({ success: false, error: updateError.message }, { status: 500 });
-    }
+        let clientSection =
+          clientSectionFromBody ||
+          buildClientFacingSection(entries, language, jurisdiction, inspectorNote || undefined);
 
-    return Response.json({
-      success: true,
-      report_id: reportId,
-      summary: generated.summary,
-      risk_level: generated.risk_level,
-      sections_count: generated.sections.length,
-      language,
-      jurisdiction,
-      compliance_checks: generated.compliance.checklist.length,
-    });
+        let polishOutcome: "applied" | PolishClientSectionSkipReason | undefined;
+        if (polishClient) {
+          const refined = await refineClientSectionAi({
+            draft: clientSection,
+            language,
+            signal: routeAbort.signal,
+          });
+          if (refined.text) {
+            clientSection = refined.text;
+            polishOutcome = "applied";
+          } else {
+            polishOutcome = refined.skipReason ?? "unavailable";
+          }
+        }
+
+        const nextPayload = {
+          ...currentPayload,
+          title,
+          summary: generated.summary,
+          sections: generated.sections,
+          risk_level: generated.risk_level,
+          compliance: generated.compliance,
+          inspector_note: inspectorNote || null,
+          client_section: clientSection,
+          language,
+          jurisdiction,
+          generation_mode: "zero-draft-ui",
+          generated_at: new Date().toISOString(),
+        };
+
+        const allowUnlock =
+          allowReportPayloadUnlock(req) || Boolean(dbToken);
+
+        const lockErr = (m: string) =>
+          /P0001|Finalized|locked|prevent_report/i.test(m);
+
+        const { error: updateError } = await updateReportPayloadWithUnlock(
+          supabase,
+          reportId,
+          nextPayload,
+          allowUnlock,
+          { clearStoredPdf: true },
+        );
+
+        if (updateError) {
+          const msg = updateError.message ?? "";
+          if (lockErr(msg)) {
+            const base =
+              "Ce rapport est finalisé ou verrouillé (mise à jour refusée par la base). En local (localhost) le déverrouillage est normalement automatique ; sinon ajoutez INSPECTFLOW_DEV_UNLOCK_REPORT=1 dans .env.local et redémarrez. Avec `next start`, NODE_ENV=production : utilisez cette variable ou une URL en localhost. Sinon en SQL : UPDATE public.reports SET is_locked = false WHERE id = '<id>'.";
+            return Response.json(
+              {
+                success: false,
+                error: allowUnlock ? `${base} Détail: ${msg}` : base,
+                code: "report_locked",
+                details: allowUnlock ? msg : undefined,
+              },
+              { status: 403 },
+            );
+          }
+          return Response.json({ success: false, error: updateError.message }, { status: 500 });
+        }
+
+        return Response.json({
+          success: true,
+          report_id: reportId,
+          summary: generated.summary,
+          risk_level: generated.risk_level,
+          sections_count: generated.sections.length,
+          language,
+          jurisdiction,
+          compliance_checks: generated.compliance.checklist.length,
+          ...(polishClient && polishOutcome !== undefined
+            ? { polish_outcome: polishOutcome }
+            : {}),
+        });
+      })(),
+      reportContentTimeoutMs,
+      () => {
+        routeAbort.abort();
+      },
+    );
   } catch (error) {
+    if (isReportContentTimeout(error)) {
+      return Response.json(
+        {
+          success: false,
+          error: "Request timed out",
+          code: "timeout",
+        },
+        { status: 504 },
+      );
+    }
     const message = error instanceof Error ? error.message : String(error);
     return Response.json({ success: false, error: message }, { status: 500 });
   }
