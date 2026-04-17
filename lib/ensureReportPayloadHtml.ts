@@ -11,7 +11,9 @@ import {
  */
 export async function ensureReportPayloadHtml(
   reportId: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; builtHtml: string } | { ok: false; error: string }
+> {
   let supabase;
   try {
     supabase = await createServiceRoleClient();
@@ -39,22 +41,27 @@ export async function ensureReportPayloadHtml(
     return {
       ok: false,
       error: language === "en"
-        ? "Unable to build report HTML: provide payload.html, payload.sections, or defects/observations."
-        : "Impossible de produire le HTML du rapport : renseignez payload.html, payload.sections ou defauts/observations.",
+        ? "Unable to build report HTML: provide payload.html, payload.sections, defects/observations, or cover_v1."
+        : "Impossible de produire le HTML du rapport : renseignez payload.html, payload.sections, defauts/observations ou cover_v1.",
     };
   }
 
   const current = typeof payload.html === "string" ? payload.html : "";
   if (built === current) {
-    return { ok: true };
+    return { ok: true, builtHtml: built };
   }
 
   const nextPayload = { ...payload, html: built };
-  const { error: upErr } = await supabase
+  /** Invalider le PDF stocké ; updates séparés si le trigger refuse payload + pdf_path ensemble. */
+  const { error: upPayload } = await supabase
     .from("reports")
     .update({ payload: nextPayload })
     .eq("id", reportId);
-
-  if (upErr) return { ok: false, error: upErr.message };
-  return { ok: true };
+  if (upPayload) return { ok: false, error: upPayload.message };
+  const { error: upPdf } = await supabase
+    .from("reports")
+    .update({ pdf_path: null })
+    .eq("id", reportId);
+  if (upPdf) return { ok: false, error: upPdf.message };
+  return { ok: true, builtHtml: built };
 }

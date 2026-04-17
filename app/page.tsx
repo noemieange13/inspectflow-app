@@ -30,6 +30,12 @@ export default function HomePage() {
           >
             Accéder à un rapport
           </Link>
+          <Link
+            href="/rapport/couverture"
+            className="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-5 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-100"
+          >
+            Nouveau — formulaire couverture
+          </Link>
         </div>
 
         <div className="mt-12 grid grid-cols-3 gap-6 text-center">
@@ -52,7 +58,10 @@ export default function HomePage() {
         </p>
 
         {process.env.NODE_ENV === "development" ? (
-          <div className="mt-4">
+          <div className="mt-4 flex flex-col gap-1">
+            <Link href="/dev/create-report" className="text-xs text-slate-400 underline">
+              Dev — créer un rapport (flux complet)
+            </Link>
             <Link href="/dev/reports-pdf" className="text-xs text-slate-400 underline">
               Dev — test PDF Edge
             </Link>

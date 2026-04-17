@@ -18,7 +18,8 @@ const JSON_HDR = {
 
 const SIGNED_URL_TTL_SEC = 60;
 const MIN_HTML_CHARS = 20;
-const PDF_FETCH_TIMEOUT_MS = 20_000;
+/** html2pdf.app peut dépasser 20s sur HTML long ou charge API élevée. */
+const PDF_FETCH_TIMEOUT_MS = 60_000;
 const AI_TIMEOUT_MS = 12_000;
 const AI_MAX_PHOTOS = 8;
 const AI_MAX_SNIPPETS = 24;
@@ -600,6 +601,8 @@ Deno.serve(async (req) => {
 
     const body = (await req.json().catch(() => ({}))) as {
       report_id?: unknown;
+      /** Fourni par Next (`ensureReportPayloadHtml`) : HTML canonique ; force la régénération même si `pdf_path` est déjà défini. */
+      html_for_pdf?: unknown;
     };
     reportId =
       typeof body.report_id === "string" && body.report_id.trim()
@@ -610,7 +613,17 @@ Deno.serve(async (req) => {
       return json({ success: false, error: "Invalid report_id" }, 400);
     }
 
-    logStructured("info", "report_id_ok", { report_id: reportId });
+    const htmlForPdfFromClient =
+      typeof body.html_for_pdf === "string" &&
+      body.html_for_pdf.trim().length >= MIN_HTML_CHARS
+        ? body.html_for_pdf.trim()
+        : null;
+    const forceRegenerate = htmlForPdfFromClient != null;
+
+    logStructured("info", "report_id_ok", {
+      report_id: reportId,
+      html_source: forceRegenerate ? "client_body" : "db_payload",
+    });
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -639,7 +652,7 @@ Deno.serve(async (req) => {
 
     const canonicalPath = `${report.user_id}/${report.id}.pdf`;
 
-    if (report.pdf_path) {
+    if (report.pdf_path && !forceRegenerate) {
       const storageKey = report.pdf_path;
       logStructured("info", "cache_hit_pre_lock", { storageKey });
 
@@ -691,7 +704,7 @@ Deno.serve(async (req) => {
       .eq("id", reportId)
       .single();
 
-    if (fresh?.pdf_path) {
+    if (fresh?.pdf_path && !forceRegenerate) {
       logStructured("info", "cache_hit_post_lock", {
         storageKey: fresh.pdf_path,
       });
@@ -727,7 +740,24 @@ Deno.serve(async (req) => {
     );
     const currentHtml = typeof payload.html === "string" ? payload.html : null;
 
-    let htmlForPdf = currentHtml;
+    let htmlForPdf = htmlForPdfFromClient ?? currentHtml;
+
+    if (
+      htmlForPdfFromClient &&
+      htmlForPdfFromClient !== currentHtml
+    ) {
+      payload.html = htmlForPdfFromClient;
+      const { error: syncErr } = await supabase
+        .from("reports")
+        .update({ payload })
+        .eq("id", report.id);
+      if (syncErr) {
+        logStructured("warn", "payload_html_sync_failed", {
+          report_id: reportId,
+          err: syncErr.message,
+        });
+      }
+    }
     let aiNarrative: AiNarrative | null = null;
     try {
       const photoAnalyses = await fetchPhotoAnalysesForReport(supabase, reportId);

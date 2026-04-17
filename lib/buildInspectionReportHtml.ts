@@ -1,3 +1,10 @@
+import {
+  INSPECTOR_PROFILE_PAYLOAD_KEY,
+  parseCoverV1FromUnknown,
+  parseInspectorProfileFromUnknown,
+} from "@/lib/inspectionCoverPayload";
+import { buildCoverSectionHtml } from "@/lib/coverSectionHtml";
+
 /**
  * HTML minimal pour reports-pdf (payload.html), à partir de lignes defects / observations.
  * Colonnes tolérantes : schéma réel peut varier.
@@ -11,6 +18,14 @@ export function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+/** Styles communs pour le rendu PDF (html2pdf / Edge). */
+export const REPORT_BASE_PRINT_CSS =
+  "body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;padding:36px 42px;line-height:1.45;color:#0f172a;font-size:14px}" +
+  "h1{font-size:26px;font-weight:700;margin-bottom:0.35em}h2{font-size:17px;font-weight:600;margin-top:1.1em}" +
+  "h3{font-size:15px;font-weight:600;margin-top:0.85em}.ok{color:#15803d}.warn{color:#c2410c}.bad{color:#b91c1c}" +
+  ".header h1{margin-bottom:0}.header .subtitle{color:#475569;font-size:15px}" +
+  ".inspectflow-cover h2{margin-top:0;font-size:18px}";
 
 type ReportLanguage = "fr" | "en";
 
@@ -34,6 +49,12 @@ function i18n(language: ReportLanguage) {
       legalNoticeTitle: "Legal notice",
       referencesTitle: "Reference candidates",
       elementFallback: "Item",
+      clientSectionTitle: "Client summary",
+      technicalSummaryTitle: "Technical summary",
+      severityLabel: "Severity",
+      findingObservation: "Observation",
+      findingAnalysis: "Analysis",
+      findingRecommendation: "Recommendation",
     }
     : {
       htmlLang: "fr",
@@ -48,6 +69,12 @@ function i18n(language: ReportLanguage) {
       legalNoticeTitle: "Avis legal",
       referencesTitle: "References candidates",
       elementFallback: "Element",
+      clientSectionTitle: "Compte rendu à l'intention du client",
+      technicalSummaryTitle: "Synthèse technique",
+      severityLabel: "Gravité",
+      findingObservation: "Observation",
+      findingAnalysis: "Analyse",
+      findingRecommendation: "Recommandation",
     };
 }
 
@@ -98,13 +125,129 @@ function renderBilingualNoticeParagraphs(
   return `<h2>${escapeHtml(t.bilingualFrameworkTitle)}</h2>${frBlock}${enBlock}`;
 }
 
+function buildCoverStandaloneHtml(
+  payload: Record<string, unknown>,
+  coverBlock: string,
+  t: ReturnType<typeof i18n>,
+): string {
+  const parts: string[] = [];
+  parts.push(
+    `<!DOCTYPE html><html lang="${t.htmlLang}"><head><meta charset="utf-8"><title>${t.defaultTitle}</title>`,
+  );
+  parts.push(`<style>${REPORT_BASE_PRINT_CSS}</style>`);
+  parts.push("</head><body>");
+  const title =
+    typeof payload.title === "string" && payload.title.trim()
+      ? payload.title.trim()
+      : t.defaultTitle;
+  parts.push(
+    `<div class="header"><h1>Inspect<span class="brand">Flow</span></h1><p class="subtitle">${escapeHtml(title)}</p></div>`,
+  );
+  parts.push(coverBlock);
+  const clientSectionRaw = payload.client_section;
+  if (typeof clientSectionRaw === "string" && clientSectionRaw.trim()) {
+    parts.push(
+      `<div class="client-summary" style="margin-bottom:1.5em;padding:1em;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc">`,
+    );
+    parts.push(`<h2>${escapeHtml(t.clientSectionTitle)}</h2>`);
+    for (const para of clientSectionRaw
+      .split(/\n\n+/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)) {
+      parts.push(`<p>${escapeHtml(para)}</p>`);
+    }
+    parts.push(`</div>`);
+  }
+  if (typeof payload.summary === "string" && payload.summary.trim()) {
+    parts.push(`<h2>${escapeHtml(t.technicalSummaryTitle)}</h2>`);
+    parts.push(`<p>${escapeHtml(payload.summary.trim())}</p>`);
+  }
+  parts.push(
+    `<p style="color:#64748b;font-size:14px;margin-top:1.5em">Contenu structuré (sections / constats) à compléter depuis le rapport InspectFlow.</p>`,
+  );
+  parts.push(
+    `<div class="footer" style="margin-top:2em;font-size:12px;color:#64748b">Inspect<strong>Flow</strong> — ${
+      t.htmlLang === "en"
+        ? "Automated building inspection report."
+        : "Rapport d'inspection automatisé."
+    }</div>`,
+  );
+  parts.push("</body></html>");
+  return parts.join("");
+}
+
+/** Marqueurs pour fusionner / remplacer la couverture dans un HTML déjà stocké (`payload.html`). */
+export const COVER_HTML_INJECT_BEGIN = "<!-- inspectflow-cover-injected -->";
+export const COVER_HTML_BLOCK_START = "<!-- inspectflow-cover-start -->";
+export const COVER_HTML_BLOCK_END = "<!-- inspectflow-cover-end -->";
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Retire une couverture injectée précédemment (paires de marqueurs ou legacy une section).
+ */
+export function stripInjectedCoverFromCustomHtml(html: string): string {
+  const modern = new RegExp(
+    escapeRe(COVER_HTML_INJECT_BEGIN) +
+      escapeRe(COVER_HTML_BLOCK_START) +
+      "[\\s\\S]*?" +
+      escapeRe(COVER_HTML_BLOCK_END),
+    "g",
+  );
+  let h = html.replace(modern, "");
+  h = h.replace(
+    new RegExp(
+      `${escapeRe(COVER_HTML_INJECT_BEGIN)}\\s*<section class="inspectflow-cover"[\\s\\S]*?<\\/section>`,
+      "gi",
+    ),
+    "",
+  );
+  return h;
+}
+
+/**
+ * Insère le bloc couverture après `<body…>` dans un document HTML complet, ou le préfixe si pas de body.
+ */
+export function mergeCoverIntoCustomHtml(fullHtml: string, coverBlock: string): string {
+  if (!coverBlock.trim()) return fullHtml;
+
+  const cleaned = stripInjectedCoverFromCustomHtml(fullHtml);
+  const wrapped =
+    `${COVER_HTML_INJECT_BEGIN}${COVER_HTML_BLOCK_START}${coverBlock}${COVER_HTML_BLOCK_END}`;
+
+  const bodyMatch = cleaned.match(/<body[^>]*>/i);
+  if (bodyMatch && bodyMatch.index !== undefined) {
+    const insertAt = bodyMatch.index + bodyMatch[0].length;
+    return cleaned.slice(0, insertAt) + wrapped + cleaned.slice(insertAt);
+  }
+
+  return `${wrapped}\n${cleaned}`;
+}
+
 export type GenericRow = Record<string, unknown>;
 
 /**
  * Produit un HTML utilisable par `reports-pdf` à partir du JSON `reports.payload`.
- * Priorité : `payload.html` déjà valide → sinon `payload.sections` → sinon défauts / observations.
+ * Priorité : **`payload.sections`** (Zero Draft) et défauts / observations **avant** `payload.html`.
+ * Sinon un `payload.html` long (gabarit / import) est utilisé, avec fusion `cover_v1` si présent.
  * Tout texte interpolé est échappé.
  */
+/** Tolère `sections` sérialisé en chaîne JSON (certaines écritures JSONB / imports). */
+function normalizeSectionsFromPayload(raw: unknown): unknown[] | null {
+  if (Array.isArray(raw) && raw.length > 0) return raw;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 export function buildHtmlFromReportPayload(
   payload: Record<string, unknown> | null | undefined,
 ): string | null {
@@ -112,36 +255,23 @@ export function buildHtmlFromReportPayload(
   const language = getReportLanguage(payload);
   const t = i18n(language);
 
-  const direct = payload.html;
-  if (typeof direct === "string" && isHtmlLongEnough(direct)) {
-    return direct;
-  }
+  const coverParsed = parseCoverV1FromUnknown(payload.cover_v1);
+  const profileParsed = parseInspectorProfileFromUnknown(
+    payload[INSPECTOR_PROFILE_PAYLOAD_KEY],
+  );
+  const coverBlock =
+    coverParsed != null
+      ? buildCoverSectionHtml(coverParsed, profileParsed)
+      : "";
 
-  const sectionsRaw = payload.sections;
-  if (Array.isArray(sectionsRaw) && sectionsRaw.length > 0) {
-    const sectionsWithItems = sectionsRaw.filter(
-      (sec) =>
-        sec &&
-        typeof sec === "object" &&
-        Array.isArray((sec as { items?: unknown }).items) &&
-        ((sec as { items?: unknown[] }).items?.length ?? 0) > 0,
-    ).length;
-    const sectionsWithNarrativeFields = sectionsRaw.filter(
-      (sec) =>
-        sec &&
-        typeof sec === "object" &&
-        ("observation" in (sec as Record<string, unknown>) ||
-          "analysis" in (sec as Record<string, unknown>) ||
-          "recommendation" in (sec as Record<string, unknown>)),
-    ).length;
-
+  const sectionsRaw =
+    normalizeSectionsFromPayload(payload.sections) ?? [];
+  if (sectionsRaw.length > 0) {
     const parts: string[] = [];
     parts.push(
       `<!DOCTYPE html><html lang="${t.htmlLang}"><head><meta charset="utf-8"><title>${t.defaultTitle}</title>`,
     );
-    parts.push(
-      "<style>body{font-family:Arial,sans-serif;padding:40px}h1{font-size:26px}h2{font-size:18px}h3{font-size:16px}.ok{color:green}.warn{color:orange}.bad{color:red}</style>",
-    );
+    parts.push(`<style>${REPORT_BASE_PRINT_CSS}</style>`);
     parts.push("</head><body>");
 
     const title =
@@ -150,27 +280,87 @@ export function buildHtmlFromReportPayload(
         : t.defaultTitle;
     parts.push(`<div class="header"><h1>Inspect<span class="brand">Flow</span></h1><p class="subtitle">${escapeHtml(title)}</p></div>`);
 
+    if (coverBlock) {
+      parts.push(coverBlock);
+    }
+
     if (payload.score != null && String(payload.score).length > 0) {
       parts.push(`<h2>${t.scoreLabel}: ${escapeHtml(String(payload.score))}</h2>`);
     }
 
+    const clientSectionRaw = payload.client_section;
+    if (typeof clientSectionRaw === "string" && clientSectionRaw.trim()) {
+      parts.push(
+        `<div class="client-summary" style="margin-bottom:1.5em;padding:1em;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc">`,
+      );
+      parts.push(`<h2>${escapeHtml(t.clientSectionTitle)}</h2>`);
+      for (const para of clientSectionRaw
+        .split(/\n\n+/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0)) {
+        parts.push(`<p>${escapeHtml(para)}</p>`);
+      }
+      parts.push(`</div>`);
+    }
+
+    if (typeof payload.summary === "string" && payload.summary.trim()) {
+      parts.push(`<h2>${escapeHtml(t.technicalSummaryTitle)}</h2>`);
+      parts.push(`<p>${escapeHtml(payload.summary.trim())}</p>`);
+    }
+
     for (const sec of sectionsRaw) {
       if (!sec || typeof sec !== "object") continue;
-      const s = sec as Section;
+      const s = sec as Section & {
+        observation?: unknown;
+        analysis?: unknown;
+        recommendation?: unknown;
+        severity?: unknown;
+      };
       const secTitle = s.title != null ? String(s.title) : "";
-      parts.push(`<h3>${escapeHtml(secTitle)}</h3><ul>`);
       const items = Array.isArray(s.items) ? s.items : [];
-      for (const item of items) {
-        if (!item || typeof item !== "object") continue;
-        const it = item as SectionItem;
-        const label = it.label != null ? String(it.label) : "";
-        const status = it.status != null ? String(it.status) : "";
-        const cls = statusCssClass(status);
-        parts.push(
-          `<li class="${cls}">${escapeHtml(label)} — ${escapeHtml(status)}</li>`,
-        );
+      const obs =
+        typeof s.observation === "string" ? s.observation.trim() : "";
+      const ana = typeof s.analysis === "string" ? s.analysis.trim() : "";
+      const rec =
+        typeof s.recommendation === "string" ? s.recommendation.trim() : "";
+      const sev = typeof s.severity === "string" ? s.severity.trim() : "";
+
+      if (items.length > 0) {
+        parts.push(`<h3>${escapeHtml(secTitle)}</h3><ul>`);
+        for (const item of items) {
+          if (!item || typeof item !== "object") continue;
+          const it = item as SectionItem;
+          const label = it.label != null ? String(it.label) : "";
+          const status = it.status != null ? String(it.status) : "";
+          const cls = statusCssClass(status);
+          parts.push(
+            `<li class="${cls}">${escapeHtml(label)} — ${escapeHtml(status)}</li>`,
+          );
+        }
+        parts.push("</ul>");
+      } else if (obs || ana || rec || secTitle || sev) {
+        parts.push(`<h3>${escapeHtml(secTitle)}</h3>`);
+        if (sev) {
+          parts.push(
+            `<p><em>${escapeHtml(t.severityLabel)}: ${escapeHtml(sev)}</em></p>`,
+          );
+        }
+        if (obs) {
+          parts.push(
+            `<p><strong>${escapeHtml(t.findingObservation)}:</strong> ${escapeHtml(obs)}</p>`,
+          );
+        }
+        if (ana) {
+          parts.push(
+            `<p><strong>${escapeHtml(t.findingAnalysis)}:</strong> ${escapeHtml(ana)}</p>`,
+          );
+        }
+        if (rec) {
+          parts.push(
+            `<p><strong>${escapeHtml(t.findingRecommendation)}:</strong> ${escapeHtml(rec)}</p>`,
+          );
+        }
       }
-      parts.push("</ul>");
     }
 
     const compliance =
@@ -239,7 +429,18 @@ export function buildHtmlFromReportPayload(
       defects as GenericRow[],
       observations as GenericRow[],
       language,
+      coverBlock ? { coverHtml: coverBlock } : undefined,
     );
+  }
+
+  const direct = payload.html;
+  if (typeof direct === "string" && isHtmlLongEnough(direct)) {
+    if (!coverBlock) return direct;
+    return mergeCoverIntoCustomHtml(direct, coverBlock);
+  }
+
+  if (coverBlock) {
+    return buildCoverStandaloneHtml(payload, coverBlock, t);
   }
 
   return null;
@@ -249,12 +450,16 @@ export function buildInspectionReportHtml(
   defects: GenericRow[],
   observations: GenericRow[],
   language: ReportLanguage = "fr",
+  options?: { coverHtml?: string },
 ): string {
   const t = i18n(language);
   const parts: string[] = [];
   parts.push(
-    `<!DOCTYPE html><html lang="${t.htmlLang}"><head><meta charset="utf-8"><title>${t.defaultTitle}</title></head><body>`,
+    `<!DOCTYPE html><html lang="${t.htmlLang}"><head><meta charset="utf-8"><title>${t.defaultTitle}</title><style>${REPORT_BASE_PRINT_CSS}</style></head><body>`,
   );
+  if (options?.coverHtml) {
+    parts.push(options.coverHtml);
+  }
   parts.push(`<h1>${t.inspectionTitle}</h1>`);
 
   if (defects.length > 0) {

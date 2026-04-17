@@ -56,12 +56,12 @@ async function main() {
       }
     }
   }
-  const mw = path.join(root, "middleware.ts");
+  const mw = path.join(root, "proxy.ts");
   try {
     const text = await fs.readFile(mw, "utf8");
     for (const re of patterns) {
       if (re.test(text)) {
-        console.log(`MATCH ${re} -> middleware.ts`);
+        console.log(`MATCH ${re} -> proxy.ts`);
         found = true;
       }
     }

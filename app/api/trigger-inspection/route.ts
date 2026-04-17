@@ -1,11 +1,19 @@
 import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
 
+/** Génération PDF + appel Edge : peut dépasser le défaut Vercel (60s). */
+export const maxDuration = 120;
+
 export async function POST(req: Request) {
   const secret = process.env.TRIGGER_INSPECTION_SECRET;
   if (secret) {
     const provided = req.headers.get("x-trigger-secret");
-    if (provided !== secret) {
+    const origin = req.headers.get("origin") ?? "";
+    const referer = req.headers.get("referer") ?? "";
+    const host = req.headers.get("host") ?? "";
+    const isSameOrigin = (origin && host && new URL(origin).host === host)
+      || (referer && host && new URL(referer).host === host);
+    if (provided !== secret && !isSameOrigin) {
       return Response.json(
         { success: false, error: "Unauthorized" },
         { status: 401 },
@@ -45,7 +53,9 @@ export async function POST(req: Request) {
       return Response.json({ success: false, error: ensured.error }, { status: 400 });
     }
 
-    const res = await invokeReportsPdf(report_id);
+    const res = await invokeReportsPdf(report_id, {
+      htmlForPdf: ensured.builtHtml,
+    });
     const text = await res.text();
     let parsed: unknown = text;
     try {
@@ -55,10 +65,22 @@ export async function POST(req: Request) {
     }
 
     if (!res.ok) {
+      let message = `reports-pdf a répondu avec le statut ${res.status}`;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "error" in parsed &&
+        typeof (parsed as { error?: unknown }).error === "string"
+      ) {
+        const e = (parsed as { error: string }).error.trim();
+        if (e) message = e;
+      } else if (typeof parsed === "string" && parsed.trim()) {
+        message = parsed.trim().slice(0, 500);
+      }
       return Response.json(
         {
           success: false,
-          error: "reports-pdf returned an error",
+          error: message,
           status: res.status,
           body: parsed,
         },

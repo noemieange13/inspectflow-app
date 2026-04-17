@@ -4,14 +4,17 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:3001": "next dev -p 3001",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "upload:report-pdf": "node --env-file=.env.local scripts/upload-report-pdf.cjs",
-    "supabase:deploy:reports-pdf": "supabase functions deploy reports-pdf",
-    "supabase:deploy:create-report": "supabase functions deploy create-report",
-    "supabase:db:push": "supabase db push",
-    "find:reports-writer": "node scripts/find-reports-writer.mjs"
+    "supabase:deploy:reports-pdf": "npx supabase functions deploy reports-pdf",
+    "supabase:deploy:create-report": "npx supabase functions deploy create-report",
+    "supabase:deploy:upload-photo": "npx supabase functions deploy upload-photo",
+    "supabase:db:push": "npx supabase db push",
+    "find:reports-writer": "node scripts/find-reports-writer.mjs",
+    "smoke:e2e": "node scripts/e2e-smoke.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

@@ -783,3 +783,76 @@ export function buildStructuredReport(
     },
   };
 }
+
+/**
+ * Compte rendu « client » : langage accessible (propriétaire / acheteur), distinct du volet technique.
+ * Réduit le temps de rédaction en fournissant un premier jet structuré à ajuster.
+ */
+export function buildClientFacingSection(
+  entries: ReportEntryInput[],
+  language: ReportLanguage,
+  jurisdiction: JurisdictionProfile,
+  inspectorNote?: string,
+): string {
+  const issueMap = language === "en" ? ISSUE_MAP_EN : ISSUE_MAP;
+  const intro =
+    language === "en"
+      ? "This plain-language summary is for the property owner or buyer. It highlights themes from the visit and does not replace the detailed technical sections below."
+      : "Ce résumé en langage clair s'adresse au propriétaire ou à l'acheteur. Il met en évidence les thèmes de la visite et ne remplace pas les sections techniques détaillées ci-dessous.";
+
+  const lines: string[] = [intro];
+
+  if (inspectorNote?.trim()) {
+    const label =
+      language === "en"
+        ? "Inspector context"
+        : "Contexte inspecteur";
+    lines.push("", `${label}: ${inspectorNote.trim()}`);
+  }
+
+  if (entries.length === 0) {
+    lines.push(
+      "",
+      language === "en"
+        ? "No structured finding was recorded."
+        : "Aucun constat structuré n'a été enregistré.",
+    );
+    return lines.join("\n\n");
+  }
+
+  const themesTitle =
+    language === "en" ? "Main themes from this visit" : "Principaux thèmes de la visite";
+  lines.push("", `${themesTitle}:`);
+
+  for (const entry of entries) {
+    const zoneLabel =
+      language === "en"
+        ? ZONE_LABELS_EN[entry.zone]
+        : ZONE_MAP[entry.zone].label;
+    const issue = issueMap[entry.issue];
+    const sev = SEVERITY_LABELS[language][entry.severity];
+    const note = entry.note?.trim();
+    const tail = note
+      ? language === "en"
+        ? ` Field note: ${note}.`
+        : ` Note terrain : ${note}.`
+      : "";
+    const bullet =
+      language === "en"
+        ? `• ${zoneLabel} — ${issue.label} (priority: ${sev.toLowerCase()}).${tail}`
+        : `• ${zoneLabel} — ${issue.label} (priorité : ${sev.toLowerCase()}).${tail}`;
+    lines.push(bullet);
+  }
+
+  const outro =
+    language === "en"
+      ? jurisdiction === "ca_qc"
+        ? "For repairs or compliance decisions, consult qualified professionals familiar with Quebec and Canadian requirements."
+        : "For repairs or compliance decisions, consult qualified professionals familiar with applicable Canadian codes and standards."
+      : jurisdiction === "ca_qc"
+        ? "Pour les réparations ou les décisions de conformité, s'appuyer sur des professionnels qualifiés, au fait des exigences du Québec et du Canada."
+        : "Pour les réparations ou les décisions de conformité, s'appuyer sur des professionnels qualifiés, au fait des codes et normes applicables au Canada.";
+
+  lines.push("", outro);
+  return lines.join("\n\n");
+}
