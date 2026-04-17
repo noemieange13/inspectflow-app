@@ -179,6 +179,8 @@ export default function ZeroDraftReportComposer({
         "Note: AI polish stopped (timeout or limit); your draft was saved.",
       polishSkippedUnavailable:
         "Note: AI polish was unavailable; your draft was saved.",
+      polishSkippedTimeout:
+        "Note: AI polish stopped (OpenAI/network time limit); your draft was saved.",
       reportLockedShort:
         "This report is finalized or locked — the database refused to save changes.",
       reportLockedHelp:
@@ -583,7 +585,9 @@ export default function ZeroDraftReportComposer({
               ? labels.polishSkippedTooLong
               : o === "aborted"
                 ? labels.polishSkippedAborted
-                : labels.polishSkippedUnavailable;
+                : o === "timeout"
+                  ? labels.polishSkippedTimeout
+                  : labels.polishSkippedUnavailable;
           doneStatus = `${labels.reportGeneratedOk} ${extra}`;
         }
         setStatus(doneStatus);

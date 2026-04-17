@@ -1,3 +1,4 @@
+import type { AiResult } from "@/lib/aiResult";
 import type { ReportLanguage } from "@/lib/reportNarrative";
 
 function mergeAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
@@ -13,37 +14,34 @@ function mergeAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
 /** Limite envoyée à l’API (caractères) — évite payloads excessifs et coûts imprévus. */
 const MAX_CLIENT_SECTION_CHARS = 48_000;
 
-export type PolishClientSectionSkipReason = "too_long" | "aborted" | "unavailable";
-
-/**
- * Résultat du polish : `text` remplace le brouillon si présent ; sinon garder le brouillon et lire `skipReason`.
- */
-export type PolishClientSectionResult = {
-  text: string | null;
-  skipReason?: PolishClientSectionSkipReason;
-};
+/** Raison exposée dans l’API HTTP (`polish_outcome`) — alignée sur l’échec du polish. */
+export type PolishClientSectionSkipReason =
+  | "too_long"
+  | "aborted"
+  | "unavailable"
+  | "timeout";
 
 /**
  * Peaufine le compte rendu client (ton professionnel, phrases fluides).
- * Requiert OPENAI_API_KEY côté serveur ; si le polish échoue, `text` est null et `skipReason` précise pourquoi.
+ * Requiert OPENAI_API_KEY côté serveur.
  */
 export async function refineClientSectionAi(input: {
   draft: string;
   language: ReportLanguage;
   /** Annule le fetch OpenAI (ex. timeout route) ; combiné au plafond interne ~45s. */
   signal?: AbortSignal;
-}): Promise<PolishClientSectionResult> {
+}): Promise<AiResult<string>> {
   if (input.signal?.aborted) {
-    return { text: null, skipReason: "aborted" };
+    return { ok: false, reason: "aborted" };
   }
 
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const draft = input.draft.trim();
   if (!apiKey || !draft) {
-    return { text: null, skipReason: "unavailable" };
+    return { ok: false, reason: "error" };
   }
   if (draft.length > MAX_CLIENT_SECTION_CHARS) {
-    return { text: null, skipReason: "too_long" };
+    return { ok: false, reason: "too_large" };
   }
 
   const model = process.env.REPORTS_AI_MODEL?.trim() || "gpt-4o-mini";
@@ -83,17 +81,22 @@ export async function refineClientSectionAi(input: {
       }),
     });
   } catch (err) {
-    const aborted = err instanceof Error && err.name === "AbortError";
-    return {
-      text: null,
-      skipReason: aborted ? "aborted" : "unavailable",
-    };
+    if (err instanceof Error && err.name === "AbortError") {
+      if (input.signal?.aborted) {
+        return { ok: false, reason: "aborted" };
+      }
+      return { ok: false, reason: "timeout" };
+    }
+    console.error("[AI] refineClientSectionAi exception", err);
+    return { ok: false, reason: "error" };
   } finally {
     clearTimeout(kill);
   }
 
   if (!res.ok) {
-    return { text: null, skipReason: "unavailable" };
+    const body = await res.text();
+    console.error("[AI] bad response", res.status, body.slice(0, 800));
+    return { ok: false, reason: "error" };
   }
 
   const data = (await res.json()) as {
@@ -101,7 +104,7 @@ export async function refineClientSectionAi(input: {
   };
   const text = data.choices?.[0]?.message?.content?.trim();
   if (text && text.length >= 40) {
-    return { text };
+    return { ok: true, data: text };
   }
-  return { text: null, skipReason: "unavailable" };
+  return { ok: false, reason: "error" };
 }

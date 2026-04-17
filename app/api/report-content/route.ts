@@ -17,10 +17,26 @@ import {
   type Severity,
   type ZoneCode,
 } from "@/lib/reportNarrative";
+import type { AiFailureReason } from "@/lib/aiResult";
 import {
   refineClientSectionAi,
   type PolishClientSectionSkipReason,
 } from "@/lib/refineClientSectionAi";
+
+function mapAiFailureToPolishOutcome(
+  reason: AiFailureReason,
+): PolishClientSectionSkipReason {
+  switch (reason) {
+    case "too_large":
+      return "too_long";
+    case "aborted":
+      return "aborted";
+    case "timeout":
+      return "timeout";
+    case "error":
+      return "unavailable";
+  }
+}
 
 /** Vercel / hébergeur : compilation à froid + OpenAI polish peuvent dépasser 60s en local. */
 export const maxDuration = 240;
@@ -236,16 +252,31 @@ export async function POST(req: Request) {
 
         let polishOutcome: "applied" | PolishClientSectionSkipReason | undefined;
         if (polishClient) {
-          const refined = await refineClientSectionAi({
+          const result = await refineClientSectionAi({
             draft: clientSection,
             language,
             signal: routeAbort.signal,
           });
-          if (refined.text) {
-            clientSection = refined.text;
-            polishOutcome = "applied";
+          if (!result.ok) {
+            const r = result.reason;
+            switch (r) {
+              case "too_large":
+                console.warn("[AI] skipped: input too large");
+                break;
+              case "aborted":
+                console.warn("[AI] aborted");
+                break;
+              case "timeout":
+                console.warn("[AI] timeout (fetch/OpenAI)");
+                break;
+              case "error":
+                console.error("[AI] failed");
+                break;
+            }
+            polishOutcome = mapAiFailureToPolishOutcome(r);
           } else {
-            polishOutcome = refined.skipReason ?? "unavailable";
+            clientSection = result.data;
+            polishOutcome = "applied";
           }
         }
 
