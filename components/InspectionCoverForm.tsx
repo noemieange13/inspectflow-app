@@ -9,7 +9,6 @@ import {
   formatFrDateTime,
   loadInspectorProfile,
   saveInspectorProfile,
-  type FacadeOrientation,
   type InspectionCoverPayloadV1,
   type InspectorProfileV1,
 } from "@/lib/inspectionCoverPayload";

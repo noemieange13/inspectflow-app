@@ -98,6 +98,8 @@ export default function ZeroDraftReportComposer({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Réponse API report-content (ex. rapport verrouillé en base). */
+  const [contentSaveErrorCode, setContentSaveErrorCode] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [pdfLink, setPdfLink] = useState<string | null>(initialData?.pdfSignedUrl ?? null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
@@ -177,6 +179,11 @@ export default function ZeroDraftReportComposer({
         "Note: AI polish stopped (timeout or limit); your draft was saved.",
       polishSkippedUnavailable:
         "Note: AI polish was unavailable; your draft was saved.",
+      reportLockedShort:
+        "This report is finalized or locked — the database refused to save changes.",
+      reportLockedHelp:
+        "For a field test, use a new report link (new inspection). You can also unlock the row in Supabase if needed.",
+      reportLockedLink: "Open “Access a report”",
     }
     : {
       title: "Mode zéro rédaction",
@@ -227,6 +234,11 @@ export default function ZeroDraftReportComposer({
         "Note : polish IA interrompu (délai ou limite) ; le brouillon a été enregistré.",
       polishSkippedUnavailable:
         "Note : polish IA indisponible ; le brouillon a été enregistré.",
+      reportLockedShort:
+        "Ce rapport est finalisé ou verrouillé — la base refuse l'enregistrement.",
+      reportLockedHelp:
+        "Pour un test terrain, utilisez un lien de rapport neuf (nouvelle inspection). Sinon, déverrouillez la ligne dans Supabase.",
+      reportLockedLink: "Accéder à un autre rapport",
     };
 
   useEffect(() => {
@@ -513,6 +525,7 @@ export default function ZeroDraftReportComposer({
     try {
       setLoading(true);
       setError(null);
+      setContentSaveErrorCode(null);
       setPdfLink(null);
       setRetryAvailable(false);
       setStatus(
@@ -577,6 +590,7 @@ export default function ZeroDraftReportComposer({
       }
       localStorage.removeItem(storageKey);
     } catch (e) {
+      setContentSaveErrorCode(null);
       setError(e instanceof Error ? e.message : String(e));
       setStatus(null);
       setRetryAvailable(true);
@@ -1089,6 +1103,15 @@ export default function ZeroDraftReportComposer({
           ) : null}
           {status ? <p className="text-sm text-emerald-700" aria-live="polite">{status}</p> : null}
           {error ? <p className="text-sm text-red-600" role="alert">{error}</p> : null}
+          {contentSaveErrorCode === "report_locked" ? (
+            <p className="text-sm text-slate-600">
+              {labels.reportLockedHelp}{" "}
+              <Link href="/report" className="font-medium text-blue-600 underline hover:text-blue-800">
+                {labels.reportLockedLink}
+              </Link>
+              .
+            </p>
+          ) : null}
           {retryAvailable && !loading ? (
             <button
               type="button"

@@ -88,6 +88,11 @@ export default function ReportIndexPage() {
               /report/&lt;id&gt;?token=&lt;jeton&gt;
             </code>
           </p>
+          <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-left text-xs text-amber-900">
+            <span className="font-semibold">Test terrain :</span> un rapport déjà finalisé en base ne
+            pourra pas être régénéré ici — demandez un{" "}
+            <strong>nouveau lien</strong> (nouvelle inspection) ou déverrouillez la ligne dans Supabase.
+          </p>
         </form>
       </div>
     </main>
