@@ -22,6 +22,7 @@ import {
   refineClientSectionAi,
   type PolishClientSectionSkipReason,
 } from "@/lib/refineClientSectionAi";
+import { runDefectClassificationPipeline } from "@/lib/runDefectClassificationPipeline";
 
 function mapAiFailureToPolishOutcome(
   reason: AiFailureReason,
@@ -327,6 +328,26 @@ export async function POST(req: Request) {
           return Response.json({ success: false, error: updateError.message }, { status: 500 });
         }
 
+        let defectClassification: { itemsInserted: number; logged: boolean } | undefined;
+        if (polishClient) {
+          try {
+            defectClassification = await runDefectClassificationPipeline({
+              supabase,
+              reportId,
+              sections: generated.sections.map((s) => ({
+                title: s.title,
+                observation: s.observation,
+                analysis: s.analysis,
+                recommendation: s.recommendation,
+              })),
+              language,
+              signal: routeAbort.signal,
+            });
+          } catch (defectErr) {
+            console.error("[defects] pipeline error", defectErr);
+          }
+        }
+
         return Response.json({
           success: true,
           report_id: reportId,
@@ -338,6 +359,9 @@ export async function POST(req: Request) {
           compliance_checks: generated.compliance.checklist.length,
           ...(polishClient && polishOutcome !== undefined
             ? { polish_outcome: polishOutcome }
+            : {}),
+          ...(polishClient && defectClassification !== undefined
+            ? { defect_classification: defectClassification }
             : {}),
         });
       })(),

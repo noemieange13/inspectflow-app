@@ -557,7 +557,7 @@ export default function ZeroDraftReportComposer({
       const saveBody = await readJsonSafe<{
         success?: boolean;
         error?: string;
-        polish_outcome?: "applied" | "too_long" | "aborted" | "unavailable";
+        polish_outcome?: "applied" | "too_long" | "aborted" | "unavailable" | "timeout";
       }>(saveRes);
       if (!saveRes.ok || !saveBody?.success) {
         throw new Error(
