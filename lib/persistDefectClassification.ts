@@ -16,9 +16,54 @@ export type PersistDefectOutcome = {
   logged: boolean;
 };
 
+type FlatRow = {
+  section: string;
+  severity: string;
+  title: string;
+  description: string;
+  recommendation: string;
+};
+
+function buildFlatRows(data: ClassifiedDefects): FlatRow[] {
+  const rows: FlatRow[] = [];
+  for (const sec of data.sections) {
+    for (const d of sec.defects) {
+      rows.push({
+        section: sec.section.slice(0, 2_000),
+        severity: d.severity,
+        title: d.title.slice(0, 2_000),
+        description: d.description,
+        recommendation: d.recommendation,
+      });
+    }
+  }
+  return rows;
+}
+
+async function insertClassificationLog(
+  supabase: SupabaseClient,
+  row: {
+    report_id: string;
+    status: string;
+    model_name: string;
+    prompt_version: number;
+    input_hash: string;
+    output_hash: string | null;
+    result: Record<string, unknown> | null;
+    ai_failure_reason: string | null;
+  },
+): Promise<boolean> {
+  const { error } = await supabase.from("defect_classifications").insert(row);
+  if (error) {
+    console.error("[defects] defect_classifications insert failed", error.message);
+    return false;
+  }
+  return true;
+}
+
 /**
- * Idempotence : supprime les `report_items` du rapport puis réinsère depuis l’IA.
- * Journalise toujours une ligne `defect_classifications`.
+ * Idempotence : en cas de succès IA, remplacement atomique des `report_items` (RPC transactionnelle),
+ * puis journal `defect_classifications`. En cas d’échec IA, journal seul (pas de toucher aux items).
  */
 export async function persistDefectClassification(
   supabase: SupabaseClient,
@@ -32,61 +77,57 @@ export async function persistDefectClassification(
     process.env.REPORTS_AI_MODEL?.trim() ||
     "gpt-4o-mini";
 
-  const status = ai.ok ? "success" : ai.reason;
-  const outputHash = ai.ok ? sha256Json(ai.data) : null;
-  const resultJson = ai.ok ? (ai.data as unknown as Record<string, unknown>) : null;
-
-  const { error: logErr } = await supabase.from("defect_classifications").insert({
+  const baseLog = {
     report_id: reportId,
-    status,
     model_name: modelName,
     prompt_version: PROMPT_VERSION,
     input_hash: inputHash,
-    output_hash: outputHash,
-    result: resultJson,
-    ai_failure_reason: ai.ok ? null : ai.reason,
-  });
-
-  if (logErr) {
-    console.error("[defects] defect_classifications insert failed", logErr.message);
-    return { itemsInserted: 0, logged: false };
-  }
+  };
 
   if (!ai.ok) {
-    if (ai.reason === "too_large" || ai.reason === "aborted") {
-      /* pas d’insert items — log seul */
-    }
-    return { itemsInserted: 0, logged: true };
+    const status = ai.reason;
+    const logged = await insertClassificationLog(supabase, {
+      ...baseLog,
+      status,
+      output_hash: null,
+      result: null,
+      ai_failure_reason: ai.reason,
+    });
+    return { itemsInserted: 0, logged };
   }
 
-  const { error: delErr } = await supabase
-    .from("report_items")
-    .delete()
-    .eq("report_id", reportId);
+  const outputHash = sha256Json(ai.data);
+  const flat = buildFlatRows(ai.data);
 
-  if (delErr) {
-    console.error("[defects] report_items delete failed", delErr.message);
-    return { itemsInserted: 0, logged: true };
+  const { data: insertedCount, error: rpcErr } = await supabase.rpc(
+    "apply_report_items_classification_batch",
+    {
+      p_report_id: reportId,
+      p_items: flat,
+    },
+  );
+
+  if (rpcErr) {
+    console.error("[defects] apply_report_items_classification_batch failed", rpcErr.message);
+    const logged = await insertClassificationLog(supabase, {
+      ...baseLog,
+      status: "error",
+      output_hash: null,
+      result: null,
+      ai_failure_reason: `persist_failed:${rpcErr.message}`,
+    });
+    return { itemsInserted: 0, logged };
   }
 
-  let inserted = 0;
-  for (const sec of ai.data.sections) {
-    for (const d of sec.defects) {
-      const { error: insErr } = await supabase.from("report_items").insert({
-        report_id: reportId,
-        section: sec.section.slice(0, 2_000),
-        severity: d.severity,
-        title: d.title.slice(0, 2_000),
-        description: d.description,
-        recommendation: d.recommendation,
-      });
-      if (insErr) {
-        console.error("[defects] report_items insert failed", insErr.message);
-        continue;
-      }
-      inserted += 1;
-    }
-  }
+  const n = typeof insertedCount === "number" ? insertedCount : 0;
 
-  return { itemsInserted: inserted, logged: true };
+  const logged = await insertClassificationLog(supabase, {
+    ...baseLog,
+    status: "success",
+    output_hash: outputHash,
+    result: ai.data as unknown as Record<string, unknown>,
+    ai_failure_reason: null,
+  });
+
+  return { itemsInserted: n, logged };
 }
