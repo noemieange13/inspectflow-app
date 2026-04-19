@@ -1,4 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { unlockReportRowForEdit } from "@/lib/updateReportPayloadWithUnlock";
 
 import {
   buildHtmlFromReportPayload,
@@ -24,7 +25,7 @@ export async function ensureReportPayloadHtml(
 
   const { data: report, error } = await supabase
     .from("reports")
-    .select("id, payload")
+    .select("id, payload, is_locked")
     .eq("id", reportId)
     .maybeSingle();
 
@@ -49,6 +50,14 @@ export async function ensureReportPayloadHtml(
   const current = typeof payload.html === "string" ? payload.html : "";
   if (built === current) {
     return { ok: true, builtHtml: built };
+  }
+
+  const rec = report as Record<string, unknown>;
+  if (rec.is_locked === true) {
+    const u = await unlockReportRowForEdit(supabase, reportId);
+    if (u.error) {
+      return { ok: false, error: u.error.message };
+    }
   }
 
   const nextPayload = { ...payload, html: built };

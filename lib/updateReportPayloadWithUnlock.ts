@@ -4,11 +4,11 @@ const lockErr = (m: string) =>
   /P0001|Finalized|locked|prevent_report/i.test(m);
 
 /**
- * Déverrouille pour édition Zero Draft : le trigger `prevent_update_reports()` n’autorise que
- * des changements sur colonnes « whitelist » — voir migration
- * `20260418140000_prevent_update_reports_allow_lock_finalized.sql` (is_locked / finalized_at).
+ * Déverrouille pour édition (Zero Draft, PDF, etc.) : avec le verrou métier
+ * (`20260420120000_prevent_update_reports_true_lock`), tant que `is_locked` est true le `payload`
+ * ne peut pas changer sans cette étape ou sans pipeline PDF (`generating`).
  */
-async function unlockReportRowForEdit(
+export async function unlockReportRowForEdit(
   supabase: SupabaseClient,
   reportId: string,
 ): Promise<{ error: { message: string } | null }> {
