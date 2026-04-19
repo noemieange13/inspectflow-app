@@ -19,7 +19,14 @@ import {
   type ZoneCode,
 } from "@/lib/reportNarrative";
 import type { ReportServerData } from "@/lib/reportViewerServer";
+import BuyerModePanel from "@/components/BuyerModePanel";
+import LiveInspectionCapture from "@/components/LiveInspectionCapture";
 import NotesCapture from "@/components/NotesCapture";
+import ReportLivePreviewBanner from "@/components/ReportLivePreviewBanner";
+import ReportMissionSummary from "@/components/ReportMissionSummary";
+import ReportViewModeToggle from "@/components/ReportViewModeToggle";
+import TerrainGuidePanel from "@/components/TerrainGuidePanel";
+import UserAgentPreferencesInline from "@/components/UserAgentPreferencesInline";
 import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
 import type { CoverReadinessResult } from "@/lib/reportReadiness";
 import { evaluateCoverReadiness, REPORT_READINESS_ZONE_ID } from "@/lib/reportReadiness";
@@ -31,6 +38,16 @@ import {
   noteFirstPdfBlocked,
 } from "@/lib/reportFunnelTiming";
 import { pickTopPhotoIndices, scorePhotoHeuristic } from "@/lib/photoScoring";
+import { computeTerrainGuideStep } from "@/lib/terrainFieldGuide";
+import {
+  DEFAULT_USER_AGENT_PROFILE,
+  loadReportViewMode,
+  loadUserAgentProfile,
+  saveReportViewMode,
+  saveUserAgentProfile,
+  type ReportViewMode,
+  type UserAgentProfile,
+} from "@/lib/userAgentProfile";
 
 /** Limite « soft » UI — ne pas descendre sous 250 (usage réel 150–300+ photos). */
 const MAX_BULK_SOFT = 250;
@@ -144,8 +161,12 @@ export default function ZeroDraftReportComposer({
   const [photoDropHover, setPhotoDropHover] = useState(false);
   const photoDragDepthRef = useRef(0);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const terrainPresetZoneRef = useRef<ZoneCode | null>(null);
+  const cloudProfileSaveTimerRef = useRef<number | null>(null);
   const [clientOverride, setClientOverride] = useState<string | null>(null);
   const [polishClient, setPolishClient] = useState(false);
+  const [viewMode, setViewMode] = useState<ReportViewMode>("inspector");
+  const [userProfile, setUserProfile] = useState<UserAgentProfile>(DEFAULT_USER_AGENT_PROFILE);
 
   const generated = useMemo(
     () => buildStructuredReport(entries, language, jurisdiction),
@@ -159,6 +180,80 @@ export default function ZeroDraftReportComposer({
 
   const router = useRouter();
 
+  useEffect(() => {
+    setViewMode(loadReportViewMode());
+    setUserProfile(loadUserAgentProfile());
+  }, []);
+
+  const scheduleCloudProfileSync = useCallback(
+    (profile: UserAgentProfile, mode: ReportViewMode) => {
+      const tok = viewerToken?.trim();
+      if (!tok || !reportId?.trim()) return;
+      if (cloudProfileSaveTimerRef.current != null) {
+        window.clearTimeout(cloudProfileSaveTimerRef.current);
+      }
+      cloudProfileSaveTimerRef.current = window.setTimeout(() => {
+        cloudProfileSaveTimerRef.current = null;
+        void fetch("/api/user-agent-profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: reportId.trim(),
+            access_token: tok,
+            prefers_short_reports: profile.prefers_short_reports,
+            strict_on_roof: profile.strict_on_roof,
+            report_view_mode: mode,
+          }),
+        }).catch(() => {});
+      }, 720);
+    },
+    [reportId, viewerToken],
+  );
+
+  useEffect(() => {
+    const tok = viewerToken?.trim();
+    if (!tok || !reportId?.trim()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/user-agent-profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: reportId.trim(),
+            access_token: tok,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          cloud?: boolean;
+          profile?: UserAgentProfile;
+          report_view_mode?: ReportViewMode;
+        };
+        if (cancelled || !res.ok || !data.cloud || !data.profile) return;
+        setUserProfile(saveUserAgentProfile(data.profile));
+        if (data.report_view_mode === "buyer" || data.report_view_mode === "inspector") {
+          setViewMode(data.report_view_mode);
+          saveReportViewMode(data.report_view_mode);
+        }
+      } catch {
+        /* nuage optionnel */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reportId, viewerToken]);
+
+  const terrainPrefs = useMemo(
+    () => ({ strict_on_roof: userProfile.strict_on_roof }),
+    [userProfile.strict_on_roof],
+  );
+
+  const buyerProfilePick = useMemo(
+    () => ({ prefers_short_reports: userProfile.prefers_short_reports }),
+    [userProfile.prefers_short_reports],
+  );
+
   const photosCoverageByZone = useMemo(() => {
     const acc: Partial<Record<string, number>> = {};
     for (const p of photos) {
@@ -168,6 +263,36 @@ export default function ZeroDraftReportComposer({
     }
     return acc;
   }, [photos]);
+
+  const validPhotoCount = useMemo(
+    () => photos.filter((p) => p.url && !p.error).length,
+    [photos],
+  );
+
+  const terrainStepLive = useMemo(
+    () =>
+      computeTerrainGuideStep({
+        entries,
+        photosCoverageByZone,
+        validPhotoCount,
+        preferences: terrainPrefs,
+      }),
+    [entries, photosCoverageByZone, validPhotoCount, terrainPrefs],
+  );
+
+  const reportPayloadForBuyer = useMemo((): Record<string, unknown> => {
+    if (hasExistingReport && existingPayload && typeof existingPayload === "object") {
+      return existingPayload as Record<string, unknown>;
+    }
+    return {};
+  }, [hasExistingReport, existingPayload]);
+
+  const scrollToPhotosZone = useCallback(() => {
+    document.getElementById("report-photos-zone")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, []);
 
   const copilotFieldsRef = useRef({
     title: "",
@@ -322,15 +447,78 @@ export default function ZeroDraftReportComposer({
     });
   }, [hasExistingReport, existingPayload, photos, entries, photosCoverageByZone, generated.sections]);
 
-  const pdfBlockedByCover = coverReadiness.gate === "blocked";
+  /** Brouillon fusionné — même forme que `/api/report-content` pour l’aperçu HTML « PDF ». */
+  const htmlPreviewPayload = useMemo((): Record<string, unknown> | null => {
+    const base =
+      hasExistingReport && existingPayload && typeof existingPayload === "object"
+        ? { ...(existingPayload as Record<string, unknown>) }
+        : {};
+    return {
+      ...base,
+      title,
+      summary: generated.summary,
+      sections: generated.sections,
+      risk_level: generated.risk_level,
+      compliance: generated.compliance,
+      inspector_note: inspectorNote || null,
+      client_section: clientSectionValue,
+      language,
+      jurisdiction,
+      entries: entries.map((e) => ({
+        zone: e.zone,
+        issue: e.issue,
+        severity: e.severity,
+        note: e.note ?? "",
+      })),
+      photos_coverage_v1: {
+        schema_version: 1,
+        updated_at: new Date().toISOString(),
+        by_zone: photosCoverageByZone,
+      },
+    };
+  }, [
+    hasExistingReport,
+    existingPayload,
+    title,
+    generated.summary,
+    generated.sections,
+    generated.risk_level,
+    generated.compliance,
+    inspectorNote,
+    clientSectionValue,
+    language,
+    jurisdiction,
+    entries,
+    photosCoverageByZone,
+  ]);
+
+  /** Export PDF réservé au gate `ready` (blocages ou avertissements non accusés). */
+  const pdfExportBlocked = coverReadiness.gate !== "ready";
+  const pdfGateWarning = coverReadiness.gate === "warning";
   const pdfBlockedCritical = coverReadiness.blocking.some((b) => b.severity === "block_critical");
 
   const canGenerate =
     title.trim().length > 2 &&
     entries.length > 0 &&
     !loading &&
-    !pdfBlockedByCover;
+    !pdfExportBlocked;
   const completion = Math.min(100, Math.max(15, Math.round((entries.length / 6) * 100)));
+  const previewCompletion = Math.min(
+    100,
+    Math.max(
+      10,
+      Math.round(
+        (entries.length / 6) * 50 +
+          Math.min(validPhotoCount, 24) * 1.8 +
+          (clientSectionValue.trim().length > 40 ? 22 : 0),
+      ),
+    ),
+  );
+  const reportAlmostComplete =
+    previewCompletion >= 78 &&
+    entries.length >= 3 &&
+    validPhotoCount >= 1 &&
+    title.trim().length > 2;
   const riskBadgeClass = generated.risk_level === "high"
     ? "bg-red-100 text-red-700 border-red-200"
     : generated.risk_level === "medium"
@@ -401,6 +589,17 @@ export default function ZeroDraftReportComposer({
         "Cannot generate the report — essential information is missing. Open the cover page and fill in requester, address, and required fields.",
       pdfGateBlockedStandardIntro: "Complete the following to continue:",
       openCoverPage: "Open cover page",
+      pdfNotCertifiedWarning:
+        "Report not certified — fix the items above or acknowledge warnings in the compliance panel before exporting the PDF.",
+      finishInspectionTitle: "Inspection almost complete",
+      finishInspectionReady:
+        "You have enough findings and photos — generate the PDF to wrap up.",
+      finishInspectionBlocked:
+        "Finish cover & compliance, then generate the PDF to finalize.",
+      finishInspectionGoPdf: "Scroll to PDF generation",
+      htmlPreviewTitle: "Live report layout (same HTML as PDF)",
+      htmlPreviewLoading: "Building HTML preview…",
+      htmlPreviewError: "HTML preview unavailable (draft may be too minimal).",
     }
     : {
       title: "Mode zéro rédaction",
@@ -464,6 +663,17 @@ export default function ZeroDraftReportComposer({
         "Impossible de générer le rapport — informations d’identité ou d’adresse manquantes. Ouvrez la couverture et complétez les champs requis.",
       pdfGateBlockedStandardIntro: "Complétez les éléments suivants pour continuer :",
       openCoverPage: "Ouvrir la couverture",
+      pdfNotCertifiedWarning:
+        "Rapport non certifié — corrigez les points bloquants ou accusez réception des avertissements (zone conformité) avant l’export PDF.",
+      finishInspectionTitle: "Inspection presque terminée",
+      finishInspectionReady:
+        "Vous avez assez de constats et de photos — générez le PDF pour conclure.",
+      finishInspectionBlocked:
+        "Finalisez la couverture et la conformité, puis générez le PDF.",
+      finishInspectionGoPdf: "Aller à la génération PDF",
+      htmlPreviewTitle: "Mise en page du rapport (même HTML que le PDF)",
+      htmlPreviewLoading: "Génération de l'aperçu HTML…",
+      htmlPreviewError: "Aperçu HTML indisponible (brouillon peut-être trop minimal).",
     };
 
   useEffect(() => {
@@ -630,21 +840,26 @@ export default function ZeroDraftReportComposer({
             /* ignore */
           }
         }
-        setPhotos((prev) =>
-          prev.map((p) =>
-            p.id === slotId
-              ? {
-                  ...p,
-                  uploading: false,
-                  url: typeof body.url === "string" ? body.url : null,
-                  error: !ok
-                    ? (typeof body.error === "string" ? body.error : `Erreur ${res.status}`)
-                    : undefined,
-                  ...(ai_score != null ? { ai_score } : {}),
-                }
-              : p,
-          ),
-        );
+        setPhotos((prev) => {
+          const preset = terrainPresetZoneRef.current;
+          return prev.map((p) => {
+            if (p.id !== slotId) return p;
+            const next = {
+              ...p,
+              uploading: false,
+              url: typeof body.url === "string" ? body.url : null,
+              error: !ok
+                ? (typeof body.error === "string" ? body.error : `Erreur ${res.status}`)
+                : undefined,
+              ...(ai_score != null ? { ai_score } : {}),
+            };
+            if (ok && preset) {
+              terrainPresetZoneRef.current = null;
+              return { ...next, linked_zone: preset };
+            }
+            return next;
+          });
+        });
         return ok;
       } catch (e) {
         if (attempt === 0) {
@@ -1201,6 +1416,83 @@ export default function ZeroDraftReportComposer({
         </div>
       </div>
 
+      <ReportMissionSummary
+        language={language}
+        entries={entries}
+        photosCoverageByZone={photosCoverageByZone as Record<string, number>}
+        validPhotoCount={validPhotoCount}
+        reportPayload={reportPayloadForBuyer}
+        terrainPreferences={terrainPrefs}
+        buyerProfile={buyerProfilePick}
+      />
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <ReportViewModeToggle
+          mode={viewMode}
+          language={language}
+          onChange={(m) => {
+            setViewMode(m);
+            saveReportViewMode(m);
+            scheduleCloudProfileSync(userProfile, m);
+          }}
+        />
+        <UserAgentPreferencesInline
+          profile={userProfile}
+          language={language}
+          onChange={(p) => {
+            const next = saveUserAgentProfile(p);
+            setUserProfile(next);
+            scheduleCloudProfileSync(next, viewMode);
+          }}
+        />
+      </div>
+
+      {reportAlmostComplete ? (
+        <div
+          className={`mt-3 rounded-xl border px-4 py-3 text-sm shadow-sm ${
+            pdfExportBlocked
+              ? "border-amber-200 bg-amber-50 text-amber-950"
+              : "border-emerald-200 bg-emerald-50 text-emerald-950"
+          }`}
+          role="status"
+        >
+          <p className="font-semibold">{labels.finishInspectionTitle}</p>
+          <p className="mt-1 text-xs leading-snug opacity-95">
+            {pdfExportBlocked ? labels.finishInspectionBlocked : labels.finishInspectionReady}
+          </p>
+          <button
+            type="button"
+            className="mt-2 inline-flex rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+            onClick={() =>
+              document.getElementById("inspectflow-generate-pdf-cta")?.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+              })
+            }
+          >
+            {labels.finishInspectionGoPdf}
+          </button>
+        </div>
+      ) : null}
+
+      <div className="mt-3">
+        <ReportLivePreviewBanner
+          language={language}
+          previewText={clientSectionValue}
+          entriesCount={entries.length}
+          photosCount={validPhotoCount}
+          completionPercent={previewCompletion}
+          reportId={reportId}
+          viewerToken={viewerToken}
+          livePayload={htmlPreviewPayload}
+          labels={{
+            htmlPreview: labels.htmlPreviewTitle,
+            htmlLoading: labels.htmlPreviewLoading,
+            htmlError: labels.htmlPreviewError,
+          }}
+        />
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <label className="block text-sm font-medium text-slate-700">
@@ -1375,6 +1667,28 @@ export default function ZeroDraftReportComposer({
             onNotesProcessed={handleNotesProcessed}
           />
 
+          {viewMode === "inspector" ? (
+            <TerrainGuidePanel
+              language={language}
+              entries={entries}
+              photosCoverageByZone={photosCoverageByZone as Record<string, number>}
+              validPhotoCount={validPhotoCount}
+              preferences={terrainPrefs}
+              onPresetZoneForNextPhoto={(z) => {
+                terrainPresetZoneRef.current = z;
+              }}
+              onScrollToPhotos={scrollToPhotosZone}
+            />
+          ) : null}
+
+          <BuyerModePanel
+            language={language}
+            entries={entries}
+            reportPayload={reportPayloadForBuyer}
+            profile={buyerProfilePick}
+            viewMode={viewMode}
+          />
+
           <div
             id="report-photos-zone"
             className="scroll-mt-28 rounded-lg border border-slate-200 p-4"
@@ -1382,6 +1696,19 @@ export default function ZeroDraftReportComposer({
             <p className="text-sm font-medium text-slate-700 mb-3">
               {language === "en" ? "Photos" : "Photos"}
             </p>
+            <LiveInspectionCapture
+              reportId={reportId}
+              language={language}
+              disabled={loading || uploadingPhoto}
+              guideHint={
+                terrainStepLive?.kind === "photo"
+                  ? language === "en"
+                    ? terrainStepLive.title_en
+                    : terrainStepLive.title_fr
+                  : undefined
+              }
+              onPhotoUploaded={() => router.refresh()}
+            />
             <input
               ref={photoInputRef}
               id="report-photos-input"
@@ -1437,7 +1764,11 @@ export default function ZeroDraftReportComposer({
               >
                 {uploadingPhoto ? (
                   <>
-                    <span>{language === "en" ? "Uploading…" : "Téléversement…"}</span>
+                    <span>
+                      {language === "en"
+                        ? "🧠 Upload & photo analysis…"
+                        : "🧠 Téléversement & analyse des photos…"}
+                    </span>
                     {photoUploadProgress ? (
                       <span className="text-xs font-medium tabular-nums">
                         {photoUploadProgress.done} / {photoUploadProgress.total}
@@ -1564,17 +1895,21 @@ export default function ZeroDraftReportComposer({
             ) : null}
           </div>
 
-          {pdfBlockedByCover && hasExistingReport ? (
+          {pdfExportBlocked && hasExistingReport ? (
             <div
               className={`rounded-lg border px-3 py-2 text-sm ${
-                pdfBlockedCritical
+                pdfGateWarning
+                  ? "border-violet-200 bg-violet-50 text-violet-950"
+                  : pdfBlockedCritical
                   ? "border-rose-300 bg-rose-50 text-rose-950"
                   : "border-amber-200 bg-amber-50 text-amber-950"
               }`}
               role="status"
             >
               <p className="font-medium">
-                {pdfBlockedCritical
+                {pdfGateWarning
+                  ? labels.pdfNotCertifiedWarning
+                  : pdfBlockedCritical
                   ? labels.pdfBlockedCriticalBanner
                   : labels.pdfBlockedStandardBanner}
               </p>
@@ -1590,6 +1925,7 @@ export default function ZeroDraftReportComposer({
           ) : null}
 
           <button
+            id="inspectflow-generate-pdf-cta"
             type="button"
             disabled={!canGenerate}
             onClick={handleGenerate}

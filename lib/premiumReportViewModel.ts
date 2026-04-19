@@ -2,6 +2,7 @@
  * Vue « inspection-grade » pour IA / orchestrateurs — alignée sur le rendu PDF QC 2027.
  */
 
+import { computeQcBuildingIndexScore } from "@/lib/qcBuildingIndexScore";
 import type { QcLegalClauseRow } from "@/lib/qcLegalClauses";
 import { groupClausesBySection } from "@/lib/qcLegalClauses";
 
@@ -18,6 +19,8 @@ export type PremiumReportViewModel = {
   medium_issues: string[];
   systems: PremiumSystemRow[];
   global_condition: string;
+  /** Aligné sur l’indice PDF QC (gravité + risk_level) */
+  building_index_score: number;
   clauses: string[];
   clauses_by_section: Record<string, string[]>;
 };
@@ -138,11 +141,14 @@ export function buildPremiumViewModelFromPayload(
   const clauses = rows.map((r) => r.clause);
   const clauses_by_section = groupClausesBySection(rows);
 
+  const building_index_score = computeQcBuildingIndexScore(payload, entries);
+
   return {
     major_issues,
     medium_issues,
     systems,
     global_condition,
+    building_index_score,
     clauses,
     clauses_by_section,
   };

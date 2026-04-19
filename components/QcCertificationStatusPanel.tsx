@@ -13,6 +13,7 @@ import {
   qcStatsLookupKey,
 } from "@/lib/qcCopilotContext";
 import { emitQcTelemetry } from "@/lib/qcTelemetry";
+import { agentSafeToAutoApply } from "@/lib/inspectionAgent/guards";
 import {
   computeFinalScore,
   shouldAutoApplyContextual,
@@ -152,7 +153,17 @@ export default function QcCertificationStatusPanel({
           suggestionCtx: sugCtx,
           reportCtx,
         });
-        if (shouldAutoApplyContextual({ statsV3: st, confidence: s.confidence, finalScore: final })) {
+        if (
+          shouldAutoApplyContextual({
+            statsV3: st,
+            confidence: s.confidence,
+            finalScore: final,
+          }) &&
+          agentSafeToAutoApply({
+            severity: sugCtx.severity,
+            confidence: s.confidence,
+          })
+        ) {
           window.dispatchEvent(
             new CustomEvent("inspectflow:qc_apply_recommendation", {
               detail: {

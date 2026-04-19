@@ -4,9 +4,13 @@
  */
 import { buildHtmlFromReportPayload } from "@/lib/buildInspectionReportHtml";
 import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
+import { evaluatePdfExportReadiness } from "@/lib/pdfExportReadiness";
 import { buildProInspectionHtmlFromPayload } from "@/lib/pdf/proInspectionTemplateHtml";
 import { generatePdfWithPuppeteer } from "@/lib/pdf/generatePdfPuppeteer";
-import { fetchLegalClausesForCoverJurisdiction } from "@/lib/qcLegalClauses";
+import {
+  fetchLegalClausesForCoverJurisdiction,
+  filterLegalClausesByReportContext,
+} from "@/lib/qcLegalClauses";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export async function POST(req: Request) {
@@ -57,6 +61,12 @@ export async function POST(req: Request) {
     if (!report) return Response.json({ error: "Rapport introuvable" }, { status: 404 });
 
     const payload = (report.payload ?? {}) as Record<string, unknown>;
+
+    const readiness = await evaluatePdfExportReadiness(supabase, reportId, payload);
+    if (!readiness.ok && template === "canonical") {
+      return Response.json({ error: readiness.error }, { status: 400 });
+    }
+
     let legalClauseRows: Awaited<
       ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
     > | undefined;
@@ -70,6 +80,12 @@ export async function POST(req: Request) {
       } catch {
         legalClauseRows = undefined;
       }
+    }
+    if (legalClauseRows && legalClauseRows.length > 0) {
+      legalClauseRows = filterLegalClausesByReportContext(
+        legalClauseRows,
+        payload,
+      );
     }
     if (template === "canonical") {
       const built = buildHtmlFromReportPayload(payload, {

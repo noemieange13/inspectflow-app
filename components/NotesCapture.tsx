@@ -34,7 +34,7 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
       uploadPhoto: "Upload handwritten note",
       startRecording: "Start voice memo",
       stopRecording: "Stop recording",
-      processing: "AI processing...",
+      processing: "🧠 Analyzing notes…",
       processed: "Notes processed by AI",
       applySuggestion: "Apply to findings",
       zone: "Zone",
@@ -43,15 +43,21 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
       original: "Original",
       enhanced: "Enhanced",
       noMic: "Microphone not available",
+      modeVoiceTitle: "1 — Voice (priority)",
+      modePhotoTitle: "2 — Handwritten photo",
+      modeManualTitle: "3 — Manual text",
+      modeVoiceHint: "Speak your observations; result feeds report sections.",
+      modePhotoHint: "Photo of paper notes → OCR + structuring.",
+      modeManualHint: "Fallback: type or paste notes.",
     }
     : {
       title: "Notes d'inspection (IA)",
       textPlaceholder: "Tapez vos notes d'inspection ici...",
       sendText: "Analyser les notes texte",
       uploadPhoto: "Photo de notes manuscrites",
-      startRecording: "Mémo vocal",
+      startRecording: "Parler",
       stopRecording: "Arrêter l'enregistrement",
-      processing: "Traitement IA...",
+      processing: "🧠 Analyse des notes en cours…",
       processed: "Notes traitées par l'IA",
       applySuggestion: "Appliquer aux constats",
       zone: "Zone",
@@ -60,6 +66,13 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
       original: "Original",
       enhanced: "Amélioré",
       noMic: "Microphone non disponible",
+      modeVoiceTitle: "1 — Vocal (prioritaire)",
+      modePhotoTitle: "2 — Photo de notes manuscrites",
+      modeManualTitle: "3 — Saisie manuelle",
+      modeVoiceHint:
+        "Dictez vos constats ; le résultat est structuré vers les sections du rapport.",
+      modePhotoHint: "Photo de feuille manuscrite → OCR + structuration.",
+      modeManualHint: "Repli : saisie ou collage libre.",
     };
 
   const sendToApi = useCallback(async (form: FormData) => {
@@ -134,28 +147,41 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
   }, []);
 
   return (
-    <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+    <div className="rounded-lg border border-slate-200 p-4 space-y-4">
       <p className="text-sm font-medium text-slate-700">{labels.title}</p>
+      <p className="text-xs text-slate-500">
+        Une seule chaîne côté rapport : vocal, photo ou texte sont fusionnés après traitement.
+      </p>
 
-      <textarea
-        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 min-h-20"
-        value={noteText}
-        onChange={(e) => setNoteText(e.target.value)}
-        placeholder={labels.textPlaceholder}
-        disabled={processing}
-      />
+      <div className="rounded-md border border-blue-100 bg-blue-50/60 p-3 space-y-2">
+        <p className="text-xs font-semibold text-blue-900">{labels.modeVoiceTitle}</p>
+        <p className="text-xs text-blue-800/90">{labels.modeVoiceHint}</p>
+        <div className="flex flex-wrap gap-2">
+          {recording ? (
+            <button
+              type="button"
+              onClick={stopRecording}
+              className="rounded-md bg-red-600 px-3 py-2 text-xs font-medium text-white animate-pulse"
+            >
+              {labels.stopRecording}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={processing}
+              className="rounded-md bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+            >
+              🎤 {labels.startRecording}
+            </button>
+          )}
+        </div>
+      </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={handleTextSubmit}
-          disabled={processing || !noteText.trim()}
-          className="rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-        >
-          {processing ? labels.processing : labels.sendText}
-        </button>
-
-        <label className="inline-flex cursor-pointer items-center rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+      <div className="rounded-md border border-amber-100 bg-amber-50/50 p-3 space-y-2">
+        <p className="text-xs font-semibold text-amber-950">{labels.modePhotoTitle}</p>
+        <p className="text-xs text-amber-900/90">{labels.modePhotoHint}</p>
+        <label className="inline-flex cursor-pointer items-center rounded-md border border-amber-200 bg-white px-3 py-2 text-xs font-medium text-amber-950 hover:bg-amber-50">
           <input
             type="file"
             accept="image/*"
@@ -168,27 +194,28 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
               }
             }}
           />
-          {labels.uploadPhoto}
+          📷 {labels.uploadPhoto}
         </label>
+      </div>
 
-        {recording ? (
-          <button
-            type="button"
-            onClick={stopRecording}
-            className="rounded-md bg-red-600 px-3 py-2 text-xs font-medium text-white animate-pulse"
-          >
-            {labels.stopRecording}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={startRecording}
-            disabled={processing}
-            className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {labels.startRecording}
-          </button>
-        )}
+      <div className="rounded-md border border-slate-200 bg-slate-50/80 p-3 space-y-2">
+        <p className="text-xs font-semibold text-slate-800">{labels.modeManualTitle}</p>
+        <p className="text-xs text-slate-600">{labels.modeManualHint}</p>
+        <textarea
+          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 min-h-20 bg-white"
+          value={noteText}
+          onChange={(e) => setNoteText(e.target.value)}
+          placeholder={labels.textPlaceholder}
+          disabled={processing}
+        />
+        <button
+          type="button"
+          onClick={handleTextSubmit}
+          disabled={processing || !noteText.trim()}
+          className="rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+        >
+          {processing ? labels.processing : labels.sendText}
+        </button>
       </div>
 
       {error ? <p className="text-xs text-red-600">{error}</p> : null}

@@ -315,6 +315,49 @@ export function buildHtmlFromReportPayload(
       parts.push(`<h2>${t.scoreLabel}: ${escapeHtml(String(payload.score))}</h2>`);
     }
 
+    const bsv1 = payload.building_summary_v1;
+    if (bsv1 && typeof bsv1 === "object") {
+      const s = bsv1 as Record<string, unknown>;
+      const ms = typeof s.score === "number" ? s.score : null;
+      const lf =
+        language === "en"
+          ? typeof s.label_en === "string"
+            ? s.label_en
+            : ""
+          : typeof s.label_fr === "string"
+            ? s.label_fr
+            : "";
+      const cost =
+        typeof s.estimated_cost_cad === "number" ? s.estimated_cost_cad : 0;
+      const hr =
+        s.review_recommended === true ||
+        s.high_risk === true ||
+        s.score_below_60 === true ||
+        s.intrinsic_high_risk === true;
+      if (ms != null) {
+        parts.push(
+          `<div class="building-summary-v1" style="margin:1.25em 0;padding:1em;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc">`,
+        );
+        parts.push(
+          `<h2>${escapeHtml(language === "en" ? "Building score (market model)" : "Score bâtiment (modèle marché)")}</h2>`,
+        );
+        parts.push(
+          `<p style="font-size:18px;font-weight:700">${escapeHtml(String(ms))} / 100 — ${escapeHtml(lf.trim() || "—")}</p>`,
+        );
+        if (cost > 0) {
+          parts.push(
+            `<p style="font-size:13px;color:#475569">${escapeHtml(language === "en" ? "Indicative repair cost" : "Coût travaux indicatif")}: ${escapeHtml(String(Math.round(cost / 100) * 100))} $ CAD</p>`,
+          );
+        }
+        if (hr) {
+          parts.push(
+            `<p class="bad" style="font-size:13px">${escapeHtml(language === "en" ? "Elevated risk — confirm with professionals." : "Risque élevé — valider avec des professionnels.")}</p>`,
+          );
+        }
+        parts.push(`</div>`);
+      }
+    }
+
     const clientSectionRaw = payload.client_section;
     if (typeof clientSectionRaw === "string" && clientSectionRaw.trim()) {
       parts.push(

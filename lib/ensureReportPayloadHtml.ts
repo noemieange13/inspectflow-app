@@ -5,8 +5,12 @@ import {
   buildHtmlFromReportPayload,
   isHtmlLongEnough,
 } from "@/lib/buildInspectionReportHtml";
+import { evaluatePdfExportReadiness } from "@/lib/pdfExportReadiness";
 import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
-import { fetchLegalClausesForCoverJurisdiction } from "@/lib/qcLegalClauses";
+import {
+  fetchLegalClausesForCoverJurisdiction,
+  filterLegalClausesByReportContext,
+} from "@/lib/qcLegalClauses";
 
 /**
  * Garantit `reports.payload.html` avant l’appel à `reports-pdf` : génération côté serveur
@@ -36,6 +40,11 @@ export async function ensureReportPayloadHtml(
 
   const payload = (report.payload ?? {}) as Record<string, unknown>;
 
+  const readiness = await evaluatePdfExportReadiness(supabase, reportId, payload);
+  if (!readiness.ok) {
+    return { ok: false, error: readiness.error };
+  }
+
   let legalClauseRows: Awaited<
     ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
   > | undefined;
@@ -53,6 +62,13 @@ export async function ensureReportPayloadHtml(
       );
       legalClauseRows = undefined;
     }
+  }
+
+  if (legalClauseRows && legalClauseRows.length > 0) {
+    legalClauseRows = filterLegalClausesByReportContext(
+      legalClauseRows,
+      payload,
+    );
   }
 
   const built = buildHtmlFromReportPayload(payload, {

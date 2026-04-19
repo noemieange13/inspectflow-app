@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import InspectionAgentBar from "@/components/InspectionAgentBar";
 import ReportReadinessCard from "@/components/ReportReadinessCard";
 import QcCertificationStatusPanel from "@/components/QcCertificationStatusPanel";
 import {
@@ -334,9 +335,34 @@ export default function ReportPageReadiness({
         readinessRingPulse ? "ring-2 ring-emerald-400/70 ring-offset-2 ring-offset-slate-50" : ""
       }`}
     >
+      <InspectionAgentBar reportId={reportId} />
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
         État avant export PDF
       </p>
+      <ul className="mb-3 space-y-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800">
+        <li className="flex items-start gap-2">
+          <span aria-hidden>{result.blocking.some((b) => ["no_cover", "requerant", "adresse", "condition", "description"].includes(b.code)) ? "❌" : "✔"}</span>
+          <span>
+            <strong>Couverture</strong> — identité, propriété, description &amp; condition
+          </span>
+        </li>
+        {coverParsed && getComplianceExportMode(coverParsed) === "QC_2027" ? (
+          <li className="flex items-start gap-2">
+            <span aria-hidden>
+              {result.blocking.some((b) => b.code.startsWith("qc_")) ? "❌" : "✔"}
+            </span>
+            <span>
+              <strong>Grille QC 2027</strong> — constats, photos, limitations
+            </span>
+          </li>
+        ) : null}
+        <li className="flex items-start gap-2">
+          <span aria-hidden>{result.gate === "ready" ? "✔" : "❌"}</span>
+          <span>
+            <strong>Export PDF</strong> — rapport certifié (aucun blocage, avertissements accusés si besoin)
+          </span>
+        </li>
+      </ul>
       {coverParsed &&
       getComplianceExportMode(coverParsed) === "QC_2027" &&
       result.qcCertification ? (

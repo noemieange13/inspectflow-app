@@ -4,6 +4,10 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  buildClauseEvaluationContext,
+  evaluateAppliesIf,
+} from "@/lib/qcClauseContext";
 import type { ComplianceJurisdiction } from "@/lib/inspectionCoverPayload";
 
 export type QcLegalClauseRow = {
@@ -14,6 +18,8 @@ export type QcLegalClauseRow = {
   mandatory: boolean;
   version: string | null;
   created_at: string;
+  /** Expression optionnelle — voir `evaluateAppliesIf` */
+  applies_if?: string | null;
 };
 
 const JURISDICTION_TO_PROVINCE: Record<ComplianceJurisdiction, string> = {
@@ -78,4 +84,13 @@ export async function fetchLegalClausesForCoverJurisdiction(
 ): Promise<QcLegalClauseRow[]> {
   const code = provinceCodeForLegalClauses(jurisdiction);
   return getLegalClauses(supabase, code);
+}
+
+/** Filtre les clauses dont `applies_if` n’est pas satisfait par le payload courant. */
+export function filterLegalClausesByReportContext(
+  rows: QcLegalClauseRow[],
+  payload: Record<string, unknown>,
+): QcLegalClauseRow[] {
+  const ctx = buildClauseEvaluationContext(payload);
+  return rows.filter((r) => evaluateAppliesIf(r.applies_if, ctx));
 }

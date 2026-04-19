@@ -15,6 +15,7 @@ import {
   parseCoverV1FromUnknown,
   saveInspectorProfile,
   type ComplianceJurisdiction,
+  type FacadeOrientation,
   type InspectionCoverPayloadV1,
   type InspectorProfileV1,
 } from "@/lib/inspectionCoverPayload";
@@ -32,6 +33,12 @@ import {
 } from "@/lib/limitations";
 import InspectionResumePanel from "@/components/InspectionResumePanel";
 import ReportVersionTimeline from "@/components/ReportVersionTimeline";
+import {
+  TerrainDescriptionModePills,
+  TerrainSmartEntryHero,
+  TerrainWeatherGpsBadge,
+  terrainAutoFieldClass,
+} from "@/components/terrain/TerrainPrimitives";
 import { fetchWeatherOpenMeteo, geolocationPosition } from "@/lib/weatherOpenMeteo";
 
 export type InspectionCoverFormProps = {
@@ -113,6 +120,8 @@ export default function InspectionCoverForm({
   const [notesSubmitting, setNotesSubmitting] = useState(false);
   const [aiImproveLoading, setAiImproveLoading] = useState<null | "description" | "condition">(null);
   const [terrainNoteText, setTerrainNoteText] = useState("");
+  const [weatherFilledByGps, setWeatherFilledByGps] = useState(false);
+  const [compassSampling, setCompassSampling] = useState(false);
   const [draftSaveHint, setDraftSaveHint] = useState<string | null>(null);
   /** `resume` = écran unique « document » ; `outils` = imports DV / photos / notes (ex-formulaire). */
   const [workspace, setWorkspace] = useState<"resume" | "outils">("resume");
@@ -256,6 +265,7 @@ export default function InspectionCoverForm({
         pos.coords.longitude,
       );
       update("conditions_meteo", w.line_fr);
+      setWeatherFilledByGps(true);
     } catch (e) {
       setIaMessage(
         e instanceof Error
@@ -304,6 +314,57 @@ export default function InspectionCoverForm({
     };
     reader.readAsDataURL(file);
   }, [data.inspecteur_nom, data.inspecteur_numero_certification, data.compagnie, linkedToReport]);
+
+  const scrollToManualFields = useCallback(() => {
+    document.getElementById("terrain-propriete-fields")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, []);
+
+  const tryCompassFacade = useCallback(() => {
+    if (typeof window === "undefined" || !window.DeviceOrientationEvent) {
+      setIaMessage(
+        "Boussole indisponible : choisissez Nord / Sud / Est / Ouest ci-dessous.",
+      );
+      return;
+    }
+    setCompassSampling(true);
+    setIaMessage("Inclinez l’appareil ; échantillon du cap en cours…");
+    let settled = false;
+    const done = (dir: FacadeOrientation) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("deviceorientation", onOrient);
+      update("orientation_facade", dir);
+      setCompassSampling(false);
+      setIaMessage(
+        `Orientation façade estimée : ${String(dir)} — vérifiez sur le terrain.`,
+      );
+    };
+    const onOrient = (e: DeviceOrientationEvent) => {
+      const a = e.alpha;
+      if (a == null || Number.isNaN(a)) return;
+      const x = ((a % 360) + 360) % 360;
+      let dir: FacadeOrientation = "";
+      if (x >= 315 || x < 45) dir = "nord";
+      else if (x >= 45 && x < 135) dir = "est";
+      else if (x >= 135 && x < 225) dir = "sud";
+      else dir = "ouest";
+      done(dir);
+    };
+    window.addEventListener("deviceorientation", onOrient);
+    window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        window.removeEventListener("deviceorientation", onOrient);
+        setCompassSampling(false);
+        setIaMessage(
+          "Cap non reçu — utilisez le choix manuel Nord / Sud / Est / Ouest.",
+        );
+      }
+    }, 3500);
+  }, [update]);
 
   const onDvPhoto = useCallback(async (file: File | null) => {
     if (!file) return;
@@ -901,6 +962,13 @@ export default function InspectionCoverForm({
         />
       ) : (
         <>
+      <TerrainSmartEntryHero
+        dvLoading={dvLoading}
+        onDvFile={(f) => void onDvPhoto(f)}
+        onManual={scrollToManualFields}
+        showDvSuccessHint={!!data.ia_hints?.dv_photo_imported}
+      />
+
       <section className="space-y-4" id="resume-entete-inspection">
         <SectionTitle>Entête — requérant & inspection</SectionTitle>
         <div className="grid gap-4 md:grid-cols-2">
@@ -909,7 +977,7 @@ export default function InspectionCoverForm({
               REQUÉRANT(S) <span className="text-red-600">*</span>
             </label>
             <input
-              className={inputClass}
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
               value={data.requerants}
               onChange={(e) => update("requerants", e.target.value)}
               placeholder="ex. 9354-3650 Québec Inc."
@@ -923,9 +991,13 @@ export default function InspectionCoverForm({
             <input
               className={inputClass}
               value={data.conditions_meteo}
-              onChange={(e) => update("conditions_meteo", e.target.value)}
+              onChange={(e) => {
+                update("conditions_meteo", e.target.value);
+                setWeatherFilledByGps(false);
+              }}
               placeholder="ex. 19°C, soleil"
             />
+            {weatherFilledByGps ? <TerrainWeatherGpsBadge /> : null}
             <button
               type="button"
               className="mt-2 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
@@ -1030,15 +1102,19 @@ export default function InspectionCoverForm({
         </div>
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-4" id="terrain-propriete-fields">
         <SectionTitle>
           Propriété inspectée <span className="text-red-600">*</span>
         </SectionTitle>
         <p className="text-sm text-slate-600">
-          Saisie libre possible. Tu peux aussi importer une photo ou un scan de la déclaration du vendeur :
-          les champs requérant et propriété (y compris coordonnées client optionnelles) sont remplis par lecture
-          de l’image (vérifie toujours le résultat).
+          Saisie libre possible. Le scan DV remplit les champs ci-dessous ; tout reste éditable.
         </p>
+        {data.ia_hints?.dv_photo_imported ? (
+          <div className="rounded-lg border border-sky-100 bg-sky-50/50 px-3 py-2 text-sm text-sky-900">
+            <span className="font-medium">✨ Champs assistés par la DV</span> — fond bleu léger = prérempli,
+            modifiable.
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <label
             className={`inline-flex cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-300 px-3 py-2 text-sm ${dvLoading ? "pointer-events-none opacity-60" : ""}`}
@@ -1054,16 +1130,22 @@ export default function InspectionCoverForm({
                 void onDvPhoto(f);
               }}
             />
-            <span>{dvLoading ? "Analyse de l’image…" : "Importer photo / scan DV (extraction)"}</span>
+            <span>{dvLoading ? "Analyse de l’image…" : "Ré-importer DV / scan"}</span>
           </label>
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div
+          className={`grid gap-4 md:grid-cols-2 ${
+            data.ia_hints?.dv_photo_imported
+              ? "rounded-lg border border-sky-100 bg-sky-50/40 p-3"
+              : ""
+          }`}
+        >
           <div className="md:col-span-2">
             <label className={labelClass}>
               ADRESSE <span className="text-red-600">*</span>
             </label>
             <input
-              className={inputClass}
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
               value={data.propriete.adresse}
               onChange={(e) => updatePropriete("adresse", e.target.value)}
               placeholder="ex. 182 Lamarche, Gatineau, Québec"
@@ -1075,7 +1157,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>TYPE DE PROPRIÉTÉ</label>
             <input
-              className={inputClass}
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
               value={data.propriete.type_propriete}
               onChange={(e) => updatePropriete("type_propriete", e.target.value)}
               placeholder="ex. 8 plex"
@@ -1084,7 +1166,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>ANNÉE DE CONSTRUCTION</label>
             <input
-              className={inputClass}
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
               value={data.propriete.annee_construction}
               onChange={(e) => updatePropriete("annee_construction", e.target.value)}
               placeholder="ex. 1986"
@@ -1093,7 +1175,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>Nom du client (optionnel)</label>
             <input
-              className={inputClass}
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
               value={data.propriete.client_nom}
               onChange={(e) => updatePropriete("client_nom", e.target.value)}
             />
@@ -1101,7 +1183,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>Téléphone (optionnel)</label>
             <input
-              className={inputClass}
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
               value={data.propriete.client_telephone}
               onChange={(e) => updatePropriete("client_telephone", e.target.value)}
               inputMode="tel"
@@ -1110,7 +1192,7 @@ export default function InspectionCoverForm({
           <div className="md:col-span-2">
             <label className={labelClass}>Courriel (optionnel)</label>
             <input
-              className={inputClass}
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
               type="email"
               value={data.propriete.client_courriel}
               onChange={(e) => updatePropriete("client_courriel", e.target.value)}
@@ -1121,24 +1203,14 @@ export default function InspectionCoverForm({
 
       <section className="space-y-4">
         <SectionTitle>Description sommaire du bâtiment</SectionTitle>
-        <div className="flex flex-wrap gap-3 text-sm">
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="radio"
-              checked={data.description_sommaire.mode === "manuel"}
-              onChange={() => updateDescription("mode", "manuel")}
-            />
-            Saisie libre
-          </label>
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="radio"
-              checked={data.description_sommaire.mode === "photos_ia"}
-              onChange={() => updateDescription("mode", "photos_ia")}
-            />
-            Photos → remplissage par vision (1–6 photos)
-          </label>
-        </div>
+        <TerrainDescriptionModePills
+          modeManuel={data.description_sommaire.mode === "manuel"}
+          onManuel={() => updateDescription("mode", "manuel")}
+          onAutoIa={() => updateDescription("mode", "photos_ia")}
+        />
+        <p className="text-xs text-slate-500">
+          AUTO (IA) : analyse de photos façades / toiture. MANUEL : saisie directe des champs.
+        </p>
         {data.description_sommaire.mode === "photos_ia" ? (
           <div className="flex flex-wrap items-end gap-3">
             <div>
@@ -1234,6 +1306,16 @@ export default function InspectionCoverForm({
 
       <section className="space-y-4">
         <SectionTitle>Orientation de la façade</SectionTitle>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={compassSampling}
+            onClick={() => void tryCompassFacade()}
+            className="rounded-md bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+          >
+            {compassSampling ? "Cap…" : "Estimer avec la boussole (appareil)"}
+          </button>
+        </div>
         <div className="flex flex-wrap gap-4 text-sm">
           {(["nord", "sud", "est", "ouest"] as const).map((dir) => (
             <label key={dir} className="inline-flex items-center gap-2 capitalize">

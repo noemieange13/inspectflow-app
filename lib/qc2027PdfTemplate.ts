@@ -21,6 +21,7 @@ import {
   QC_SYSTEM_ZONE_GROUPS,
   type QcSystemCode,
 } from "@/lib/qcSystemSections";
+import { computeQcBuildingIndexScore } from "@/lib/qcBuildingIndexScore";
 import {
   groupClausesBySection,
   type QcLegalClauseRow,
@@ -85,7 +86,13 @@ export const REPORT_QC2027_SUPPLEMENT_CSS =
   ".severity-low{color:#15803d}" +
   "table.qc-photo-grid{width:100%;border-collapse:collapse;font-size:13px;margin:0.5em 0}" +
   "table.qc-photo-grid th,table.qc-photo-grid td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}" +
-  "table.qc-photo-grid th{background:#f1f5f9}";
+  "table.qc-photo-grid th{background:#f1f5f9}" +
+  ".qc-toc-wrap{border:1px solid #e2e8f0;border-radius:10px;padding:1em 1.1em;background:linear-gradient(180deg,#fafafa 0%,#fff 100%);margin-bottom:0}" +
+  ".qc-score-num{font-size:28px;font-weight:800;color:#0f172a;letter-spacing:-0.02em}" +
+  ".qc-badge{display:inline-block;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:600}" +
+  ".qc-badge-ok{background:#ecfdf3;color:#166534;border:1px solid #bbf7d0}" +
+  ".qc-badge-warn{background:#fffbeb;color:#9a3412;border:1px solid #fde68a}" +
+  ".qc-badge-bad{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}";
 
 type ReportLanguage = "fr" | "en";
 
@@ -205,6 +212,127 @@ function labels(lang: ReportLanguage) {
       photoNote:
         "Les clichés numériques sont conservés dans le dossier InspectFlow. Le tableau reflète les comptages par zone déclarés à l'export.",
     };
+}
+
+function tocAndBuildingIndexBlock(
+  payload: Record<string, unknown>,
+  entries: ParsedEntry[],
+  lang: ReportLanguage,
+): string {
+  const score = computeQcBuildingIndexScore(payload, entries);
+
+  let badgeClass = "qc-badge-ok";
+  let badgeText =
+    lang === "en" ? "Satisfactory overall" : "État satisfaisant";
+  if (score < 55) {
+    badgeClass = "qc-badge-bad";
+    badgeText = lang === "en" ? "Attention required" : "Attention requise";
+  } else if (score < 75) {
+    badgeClass = "qc-badge-warn";
+    badgeText =
+      lang === "en" ? "Monitoring recommended" : "Surveillance recommandée";
+  }
+
+  const tocTitle = lang === "en" ? "Contents" : "Table des matières";
+  const items =
+    lang === "en"
+      ? [
+          "Cover",
+          "Executive summary",
+          "Limitations",
+          "QC system sections",
+          "Photo coverage",
+          "High-severity observations",
+          "General recommendations",
+          "Legal clauses",
+          "Inspector",
+        ]
+      : [
+          "Couverture",
+          "Sommaire exécutif",
+          "Limitations",
+          "Sections systèmes (QC)",
+          "Couverture photographique",
+          "Observations critiques",
+          "Recommandations générales",
+          "Clauses légales",
+          "Inspecteur",
+        ];
+
+  const scoreTitle =
+    lang === "en" ? "Building summary index" : "Indice global du bâtiment";
+
+  const bsv1 = payload.building_summary_v1;
+  let marketBlock = "";
+  if (bsv1 && typeof bsv1 === "object") {
+    const s = bsv1 as Record<string, unknown>;
+    const ms = typeof s.score === "number" ? s.score : null;
+    const lf =
+      (lang === "en"
+        ? typeof s.label_en === "string"
+          ? s.label_en
+          : ""
+        : typeof s.label_fr === "string"
+          ? s.label_fr
+          : "") || (typeof s.label_fr === "string" ? s.label_fr : "");
+    const cost =
+      typeof s.estimated_cost_cad === "number" ? s.estimated_cost_cad : 0;
+    const hr =
+      s.review_recommended === true ||
+      s.high_risk === true ||
+      s.score_below_60 === true ||
+      s.intrinsic_high_risk === true;
+    if (ms != null) {
+      const costLine =
+        cost > 0
+          ? `<p style="margin:0.35em 0 0;font-size:12px" class="qc-muted">${esc(
+              lang === "en"
+                ? "Indicative repair budget (severity heuristic)"
+                : "Budget travaux indicatif (heuristique gravité)",
+            )}: ${esc(String(Math.round(cost / 100) * 100))} $ CAD</p>`
+          : "";
+      const riskLine = hr
+        ? `<p class="bad" style="margin:0.35em 0 0;font-size:12px">${esc(
+            lang === "en"
+              ? "Elevated risk flagged — confirm with qualified professionals."
+              : "Risque élevé signalé — valider avec des professionnels compétents.",
+          )}</p>`
+        : "";
+      marketBlock = `
+  <div class="qc-score-row" style="margin-top:1em;padding-top:1em;border-top:1px solid #e2e8f0">
+    <div>
+      <h3 style="margin:0 0 0.35em;font-size:15px">${esc(
+        lang === "en" ? "Market-style score" : "Score décisionnel (marché)",
+      )}</h3>
+      <div class="qc-score-num">${ms} / 100</div>
+      ${lf.trim() ? `<p style="margin:0.35em 0 0;font-size:14px">${esc(lf.trim())}</p>` : ""}
+    </div>
+  </div>
+  ${costLine}
+  ${riskLine}`;
+    }
+  }
+
+  return `
+<section class="qc-break qc-toc-wrap">
+  <h2 style="margin-top:0">${esc(tocTitle)}</h2>
+  <ol style="margin:0.5em 0;padding-left:1.25em;line-height:1.6;font-size:13px">
+    ${items.map((it) => `<li>${esc(it)}</li>`).join("")}
+  </ol>
+  <div class="qc-score-row" style="margin-top:1.25em;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div>
+      <h3 style="margin:0 0 0.35em;font-size:15px">${esc(scoreTitle)}</h3>
+      <div class="qc-score-num">${score} / 100</div>
+    </div>
+    <div class="qc-badge ${badgeClass}">${esc(badgeText)}</div>
+  </div>
+  <p class="qc-muted" style="margin:0.75em 0 0;font-size:12px">${esc(
+    lang === "en"
+      ? "Indicative index from severities and declared risk — not a building code compliance score."
+      : "Indice indicatif dérivé des gravités et du risque déclaré — non substitut à une conformité réglementaire.",
+  )}</p>
+  ${marketBlock}
+</section>`.trim();
 }
 
 function coverLogoHtml(profile: InspectorProfileV1 | null): string {
@@ -667,7 +795,7 @@ export function buildQc2027HtmlFromPayload(
   );
 
   parts.push(buildCoverPage(cover, profile, lang));
-  parts.push(`<div class="qc-break"></div>`);
+  parts.push(tocAndBuildingIndexBlock(payload, entries, lang));
   parts.push(executiveBlock(payload, entries, sections, lang));
   parts.push(limitationsBlock(cover, lang));
   parts.push(systemsBlock(payload, sections, entries, lang));
