@@ -287,7 +287,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: report, error: reportReadErr } = await supabase
       .from("reports")
-      .select("id, payload, is_locked")
+      .select("id, payload")
       .eq("id", reportId)
       .maybeSingle();
 
@@ -296,7 +296,6 @@ Deno.serve(async (req: Request) => {
     }
 
     if (report) {
-      const rec = report as Record<string, unknown>;
       const payload = (report.payload && typeof report.payload === "object")
         ? { ...(report.payload as Record<string, unknown>) }
         : {};
@@ -312,10 +311,7 @@ Deno.serve(async (req: Request) => {
         supabase,
         reportId,
         payload,
-        {
-          source: "process-notes",
-          isLocked: rec.is_locked === true,
-        },
+        { source: "process-notes" },
       );
       if (upErr) {
         const code = /locked|immutable/i.test(upErr.message)

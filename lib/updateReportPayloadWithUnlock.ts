@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const lockErr = (m: string) =>
-  /P0001|Finalized|locked|prevent_report/i.test(m);
+import { rpcUpdateReportPayloadWithUnlock } from "@/lib/rpcUpdateReportPayload";
 
 /**
  * Déverrouille pour édition (Zero Draft, PDF, etc.) : avec le verrou métier
@@ -64,8 +63,8 @@ export async function unlockReportRowForEdit(
 }
 
 /**
- * Met à jour `reports.payload`. Si `allowUnlock`, déverrouille d’abord dans une requête séparée :
- * certains triggers Postgres refusent payload + is_locked dans le même UPDATE.
+ * Met à jour `reports.payload` via RPC atomique (`update_report_payload_with_unlock`).
+ * Si `allowUnlock` est false et que le rapport est verrouillé, la RPC lève une erreur.
  */
 export async function updateReportPayloadWithUnlock(
   supabase: SupabaseClient,
@@ -74,48 +73,17 @@ export async function updateReportPayloadWithUnlock(
   allowUnlock: boolean,
   options?: { clearStoredPdf?: boolean },
 ): Promise<{ error: { message: string } | null }> {
-  if (allowUnlock) {
-    const u = await unlockReportRowForEdit(supabase, reportId);
-    if (u.error) {
-      return u;
-    }
+  const { error } = await rpcUpdateReportPayloadWithUnlock(supabase, {
+    reportId,
+    payload: nextPayload,
+    source: "nextjs-updateReportPayloadWithUnlock",
+    clearPdfPath: options?.clearStoredPdf ?? false,
+    allowUnlock,
+  });
+
+  if (error) {
+    return { error };
   }
 
-  /** Deux requêtes : certains triggers refusent `payload` + `pdf_path` dans le même UPDATE. */
-  let { error: updateError } = await supabase
-    .from("reports")
-    .update({ payload: nextPayload })
-    .eq("id", reportId);
-
-  if (!updateError && options?.clearStoredPdf) {
-    const second = await supabase
-      .from("reports")
-      .update({ pdf_path: null })
-      .eq("id", reportId);
-    updateError = second.error ?? null;
-  }
-
-  if (!updateError) {
-    return { error: null };
-  }
-
-  if (allowUnlock && lockErr(updateError.message ?? "")) {
-    const again = await unlockReportRowForEdit(supabase, reportId);
-    if (again.error) {
-      return { error: again.error };
-    }
-    updateError = (
-      await supabase
-        .from("reports")
-        .update({ payload: nextPayload })
-        .eq("id", reportId)
-    ).error;
-    if (!updateError && options?.clearStoredPdf) {
-      updateError = (
-        await supabase.from("reports").update({ pdf_path: null }).eq("id", reportId)
-      ).error;
-    }
-  }
-
-  return { error: updateError };
+  return { error: null };
 }

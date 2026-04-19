@@ -1,19 +1,14 @@
 /**
- * Lecture → unlock si besoin (aligné sur prevent_update_reports true-lock) → update payload.
- * À réutiliser dans les Edge Functions qui touchent reports.payload avec la service role.
- *
- * Concurrence : pas d’optimistic lock — deux appels concurrents peuvent toujours écraser le dernier
- * payload écrit ; mitigation future : version / data_hash / RPC atomique si le produit l’exige.
+ * Mise à jour atomique du payload via RPC `update_report_payload_with_unlock` (FOR UPDATE, une transaction).
+ * @see supabase/migrations/20260421110000_update_report_payload_with_unlock_rpc.sql
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
-import { unlockReportRowForEdit } from "./unlockReportForEdit.ts";
-
 export type AutoUnlockOptions = {
-  /** Pour les logs structurés Supabase (Functions → Logs). */
   source: string;
-  /** Si déjà lu avec le rapport, évite un second SELECT is_locked. */
+  /** Si déjà lu : évite un appel RPC inutile pour le flag lock — passé à p_allow_unlock via lecture interne RPC ; ignoré si on utilise toujours RPC. */
   isLocked?: boolean;
+  clearPdfPath?: boolean;
 };
 
 export async function updateReportPayloadWithAutoUnlock(
@@ -22,22 +17,22 @@ export async function updateReportPayloadWithAutoUnlock(
   nextPayload: Record<string, unknown>,
   opts: AutoUnlockOptions,
 ): Promise<{ error: { message: string } | null }> {
-  let locked = opts.isLocked;
+  const { data, error } = await supabase.rpc("update_report_payload_with_unlock", {
+    p_report_id: reportId,
+    p_payload: nextPayload,
+    p_source: opts.source,
+    p_clear_pdf_path: opts.clearPdfPath ?? false,
+    p_allow_unlock: true,
+  });
 
-  if (locked === undefined) {
-    const { data, error } = await supabase
-      .from("reports")
-      .select("is_locked")
-      .eq("id", reportId)
-      .maybeSingle();
-    if (error) return { error };
-    if (!data) return { error: { message: "Report not found" } };
-    locked = data.is_locked === true;
+  if (error) {
+    return { error: { message: error.message } };
   }
 
-  if (locked) {
-    const u = await unlockReportRowForEdit(supabase, reportId);
-    if (u.error) return { error: u.error };
+  const row = data && typeof data === "object" && data !== null
+    ? data as Record<string, unknown>
+    : null;
+  if (row?.unlocked === true) {
     console.log(
       JSON.stringify({
         event: "report_unlock",
@@ -48,9 +43,5 @@ export async function updateReportPayloadWithAutoUnlock(
     );
   }
 
-  const { error } = await supabase
-    .from("reports")
-    .update({ payload: nextPayload })
-    .eq("id", reportId);
-  return { error: error ?? null };
+  return { error: null };
 }
