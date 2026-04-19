@@ -36,6 +36,12 @@ comment on table public.defect_classifications is 'Journal des runs de classific
 alter table public.report_items enable row level security;
 alter table public.defect_classifications enable row level security;
 
+-- Idempotent si la base a déjà été partiellement alignée hors migration.
+drop policy if exists "report_items_select_own" on public.report_items;
+drop policy if exists "report_items_modify_own" on public.report_items;
+drop policy if exists "defect_classifications_select_own" on public.defect_classifications;
+drop policy if exists "defect_classifications_modify_own" on public.defect_classifications;
+
 -- Lecture / écriture : propriétaire du rapport (user_id sur public.reports).
 create policy "report_items_select_own"
   on public.report_items for select to authenticated

@@ -4,8 +4,9 @@ const lockErr = (m: string) =>
   /P0001|Finalized|locked|prevent_report/i.test(m);
 
 /**
- * Déverrouille pour édition Zero Draft : `prevent_report_update` côté Supabase peut bloquer
- * tant que `finalized_at` est renseigné ou que `status` reste « terminé », pas seulement `is_locked`.
+ * Déverrouille pour édition Zero Draft : le trigger `prevent_update_reports()` n’autorise que
+ * des changements sur colonnes « whitelist » — voir migration
+ * `20260418140000_prevent_update_reports_allow_lock_finalized.sql` (is_locked / finalized_at).
  */
 async function unlockReportRowForEdit(
   supabase: SupabaseClient,
@@ -29,7 +30,37 @@ async function unlockReportRowForEdit(
     if (!error) return { error: null };
     last = error;
   }
-  return { error: last };
+
+  /**
+   * Secours (B) si la base n’a pas encore la whitelist is_locked/finalized_at : un UPDATE doit
+   * toucher au moins une colonne autorisée — `payload` l’est. Une clé métadonnée discrète suffit.
+   */
+  const { data: row, error: readErr } = await supabase
+    .from("reports")
+    .select("payload")
+    .eq("id", reportId)
+    .maybeSingle();
+  if (readErr) {
+    return { error: readErr };
+  }
+  if (!row) {
+    return { error: last ?? { message: "Report not found" } };
+  }
+  const payload =
+    row?.payload && typeof row.payload === "object"
+      ? { ...(row.payload as Record<string, unknown>) }
+      : {};
+  payload.__inspectflow_unlock_at = new Date().toISOString();
+  const { error: nudgeErr } = await supabase
+    .from("reports")
+    .update({
+      payload,
+      is_locked: false,
+      finalized_at: null,
+    })
+    .eq("id", reportId);
+  if (!nudgeErr) return { error: null };
+  return { error: nudgeErr };
 }
 
 /**
