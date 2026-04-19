@@ -1,6 +1,9 @@
 /**
  * Aligné sur lib/updateReportPayloadWithUnlock.ts — déverrouille reports avant mutation du payload
- * lorsque prevent_update_reports (true lock) bloque les changements si is_locked.
+ * lorsque public.prevent_update_reports() impose le verrou métier (is_locked).
+ *
+ * Contrat : toute évolution du trigger côté DB doit rester compatible avec ces UPDATE ; sinon
+ * préférer une RPC dédiée (future) pour centraliser le déverrouillage.
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
