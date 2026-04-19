@@ -1,3 +1,4 @@
+import { appendAuditTrail } from "@/lib/auditTrailPayload";
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
@@ -23,6 +24,7 @@ import {
   type PolishClientSectionSkipReason,
 } from "@/lib/refineClientSectionAi";
 import { runDefectClassificationPipeline } from "@/lib/runDefectClassificationPipeline";
+import { insertReportVersion } from "@/lib/reportVersions";
 
 function mapAiFailureToPolishOutcome(
   reason: AiFailureReason,
@@ -179,6 +181,20 @@ export async function POST(req: Request) {
       : undefined,
   );
 
+  const photosCoverageRaw =
+    typeof body === "object" &&
+    body !== null &&
+    "photos_coverage" in body &&
+    (body as { photos_coverage: unknown }).photos_coverage !== null &&
+    typeof (body as { photos_coverage: unknown }).photos_coverage === "object" &&
+    !Array.isArray((body as { photos_coverage: unknown }).photos_coverage)
+      ? ((body as { photos_coverage: Record<string, unknown> }).photos_coverage)
+      : {};
+  const photosByZone: Record<string, number> = {};
+  for (const [k, v] of Object.entries(photosCoverageRaw)) {
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) photosByZone[k] = v;
+  }
+
   if (entries.length === 0) {
     return Response.json(
       { success: false, error: "At least one structured observation is required" },
@@ -242,6 +258,35 @@ export async function POST(req: Request) {
         }
 
         const generated = buildStructuredReport(entries, language, jurisdiction);
+
+        const mergeRecoOverrides = (
+          sections: Array<Record<string, unknown>>,
+          raw: unknown,
+        ): Array<Record<string, unknown>> => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return sections;
+          const out = sections.map((s) => ({ ...s }));
+          for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+            const i = Number.parseInt(key, 10);
+            if (!Number.isFinite(i) || i < 0 || i >= out.length) continue;
+            if (typeof val !== "string") continue;
+            const t = val.trim();
+            if (!t) continue;
+            out[i] = { ...out[i], recommendation: t };
+          }
+          return out;
+        };
+
+        const rawRecoOv =
+          typeof body === "object" &&
+          body !== null &&
+          "section_recommendation_overrides" in body
+            ? (body as { section_recommendation_overrides?: unknown }).section_recommendation_overrides
+            : undefined;
+        const sectionsForPayload = mergeRecoOverrides(
+          generated.sections as Array<Record<string, unknown>>,
+          rawRecoOv,
+        );
+
         const currentPayload =
           report.payload && typeof report.payload === "object"
             ? (report.payload as Record<string, unknown>)
@@ -281,11 +326,11 @@ export async function POST(req: Request) {
           }
         }
 
-        const nextPayload = {
+        const nextPayloadRaw: Record<string, unknown> = {
           ...currentPayload,
           title,
           summary: generated.summary,
-          sections: generated.sections,
+          sections: sectionsForPayload,
           risk_level: generated.risk_level,
           compliance: generated.compliance,
           inspector_note: inspectorNote || null,
@@ -294,7 +339,58 @@ export async function POST(req: Request) {
           jurisdiction,
           generation_mode: "zero-draft-ui",
           generated_at: new Date().toISOString(),
+          entries: entries.map((e) => ({
+            zone: e.zone,
+            issue: e.issue,
+            severity: e.severity,
+            note: e.note ?? "",
+          })),
+          photos_coverage_v1: {
+            schema_version: 1,
+            updated_at: new Date().toISOString(),
+            by_zone: photosByZone,
+          },
         };
+
+        const nextPayload = appendAuditTrail(nextPayloadRaw, {
+          field_path: "payload.report_content",
+          old_preview: "[previous]",
+          new_preview: `entries=${entries.length} sections=${generated.sections.length}`,
+          source: "report_content",
+        });
+
+        const saveUndoSnapshot =
+          typeof body === "object" &&
+          body !== null &&
+          (body as { qc_save_undo_snapshot_before_apply?: unknown }).qc_save_undo_snapshot_before_apply ===
+            true &&
+          typeof (body as { stats_key?: unknown }).stats_key === "string" &&
+          (body as { stats_key: string }).stats_key.trim().length > 0 &&
+          rawRecoOv != null &&
+          typeof rawRecoOv === "object" &&
+          !Array.isArray(rawRecoOv);
+
+        let undoVersionId: string | undefined;
+        if (saveUndoSnapshot) {
+          const statsKey = (body as { stats_key: string }).stats_key.trim();
+          const snapshotPayload = JSON.parse(JSON.stringify(currentPayload)) as Record<string, unknown>;
+          const snap = await insertReportVersion(supabase, {
+            reportId,
+            createdBy: "ai",
+            source: "qc_copilot_auto_apply",
+            payload: snapshotPayload,
+            diffSummary: "QC Copilot — état avant application (annulation possible)",
+            metadata: { stats_key: statsKey, qc_undo: true },
+            isMajor: false,
+            editEventType: "QC_COPILOT_PRE_APPLY",
+            fieldPath: "payload.sections",
+            bumpCurrentPointer: false,
+          });
+          if ("error" in snap) {
+            return Response.json({ success: false, error: snap.error }, { status: 500 });
+          }
+          undoVersionId = snap.versionId;
+        }
 
         const allowUnlock =
           allowReportPayloadUnlock(req) || Boolean(dbToken);
@@ -357,6 +453,7 @@ export async function POST(req: Request) {
           language,
           jurisdiction,
           compliance_checks: generated.compliance.checklist.length,
+          ...(undoVersionId != null ? { undo_version_id: undoVersionId } : {}),
           ...(polishClient && polishOutcome !== undefined
             ? { polish_outcome: polishOutcome }
             : {}),

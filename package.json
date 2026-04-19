@@ -24,6 +24,7 @@
     "resend": "^6.10.0"
   },
   "devDependencies": {
+    "puppeteer": "^24.6.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -71,6 +71,7 @@ export default async function CouverturePage({ searchParams }: Props) {
     const initialProf = payload
       ? parseInspectorProfileFromUnknown(payload[INSPECTOR_PROFILE_PAYLOAD_KEY])
       : null;
+    const reportHasPdf = reportData.hasPdf;
 
     return (
       <div className="mx-auto min-h-screen max-w-4xl px-4 py-10 sm:px-6">
@@ -93,6 +94,7 @@ export default async function CouverturePage({ searchParams }: Props) {
         <InspectionCoverForm
           reportId={reportId}
           viewerToken={viewerToken}
+          reportHasPdf={reportHasPdf}
           initialCoverFromReport={initialCover ?? undefined}
           initialInspectorProfileFromReport={initialProf ?? undefined}
         />

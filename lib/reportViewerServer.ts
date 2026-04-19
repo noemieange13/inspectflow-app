@@ -1,4 +1,5 @@
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export type ReportServerData = {
@@ -8,6 +9,8 @@ export type ReportServerData = {
   payload: Record<string, unknown> | null;
   hasPdf: boolean;
   pdfSignedUrl: string | null;
+  /** Nombre de photos résolues comme pour le PDF — pour le readiness (few_photos, etc.). */
+  photoCountForReadiness?: number;
   accessDenied?: boolean;
   notFound?: boolean;
   serverError?: string;
@@ -135,7 +138,23 @@ export async function loadReportForViewer(
 
     const status = typeof rec.status === "string" ? rec.status : null;
 
-    return { id: reportId, status, title, payload, hasPdf, pdfSignedUrl };
+    let photoCountForReadiness: number | undefined;
+    try {
+      const { rows } = await loadPhotoRowsForReport(supabase, reportId, 200);
+      photoCountForReadiness = rows.length;
+    } catch {
+      photoCountForReadiness = undefined;
+    }
+
+    return {
+      id: reportId,
+      status,
+      title,
+      payload,
+      hasPdf,
+      pdfSignedUrl,
+      photoCountForReadiness,
+    };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return {

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
+import ReportPageReadiness from "@/components/ReportPageReadiness";
 import ZeroDraftReportComposer from "@/components/ZeroDraftReportComposer";
 import { loadReportForViewer } from "@/lib/reportViewerServer";
 
@@ -75,6 +77,15 @@ export default async function Page({ params, searchParams }: Props) {
     );
   }
 
+  const tokenQ = viewerToken?.trim();
+  const couvertureBaseHref = `/rapport/couverture?report=${encodeURIComponent(id)}${tokenQ ? `&token=${encodeURIComponent(tokenQ)}` : ""}`;
+  const reportSelfHref = `/report/${encodeURIComponent(id)}${tokenQ ? `?token=${encodeURIComponent(tokenQ)}` : ""}`;
+  const reportPayload =
+    reportData.payload && typeof reportData.payload === "object"
+      ? (reportData.payload as Record<string, unknown>)
+      : null;
+  const coverRaw = reportPayload?.cover_v1;
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-8">
@@ -90,6 +101,21 @@ export default async function Page({ params, searchParams }: Props) {
           Générez un rapport complet, bilingue et traçable — sans rédaction manuelle.
         </p>
       </header>
+      <Suspense
+        fallback={
+          <div className="mb-6 h-24 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
+        }
+      >
+        <ReportPageReadiness
+          reportId={id}
+          coverRaw={coverRaw}
+          reportPayload={reportPayload}
+          photoCount={reportData.photoCountForReadiness}
+          couvertureBaseHref={couvertureBaseHref}
+          reportSelfHref={reportSelfHref}
+          viewerAccessToken={viewerToken?.trim() || undefined}
+        />
+      </Suspense>
       <ZeroDraftReportComposer
         reportId={id}
         viewerToken={viewerToken?.trim() || undefined}

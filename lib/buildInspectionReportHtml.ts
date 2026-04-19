@@ -2,8 +2,10 @@ import {
   INSPECTOR_PROFILE_PAYLOAD_KEY,
   parseCoverV1FromUnknown,
   parseInspectorProfileFromUnknown,
+  getComplianceExportMode,
 } from "@/lib/inspectionCoverPayload";
 import { buildCoverSectionHtml } from "@/lib/coverSectionHtml";
+import { buildQc2027HtmlFromPayload } from "@/lib/qc2027PdfTemplate";
 
 /**
  * HTML minimal pour reports-pdf (payload.html), à partir de lignes defects / observations.
@@ -267,6 +269,24 @@ export function buildHtmlFromReportPayload(
   const sectionsRaw =
     normalizeSectionsFromPayload(payload.sections) ?? [];
   if (sectionsRaw.length > 0) {
+    if (
+      coverParsed != null &&
+      getComplianceExportMode(coverParsed) === "QC_2027"
+    ) {
+      const qcDoc = buildQc2027HtmlFromPayload(
+        payload,
+        coverParsed,
+        profileParsed,
+        sectionsRaw,
+        {
+          language,
+          basePrintCss: REPORT_BASE_PRINT_CSS,
+          defaultTitle: t.defaultTitle,
+        },
+      );
+      if (qcDoc) return qcDoc;
+    }
+
     const parts: string[] = [];
     parts.push(
       `<!DOCTYPE html><html lang="${t.htmlLang}"><head><meta charset="utf-8"><title>${t.defaultTitle}</title>`,

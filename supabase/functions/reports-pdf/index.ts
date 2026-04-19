@@ -236,6 +236,9 @@ function buildAiSectionHtml(
   }</p>${critical}${recommendations}${bilingualAiFoot}</section>`;
 }
 
+/** Aligné sur `lib/pdfAiNarrativeAnchor.ts` — insertion du bloc IA dans le sommaire QC si présent. */
+const PDF_AI_NARRATIVE_ANCHOR = "<!-- inspectflow-ai-narrative-anchor -->";
+
 function mergeAiSectionIntoHtml(
   currentHtml: string | null,
   narrative: AiNarrative,
@@ -248,6 +251,9 @@ function mergeAiSectionIntoHtml(
       currentHtml.includes("<h2>Minimal AI report</h2>")
     ) {
       return currentHtml;
+    }
+    if (currentHtml.includes(PDF_AI_NARRATIVE_ANCHOR)) {
+      return currentHtml.replace(PDF_AI_NARRATIVE_ANCHOR, aiSection);
     }
     if (currentHtml.includes("</body>")) {
       return currentHtml.replace("</body>", `${aiSection}</body>`);
@@ -774,7 +780,7 @@ Deno.serve(async (req) => {
           jurisdiction,
         );
         if (aiNarrative) {
-          htmlForPdf = mergeAiSectionIntoHtml(currentHtml, aiNarrative, language);
+          htmlForPdf = mergeAiSectionIntoHtml(htmlForPdf, aiNarrative, language);
           payload.ai_minimal = {
             mode: aiNarrative.mode,
             language,

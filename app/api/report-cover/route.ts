@@ -1,3 +1,4 @@
+import { appendAuditTrail } from "@/lib/auditTrailPayload";
 import {
   INSPECTOR_PROFILE_PAYLOAD_KEY,
   parseCoverV1FromUnknown,
@@ -6,6 +7,8 @@ import {
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { buildPayloadSaveSummary } from "@/lib/reportVersionDiff";
+import { insertReportVersion } from "@/lib/reportVersions";
 import { updateReportPayloadWithUnlock } from "@/lib/updateReportPayloadWithUnlock";
 
 export const maxDuration = 60;
@@ -125,15 +128,22 @@ export async function POST(req: Request) {
         ? (report.payload as Record<string, unknown>)
         : {};
 
-    const nextPayload: Record<string, unknown> = {
+    const nextPayloadRaw: Record<string, unknown> = {
       ...currentPayload,
       cover_v1: parsedCover,
       cover_saved_at: new Date().toISOString(),
     };
 
     if (inspectorProfilePayload) {
-      nextPayload[INSPECTOR_PROFILE_PAYLOAD_KEY] = inspectorProfilePayload;
+      nextPayloadRaw[INSPECTOR_PROFILE_PAYLOAD_KEY] = inspectorProfilePayload;
     }
+
+    const nextPayload = appendAuditTrail(nextPayloadRaw, {
+      field_path: "cover_v1",
+      old_preview: "[previous cover]",
+      new_preview: `jurisdiction=${parsedCover.conformite_juridiction} mode=${parsedCover.compliance_profile_v1?.mode ?? "?"}`,
+      source: "cover_save",
+    });
 
     /** Jeton URL valide = même confiance qu’un éditeur autorisé : déverrouiller même si INSPECTFLOW_DEV_UNLOCK_REPORT=0. */
     const allowUnlock =
@@ -166,6 +176,25 @@ export async function POST(req: Request) {
         );
       }
       return Response.json({ success: false, error: updateError.message }, { status: 500 });
+    }
+
+    const diffSummary = buildPayloadSaveSummary(currentPayload, nextPayload);
+    const ver = await insertReportVersion(supabase, {
+      reportId,
+      createdBy: "user",
+      source: "manual_cover_save",
+      payload: nextPayload as Record<string, unknown>,
+      diffSummary,
+      metadata: {
+        jurisdiction: parsedCover.conformite_juridiction,
+        compliance_user_modified: parsedCover.compliance_block_v1?.is_user_modified ?? false,
+      },
+      isMajor: false,
+      editEventType: "UPDATE_FIELD",
+      fieldPath: "cover_v1",
+    });
+    if ("error" in ver) {
+      console.error("[report-cover] report_versions", ver.error);
     }
 
     return Response.json({

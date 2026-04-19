@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildClientFacingSection,
@@ -17,9 +18,28 @@ import {
   type Severity,
   type ZoneCode,
 } from "@/lib/reportNarrative";
-
 import type { ReportServerData } from "@/lib/reportViewerServer";
 import NotesCapture from "@/components/NotesCapture";
+import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
+import type { CoverReadinessResult } from "@/lib/reportReadiness";
+import { evaluateCoverReadiness, REPORT_READINESS_ZONE_ID } from "@/lib/reportReadiness";
+import { emitProductEvent } from "@/lib/productTelemetry";
+import { emitQcTelemetry } from "@/lib/qcTelemetry";
+import {
+  buildPdfSuccessTimingDetail,
+  ensureSessionStart,
+  noteFirstPdfBlocked,
+} from "@/lib/reportFunnelTiming";
+import { pickTopPhotoIndices, scorePhotoHeuristic } from "@/lib/photoScoring";
+
+/** Limite « soft » UI — ne pas descendre sous 250 (usage réel 150–300+ photos). */
+const MAX_BULK_SOFT = 250;
+/** Plafond dur aligné backend (300–350) ; cohérent avec `upload-photo`. */
+const MAX_BULK_HARD = 320;
+/** Paquets séquentiels (~40–60 recommandé ; ici 50). */
+const PHOTO_CHUNK = 50;
+const UPLOAD_CONCURRENCY = 4;
+const AUTO_SELECT_TOP_N = 12;
 
 type Props = {
   reportId: string;
@@ -107,9 +127,23 @@ export default function ZeroDraftReportComposer({
   const [shareCopied, setShareCopied] = useState(false);
   const [showEditor, setShowEditor] = useState(!hasExistingReport || existingSections.length === 0);
   const [photos, setPhotos] = useState<
-    { id: string; name: string; url: string | null; uploading: boolean; error?: string }[]
+    {
+      id: string;
+      name: string;
+      url: string | null;
+      uploading: boolean;
+      error?: string;
+      ai_score?: number;
+      selected_for_report?: boolean;
+      /** Zone bâtiment pour couverture photo QC (agrégée dans `photos_coverage_v1`). */
+      linked_zone?: ZoneCode;
+    }[]
   >([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoUploadProgress, setPhotoUploadProgress] = useState<{ done: number; total: number } | null>(null);
+  const [photoDropHover, setPhotoDropHover] = useState(false);
+  const photoDragDepthRef = useRef(0);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [clientOverride, setClientOverride] = useState<string | null>(null);
   const [polishClient, setPolishClient] = useState(false);
 
@@ -122,7 +156,180 @@ export default function ZeroDraftReportComposer({
     [entries, language, jurisdiction, inspectorNote],
   );
   const clientSectionValue = clientOverride !== null ? clientOverride : autoClientDraft;
-  const canGenerate = title.trim().length > 2 && entries.length > 0 && !loading;
+
+  const router = useRouter();
+
+  const photosCoverageByZone = useMemo(() => {
+    const acc: Partial<Record<string, number>> = {};
+    for (const p of photos) {
+      if (!p.url || p.error) continue;
+      const z = (p.linked_zone ?? "autre") as string;
+      acc[z] = (acc[z] ?? 0) + 1;
+    }
+    return acc;
+  }, [photos]);
+
+  const copilotFieldsRef = useRef({
+    title: "",
+    inspectorNote: "",
+    clientSection: "",
+    entries: [] as ReportEntryInput[],
+    language: "fr" as ReportLanguage,
+    jurisdiction: "ca_general" as JurisdictionProfile,
+    photosCoverage: {} as Record<string, number>,
+  });
+
+  useEffect(() => {
+    copilotFieldsRef.current = {
+      title: title.trim(),
+      inspectorNote,
+      clientSection: clientSectionValue,
+      entries,
+      language,
+      jurisdiction,
+      photosCoverage: { ...(photosCoverageByZone as Record<string, number>) },
+    };
+  }, [title, inspectorNote, clientSectionValue, entries, language, jurisdiction, photosCoverageByZone]);
+
+  useEffect(() => {
+    const onApply = (ev: Event) => {
+      const e = ev as CustomEvent<{
+        sectionIndex: number;
+        recommendation: string;
+        statsKey?: string;
+        saveUndoSnapshot?: boolean;
+      }>;
+      const d = e.detail;
+      if (!d || typeof d.sectionIndex !== "number" || typeof d.recommendation !== "string") return;
+      const p = copilotFieldsRef.current;
+      void (async () => {
+        try {
+          const body: Record<string, unknown> = {
+            report_id: reportId,
+            access_token: viewerToken ?? "",
+            title: p.title,
+            inspector_note: p.inspectorNote,
+            client_section: p.clientSection,
+            polish_client: false,
+            entries: p.entries.map((x) => ({
+              zone: x.zone,
+              issue: x.issue,
+              severity: x.severity,
+              note: x.note ?? "",
+            })),
+            language: p.language,
+            jurisdiction: p.jurisdiction,
+            photos_coverage: p.photosCoverage,
+            section_recommendation_overrides: {
+              [String(d.sectionIndex)]: d.recommendation,
+            },
+          };
+          if (d.saveUndoSnapshot === true && typeof d.statsKey === "string" && d.statsKey.length > 0) {
+            body.qc_save_undo_snapshot_before_apply = true;
+            body.stats_key = d.statsKey;
+          }
+          const saveRes = await fetch("/api/report-content", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const saveBody = (await saveRes.json().catch(() => ({}))) as {
+            success?: boolean;
+            undo_version_id?: string;
+          };
+          if (!saveRes.ok || !saveBody.success) {
+            emitQcTelemetry("qc_ai_suggestion_applied", {
+              ok: false,
+              report_id: reportId,
+              sectionIndex: d.sectionIndex,
+              stats_key: d.statsKey,
+              access_token: viewerToken ?? "",
+              interaction: "persist",
+            });
+            return;
+          }
+          emitQcTelemetry("qc_ai_suggestion_applied", {
+            ok: true,
+            report_id: reportId,
+            sectionIndex: d.sectionIndex,
+            stats_key: d.statsKey,
+            access_token: viewerToken ?? "",
+            interaction: "persist",
+            undo_version_id: saveBody.undo_version_id,
+            before_state: { sectionIndex: d.sectionIndex },
+            after_state: {
+              sectionIndex: d.sectionIndex,
+              recommendation_excerpt: d.recommendation.slice(0, 240),
+            },
+          });
+          if (saveBody.undo_version_id) {
+            window.dispatchEvent(
+              new CustomEvent("inspectflow:qc_undo_available", {
+                detail: {
+                  version_id: saveBody.undo_version_id,
+                  report_id: reportId,
+                  stats_key: d.statsKey,
+                },
+              }),
+            );
+          }
+          router.refresh();
+        } catch {
+          emitQcTelemetry("qc_ai_suggestion_applied", {
+            ok: false,
+            report_id: reportId,
+            stats_key: d.statsKey,
+            access_token: viewerToken ?? "",
+            interaction: "persist",
+          });
+        }
+      })();
+    };
+    window.addEventListener("inspectflow:qc_apply_recommendation", onApply as EventListener);
+    return () =>
+      window.removeEventListener("inspectflow:qc_apply_recommendation", onApply as EventListener);
+  }, [reportId, viewerToken, router]);
+
+  const coverReadiness: CoverReadinessResult = useMemo(() => {
+    if (!hasExistingReport || !existingPayload) {
+      return {
+        gate: "ready",
+        score: 100,
+        blocking: [],
+        warnings: [],
+      };
+    }
+    const raw = (existingPayload as Record<string, unknown>).cover_v1;
+    const cover = raw != null ? parseCoverV1FromUnknown(raw) : null;
+    const photoCount = photos.filter((p) => p.url && !p.error).length;
+    const reportEntries = entries.map((e) => ({
+      zone: e.zone,
+      note: e.note ?? "",
+    }));
+    return evaluateCoverReadiness(cover, {
+      photoCount,
+      reportEntries,
+      photosCoverageByZone,
+      reportPayload: {
+        entries: entries.map((e) => ({
+          zone: e.zone,
+          issue: e.issue,
+          severity: e.severity,
+          note: e.note ?? "",
+        })),
+        sections: generated.sections,
+      },
+    });
+  }, [hasExistingReport, existingPayload, photos, entries, photosCoverageByZone, generated.sections]);
+
+  const pdfBlockedByCover = coverReadiness.gate === "blocked";
+  const pdfBlockedCritical = coverReadiness.blocking.some((b) => b.severity === "block_critical");
+
+  const canGenerate =
+    title.trim().length > 2 &&
+    entries.length > 0 &&
+    !loading &&
+    !pdfBlockedByCover;
   const completion = Math.min(100, Math.max(15, Math.round((entries.length / 6) * 100)));
   const riskBadgeClass = generated.risk_level === "high"
     ? "bg-red-100 text-red-700 border-red-200"
@@ -186,6 +393,14 @@ export default function ZeroDraftReportComposer({
       reportLockedHelp:
         "For a field test, use a new report link (new inspection). You can also unlock the row in Supabase if needed.",
       reportLockedLink: "Open “Access a report”",
+      pdfBlockedCriticalBanner:
+        "Cannot generate the report — essential cover information is missing (requester, address, or full cover). Open the cover page below.",
+      pdfBlockedStandardBanner:
+        "Complete the following on the cover page to continue:",
+      pdfGateBlockedCritical:
+        "Cannot generate the report — essential information is missing. Open the cover page and fill in requester, address, and required fields.",
+      pdfGateBlockedStandardIntro: "Complete the following to continue:",
+      openCoverPage: "Open cover page",
     }
     : {
       title: "Mode zéro rédaction",
@@ -241,6 +456,14 @@ export default function ZeroDraftReportComposer({
       reportLockedHelp:
         "Pour un test terrain, utilisez un lien de rapport neuf (nouvelle inspection). Sinon, déverrouillez la ligne dans Supabase.",
       reportLockedLink: "Accéder à un autre rapport",
+      pdfBlockedCriticalBanner:
+        "Impossible de générer le rapport tant que ces informations essentielles manquent (requérant, adresse ou couverture complète). Utilisez le lien ci-dessous.",
+      pdfBlockedStandardBanner:
+        "Complétez les éléments suivants sur la couverture pour continuer :",
+      pdfGateBlockedCritical:
+        "Impossible de générer le rapport — informations d’identité ou d’adresse manquantes. Ouvrez la couverture et complétez les champs requis.",
+      pdfGateBlockedStandardIntro: "Complétez les éléments suivants pour continuer :",
+      openCoverPage: "Ouvrir la couverture",
     };
 
   useEffect(() => {
@@ -281,6 +504,10 @@ export default function ZeroDraftReportComposer({
       cancelled = true;
     };
   }, [reportId, viewerToken, initialData?.hasPdf, initialData?.pdfSignedUrl]);
+
+  useEffect(() => {
+    ensureSessionStart(reportId);
+  }, [reportId]);
 
   useEffect(() => {
     setHostInfo(window.location.host);
@@ -370,61 +597,151 @@ export default function ZeroDraftReportComposer({
     }
   }, []);
 
-  const handlePhotoUpload = useCallback(async (files: FileList) => {
-    setUploadingPhoto(true);
-    const additions = Array.from(files).map((f) => ({
-      id: crypto.randomUUID(),
-      name: f.name,
-      url: null as string | null,
-      uploading: true,
-    }));
-    setPhotos((prev) => [...prev, ...additions]);
-
-    await Promise.all(
-      Array.from({ length: files.length }, (_, i) => {
-        const file = files[i]!;
-        const slotId = additions[i]!.id;
-        const form = new FormData();
-        form.append("file", file);
-        form.append("report_id", reportId);
-        form.append("language", language);
-        return (async () => {
+  const uploadOnePhoto = useCallback(
+    async (
+      file: File,
+      slotId: string,
+      attempt: number,
+    ): Promise<boolean> => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("report_id", reportId);
+      form.append("language", language);
+      try {
+        const res = await fetch("/api/upload-photo", { method: "POST", body: form });
+        const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const suggested =
+          typeof body.suggested_inspector_note === "string" && body.suggested_inspector_note.trim()
+            ? body.suggested_inspector_note.trim()
+            : null;
+        if (suggested) {
+          setInspectorNote((prev) => (prev.trim() ? `${prev.trim()}\n\n${suggested}` : suggested));
+        }
+        const ok = res.ok;
+        if (!ok && attempt === 0) {
+          return uploadOnePhoto(file, slotId, 1);
+        }
+        let ai_score: number | undefined;
+        if (ok) {
           try {
-            const res = await fetch("/api/upload-photo", { method: "POST", body: form });
-            const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-            const suggested =
-              typeof body.suggested_inspector_note === "string" && body.suggested_inspector_note.trim()
-                ? body.suggested_inspector_note.trim()
-                : null;
-            if (suggested) {
-              setInspectorNote((prev) => (prev.trim() ? `${prev.trim()}\n\n${suggested}` : suggested));
-            }
-            setPhotos((prev) =>
-              prev.map((p) =>
-                p.id === slotId
-                  ? {
-                      ...p,
-                      uploading: false,
-                      url: typeof body.url === "string" ? body.url : null,
-                      error: !res.ok ? (typeof body.error === "string" ? body.error : `Erreur ${res.status}`) : undefined,
-                    }
-                  : p,
-              ),
-            );
-          } catch (e) {
-            setPhotos((prev) =>
-              prev.map((p) =>
-                p.id === slotId
-                  ? { ...p, uploading: false, error: e instanceof Error ? e.message : String(e) }
-                  : p,
-              ),
-            );
+            const sc = await scorePhotoHeuristic(file);
+            ai_score = sc.final;
+          } catch {
+            /* ignore */
           }
-        })();
-      }),
-    );
-    setUploadingPhoto(false);
-  }, [reportId, language]);
+        }
+        setPhotos((prev) =>
+          prev.map((p) =>
+            p.id === slotId
+              ? {
+                  ...p,
+                  uploading: false,
+                  url: typeof body.url === "string" ? body.url : null,
+                  error: !ok
+                    ? (typeof body.error === "string" ? body.error : `Erreur ${res.status}`)
+                    : undefined,
+                  ...(ai_score != null ? { ai_score } : {}),
+                }
+              : p,
+          ),
+        );
+        return ok;
+      } catch (e) {
+        if (attempt === 0) {
+          return uploadOnePhoto(file, slotId, 1);
+        }
+        setPhotos((prev) =>
+          prev.map((p) =>
+            p.id === slotId
+              ? { ...p, uploading: false, error: e instanceof Error ? e.message : String(e) }
+              : p,
+          ),
+        );
+        return false;
+      }
+    },
+    [reportId, language],
+  );
+
+  const handlePhotoUpload = useCallback(
+    async (files: FileList | File[]) => {
+      const arr = Array.from(files).filter((f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(f.name));
+      if (arr.length === 0) return;
+      if (arr.length > MAX_BULK_SOFT) {
+        window.alert(
+          language === "en"
+            ? `Large batch: up to ${MAX_BULK_HARD} photos. Uploading the first ${MAX_BULK_HARD} in chunks of ${PHOTO_CHUNK}.`
+            : `Lot volumineux : jusqu’à ${MAX_BULK_HARD} photos. Téléversement des ${MAX_BULK_HARD} premières par paquets de ${PHOTO_CHUNK}.`,
+        );
+      }
+      const batch = arr.slice(0, MAX_BULK_HARD);
+      const uploadStartedAt = Date.now();
+      setUploadingPhoto(true);
+      setPhotoUploadProgress({ done: 0, total: batch.length });
+      emitProductEvent("photos_bulk_upload_started", {
+        count: batch.length,
+        report_id: reportId,
+      });
+      const additions = batch.map((f) => ({
+        id: crypto.randomUUID(),
+        name: f.name,
+        url: null as string | null,
+        uploading: true,
+      }));
+      setPhotos((prev) => [...prev, ...additions]);
+
+      const outcomes: boolean[] = [];
+      let completed = 0;
+      for (let chunkStart = 0; chunkStart < batch.length; chunkStart += PHOTO_CHUNK) {
+        const chunkEnd = Math.min(chunkStart + PHOTO_CHUNK, batch.length);
+        const chunkFiles = batch.slice(chunkStart, chunkEnd);
+        const chunkAdd = additions.slice(chunkStart, chunkEnd);
+        for (let i = 0; i < chunkFiles.length; i += UPLOAD_CONCURRENCY) {
+          const slice = chunkFiles.slice(i, i + UPLOAD_CONCURRENCY);
+          const sliceAdd = chunkAdd.slice(i, i + UPLOAD_CONCURRENCY);
+          const batchOut = await Promise.all(
+            slice.map((file, j) => uploadOnePhoto(file, sliceAdd[j]!.id, 0)),
+          );
+          outcomes.push(...batchOut);
+          completed += slice.length;
+          setPhotoUploadProgress({ done: completed, total: batch.length });
+        }
+      }
+
+      setPhotos((prev) => {
+        const batchIds = new Set(additions.map((a) => a.id));
+        const batchPhotos = prev.filter((p) => batchIds.has(p.id));
+        const scores = batchPhotos.map((p) => p.ai_score ?? 0);
+        const topIdx = pickTopPhotoIndices(scores, Math.min(AUTO_SELECT_TOP_N, scores.length));
+        const topIds = new Set([...topIdx].map((idx) => batchPhotos[idx]?.id).filter(Boolean) as string[]);
+        return prev.map((p) =>
+          batchIds.has(p.id)
+            ? { ...p, selected_for_report: topIds.has(p.id) }
+            : p,
+        );
+      });
+      setUploadingPhoto(false);
+      setPhotoUploadProgress(null);
+      const duration_ms = Date.now() - uploadStartedAt;
+      const failed_count = outcomes.filter((o) => !o).length;
+      const avg_time_per_file =
+        batch.length > 0 ? Math.round((duration_ms / batch.length) * 100) / 100 : 0;
+      emitProductEvent("photos_bulk_upload_finished", {
+        count: batch.length,
+        report_id: reportId,
+        duration_ms,
+        avg_time_per_file,
+        failed_count,
+      });
+      if (failed_count > 0) {
+        emitProductEvent("photos_bulk_upload_failed", {
+          report_id: reportId,
+          failed_count,
+        });
+      }
+    },
+    [reportId, language, uploadOnePhoto],
+  );
 
   const requestPdfGeneration = useCallback(async () => {
     let pdfRes: Response;
@@ -530,6 +847,43 @@ export default function ZeroDraftReportComposer({
       setContentSaveErrorCode(null);
       setPdfLink(null);
       setRetryAvailable(false);
+
+      const readiness = coverReadiness;
+
+      if (readiness.gate === "blocked") {
+        const critical = readiness.blocking.some((b) => b.severity === "block_critical");
+        if (critical) {
+          setError(labels.pdfGateBlockedCritical);
+        } else {
+          const lines = readiness.blocking.map((i) => `• ${i.messageFr}`).join("\n");
+          setError(`${labels.pdfGateBlockedStandardIntro}\n${lines}`);
+        }
+        setLoading(false);
+        noteFirstPdfBlocked(reportId);
+        emitProductEvent("pdf_generate_blocked", {
+          critical,
+          gate: "blocked",
+          blocking_codes: readiness.blocking.map((b) => b.code),
+        });
+        requestAnimationFrame(() => {
+          document
+            .getElementById(REPORT_READINESS_ZONE_ID)
+            ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
+        return;
+      }
+      if (readiness.gate === "warning") {
+        const msg = readiness.warnings.map((w) => w.messageFr).join("\n");
+        if (
+          !window.confirm(
+            `${msg}\n\nContinuer la génération du rapport et du PDF ?`,
+          )
+        ) {
+          setLoading(false);
+          return;
+        }
+      }
+
       setStatus(
         "Etape 1/2: generation du contenu structure… (1er appel : jusqu’a ~3 min si Next compile la route ou disque lent)",
       );
@@ -549,6 +903,7 @@ export default function ZeroDraftReportComposer({
             entries,
             language,
             jurisdiction,
+            photos_coverage: photosCoverageByZone,
           }),
         }),
         reportContentMs,
@@ -572,6 +927,12 @@ export default function ZeroDraftReportComposer({
         window.open(nextPdfLink, "_blank");
         setPdfLink(nextPdfLink);
       }
+      emitProductEvent("pdf_generate_success", {
+        report_id: reportId,
+        has_pdf_link: !!nextPdfLink,
+        via_retry: false,
+        ...buildPdfSuccessTimingDetail(reportId),
+      });
       {
         let doneStatus = labels.reportGeneratedOk;
         if (
@@ -922,7 +1283,7 @@ export default function ZeroDraftReportComposer({
             </label>
           </div>
 
-          <div className="space-y-3">
+          <div id="report-entries-zone" className="scroll-mt-28 space-y-3">
             {entries.map((entry, idx) => (
               <div key={idx} className="rounded-lg border border-slate-200 p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -1014,28 +1375,84 @@ export default function ZeroDraftReportComposer({
             onNotesProcessed={handleNotesProcessed}
           />
 
-          <div className="rounded-lg border border-slate-200 p-4">
+          <div
+            id="report-photos-zone"
+            className="scroll-mt-28 rounded-lg border border-slate-200 p-4"
+          >
             <p className="text-sm font-medium text-slate-700 mb-3">
               {language === "en" ? "Photos" : "Photos"}
             </p>
-            <label className="flex cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500 transition hover:border-blue-400 hover:text-blue-600">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="sr-only"
+            <input
+              ref={photoInputRef}
+              id="report-photos-input"
+              type="file"
+              accept="image/*"
+              multiple
+              className="sr-only"
+              disabled={loading || uploadingPhoto}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  handlePhotoUpload(e.target.files);
+                  e.target.value = "";
+                }
+              }}
+            />
+            <div
+              className={`rounded-md border-2 border-dashed px-4 py-6 text-sm transition ${
+                photoDropHover
+                  ? "border-blue-500 bg-blue-50/80 text-blue-800"
+                  : "border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600"
+              }`}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                photoDragDepthRef.current += 1;
+                setPhotoDropHover(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                photoDragDepthRef.current = Math.max(0, photoDragDepthRef.current - 1);
+                if (photoDragDepthRef.current === 0) setPhotoDropHover(false);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                photoDragDepthRef.current = 0;
+                setPhotoDropHover(false);
+                if (loading || uploadingPhoto) return;
+                const dt = e.dataTransfer?.files;
+                if (dt && dt.length > 0) handlePhotoUpload(dt);
+              }}
+            >
+              <button
+                type="button"
                 disabled={loading || uploadingPhoto}
-                onChange={(e) => {
-                  if (e.target.files && e.target.files.length > 0) {
-                    handlePhotoUpload(e.target.files);
-                    e.target.value = "";
-                  }
-                }}
-              />
-              {uploadingPhoto
-                ? (language === "en" ? "Uploading..." : "Téléversement...")
-                : (language === "en" ? "Click to add photos" : "Cliquez pour ajouter des photos")}
-            </label>
+                onClick={() => photoInputRef.current?.click()}
+                className="flex w-full cursor-pointer flex-col items-center justify-center gap-1 bg-transparent text-inherit disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {uploadingPhoto ? (
+                  <>
+                    <span>{language === "en" ? "Uploading…" : "Téléversement…"}</span>
+                    {photoUploadProgress ? (
+                      <span className="text-xs font-medium tabular-nums">
+                        {photoUploadProgress.done} / {photoUploadProgress.total}
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  <span>
+                    {language === "en"
+                      ? "Click or drop photos here"
+                      : "Cliquez ou déposez des photos ici"}
+                  </span>
+                )}
+              </button>
+            </div>
             {photos.length > 0 ? (
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {photos.map((photo) => (
@@ -1056,6 +1473,60 @@ export default function ZeroDraftReportComposer({
                       </div>
                     )}
                     <p className="mt-1 truncate text-xs text-slate-500">{photo.name}</p>
+                    {photo.url && !photo.uploading ? (
+                      <label className="mt-1 block text-left">
+                        <span className="sr-only">Zone</span>
+                        <select
+                          className="mt-0.5 w-full rounded border border-slate-200 px-1 py-0.5 text-[10px] text-slate-800"
+                          value={photo.linked_zone ?? "autre"}
+                          onChange={(e) => {
+                            const z = e.target.value as ZoneCode;
+                            setPhotos((prev) =>
+                              prev.map((p) => (p.id === photo.id ? { ...p, linked_zone: z } : p)),
+                            );
+                          }}
+                        >
+                          {ZONES.map((z) => (
+                            <option key={z.value} value={z.value}>
+                              {z.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {photo.ai_score != null && !photo.error ? (
+                      <p className="text-[10px] font-medium text-violet-800">
+                        IA {(photo.ai_score * 100).toFixed(0)}%
+                        {photo.selected_for_report ? (
+                          <span className="ml-1 rounded bg-violet-100 px-1 font-semibold text-violet-900">
+                            {language === "en" ? "AI selected" : "IA sélectionnée"}
+                          </span>
+                        ) : null}
+                      </p>
+                    ) : null}
+                    {photo.url && !photo.uploading ? (
+                      <button
+                        type="button"
+                        className="mt-1 text-[10px] font-medium text-blue-700 underline"
+                        onClick={() =>
+                          setPhotos((prev) =>
+                            prev.map((p) =>
+                              p.id === photo.id
+                                ? { ...p, selected_for_report: !p.selected_for_report }
+                                : p,
+                            ),
+                          )
+                        }
+                      >
+                        {photo.selected_for_report
+                          ? language === "en"
+                            ? "Deselect for summary"
+                            : "Retirer de la sélection"
+                          : language === "en"
+                            ? "Select for summary"
+                            : "Inclure sélection"}
+                      </button>
+                    ) : null}
                     {photo.error ? (
                       <p className="text-xs text-red-500">{photo.error}</p>
                     ) : null}
@@ -1092,6 +1563,31 @@ export default function ZeroDraftReportComposer({
               </p>
             ) : null}
           </div>
+
+          {pdfBlockedByCover && hasExistingReport ? (
+            <div
+              className={`rounded-lg border px-3 py-2 text-sm ${
+                pdfBlockedCritical
+                  ? "border-rose-300 bg-rose-50 text-rose-950"
+                  : "border-amber-200 bg-amber-50 text-amber-950"
+              }`}
+              role="status"
+            >
+              <p className="font-medium">
+                {pdfBlockedCritical
+                  ? labels.pdfBlockedCriticalBanner
+                  : labels.pdfBlockedStandardBanner}
+              </p>
+              {viewerToken?.trim() ? (
+                <Link
+                  href={`/rapport/couverture?report=${encodeURIComponent(reportId)}&token=${encodeURIComponent(viewerToken.trim())}`}
+                  className="mt-2 inline-block text-sm font-semibold text-blue-800 underline decoration-blue-400 underline-offset-2 hover:text-blue-950"
+                >
+                  {labels.openCoverPage}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
 
           <button
             type="button"
@@ -1130,6 +1626,12 @@ export default function ZeroDraftReportComposer({
                     window.open(nextPdfLink, "_blank");
                     setPdfLink(nextPdfLink);
                   }
+                  emitProductEvent("pdf_generate_success", {
+                    report_id: reportId,
+                    has_pdf_link: !!nextPdfLink,
+                    via_retry: true,
+                    ...buildPdfSuccessTimingDetail(reportId),
+                  });
                   setStatus("PDF regenere avec succes.");
                   setRetryAvailable(false);
                 } catch (e) {
