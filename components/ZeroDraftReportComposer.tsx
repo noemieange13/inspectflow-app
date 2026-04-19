@@ -20,6 +20,7 @@ import {
 } from "@/lib/reportNarrative";
 import type { ReportServerData } from "@/lib/reportViewerServer";
 import BuyerModePanel from "@/components/BuyerModePanel";
+import FirstReportGuidedOnboarding from "@/components/FirstReportGuidedOnboarding";
 import LiveInspectionCapture from "@/components/LiveInspectionCapture";
 import NotesCapture from "@/components/NotesCapture";
 import ReportLivePreviewBanner from "@/components/ReportLivePreviewBanner";
@@ -48,6 +49,7 @@ import {
   type ReportViewMode,
   type UserAgentProfile,
 } from "@/lib/userAgentProfile";
+import { useSupabaseAccessToken } from "@/lib/useSupabaseAccessToken";
 
 /** Limite « soft » UI — ne pas descendre sous 250 (usage réel 150–300+ photos). */
 const MAX_BULK_SOFT = 250;
@@ -167,6 +169,7 @@ export default function ZeroDraftReportComposer({
   const [polishClient, setPolishClient] = useState(false);
   const [viewMode, setViewMode] = useState<ReportViewMode>("inspector");
   const [userProfile, setUserProfile] = useState<UserAgentProfile>(DEFAULT_USER_AGENT_PROFILE);
+  const [photoZoneOnboardingGlow, setPhotoZoneOnboardingGlow] = useState(false);
 
   const generated = useMemo(
     () => buildStructuredReport(entries, language, jurisdiction),
@@ -179,6 +182,7 @@ export default function ZeroDraftReportComposer({
   const clientSectionValue = clientOverride !== null ? clientOverride : autoClientDraft;
 
   const router = useRouter();
+  const supabaseAccessToken = useSupabaseAccessToken();
 
   useEffect(() => {
     setViewMode(loadReportViewMode());
@@ -187,19 +191,25 @@ export default function ZeroDraftReportComposer({
 
   const scheduleCloudProfileSync = useCallback(
     (profile: UserAgentProfile, mode: ReportViewMode) => {
-      const tok = viewerToken?.trim();
-      if (!tok || !reportId?.trim()) return;
+      if (!reportId?.trim()) return;
+      const rt = viewerToken?.trim() ?? "";
+      const jwt = supabaseAccessToken?.trim() ?? "";
+      if (!rt && !jwt) return;
       if (cloudProfileSaveTimerRef.current != null) {
         window.clearTimeout(cloudProfileSaveTimerRef.current);
       }
       cloudProfileSaveTimerRef.current = window.setTimeout(() => {
         cloudProfileSaveTimerRef.current = null;
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (jwt) headers.Authorization = `Bearer ${jwt}`;
         void fetch("/api/user-agent-profile", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             report_id: reportId.trim(),
-            access_token: tok,
+            access_token: rt,
             prefers_short_reports: profile.prefers_short_reports,
             strict_on_roof: profile.strict_on_roof,
             report_view_mode: mode,
@@ -207,21 +217,26 @@ export default function ZeroDraftReportComposer({
         }).catch(() => {});
       }, 720);
     },
-    [reportId, viewerToken],
+    [reportId, viewerToken, supabaseAccessToken],
   );
 
   useEffect(() => {
-    const tok = viewerToken?.trim();
-    if (!tok || !reportId?.trim()) return;
+    const rt = viewerToken?.trim() ?? "";
+    const jwt = supabaseAccessToken?.trim() ?? "";
+    if (!reportId?.trim() || (!rt && !jwt)) return;
     let cancelled = false;
     void (async () => {
       try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (jwt) headers.Authorization = `Bearer ${jwt}`;
         const res = await fetch("/api/user-agent-profile", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             report_id: reportId.trim(),
-            access_token: tok,
+            access_token: rt,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as {
@@ -242,7 +257,7 @@ export default function ZeroDraftReportComposer({
     return () => {
       cancelled = true;
     };
-  }, [reportId, viewerToken]);
+  }, [reportId, viewerToken, supabaseAccessToken]);
 
   const terrainPrefs = useMemo(
     () => ({ strict_on_roof: userProfile.strict_on_roof }),
@@ -291,6 +306,24 @@ export default function ZeroDraftReportComposer({
     document.getElementById("report-photos-zone")?.scrollIntoView({
       behavior: "smooth",
       block: "start",
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!photoZoneOnboardingGlow) return;
+    const t = window.setTimeout(() => setPhotoZoneOnboardingGlow(false), 4500);
+    return () => clearTimeout(t);
+  }, [photoZoneOnboardingGlow]);
+
+  const goToPhotosForOnboarding = useCallback(() => {
+    setPhotoZoneOnboardingGlow(true);
+    scrollToPhotosZone();
+  }, [scrollToPhotosZone]);
+
+  const goToGenerateForOnboarding = useCallback(() => {
+    document.getElementById("inspectflow-generate-pdf-cta")?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
     });
   }, []);
 
@@ -1416,6 +1449,16 @@ export default function ZeroDraftReportComposer({
         </div>
       </div>
 
+      <FirstReportGuidedOnboarding
+        reportId={reportId}
+        language={language}
+        suppress={!!pdfLink || !!initialData?.hasPdf}
+        entriesCount={entries.length}
+        validPhotoCount={validPhotoCount}
+        onGoToPhotos={goToPhotosForOnboarding}
+        onGoToGenerate={goToGenerateForOnboarding}
+      />
+
       <ReportMissionSummary
         language={language}
         entries={entries}
@@ -1484,6 +1527,7 @@ export default function ZeroDraftReportComposer({
           completionPercent={previewCompletion}
           reportId={reportId}
           viewerToken={viewerToken}
+          supabaseAccessToken={supabaseAccessToken}
           livePayload={htmlPreviewPayload}
           labels={{
             htmlPreview: labels.htmlPreviewTitle,
@@ -1691,7 +1735,11 @@ export default function ZeroDraftReportComposer({
 
           <div
             id="report-photos-zone"
-            className="scroll-mt-28 rounded-lg border border-slate-200 p-4"
+            className={`scroll-mt-28 rounded-lg border border-slate-200 p-4 transition-shadow ${
+              photoZoneOnboardingGlow
+                ? "ring-2 ring-sky-400 ring-offset-2 shadow-md"
+                : ""
+            }`}
           >
             <p className="text-sm font-medium text-slate-700 mb-3">
               {language === "en" ? "Photos" : "Photos"}

@@ -15,6 +15,8 @@ type Props = {
   viewerToken?: string;
   /** Brouillon complet pour compiler le même HTML que le pipeline PDF. */
   livePayload: Record<string, unknown> | null;
+  /** Session Supabase (optionnelle) — même accès que le propriétaire du rapport. */
+  supabaseAccessToken?: string | null;
   labels: {
     htmlPreview: string;
     htmlLoading: string;
@@ -37,6 +39,7 @@ export default function ReportLivePreviewBanner({
   reportId,
   viewerToken,
   livePayload,
+  supabaseAccessToken,
   labels,
 }: Props) {
   const [excerpt, setExcerpt] = useState("");
@@ -45,12 +48,17 @@ export default function ReportLivePreviewBanner({
   const [htmlStatus, setHtmlStatus] = useState<"idle" | "loading" | "error">("idle");
   const debounceRef = useRef<number | null>(null);
   const seqRef = useRef(0);
+  const lastEtagRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    lastEtagRef.current = null;
+  }, [reportId]);
 
   const canFetchHtml = !!(
     reportId?.trim() &&
-    viewerToken?.trim() &&
     livePayload &&
-    typeof livePayload === "object"
+    typeof livePayload === "object" &&
+    (viewerToken?.trim() || supabaseAccessToken?.trim())
   );
 
   const payloadKey = useMemo(() => {
@@ -79,6 +87,7 @@ export default function ReportLivePreviewBanner({
     if (!canFetchHtml) {
       setHtmlPreview(null);
       setHtmlStatus("idle");
+      lastEtagRef.current = null;
       return;
     }
 
@@ -93,22 +102,39 @@ export default function ReportLivePreviewBanner({
       const seq = ++seqRef.current;
       void (async () => {
         try {
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+          };
+          if (supabaseAccessToken?.trim()) {
+            headers.Authorization = `Bearer ${supabaseAccessToken.trim()}`;
+          }
+          if (lastEtagRef.current) {
+            headers["If-None-Match"] = lastEtagRef.current;
+          }
           const res = await fetch("/api/report-html-preview", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify({
               report_id: reportId.trim(),
-              access_token: viewerToken!.trim(),
+              access_token: viewerToken?.trim() ?? "",
               payload: livePayload,
             }),
           });
-          const data = (await res.json().catch(() => ({}))) as { html?: string; error?: string };
           if (seq !== seqRef.current) return;
+          if (res.status === 304) {
+            const etag = res.headers.get("etag");
+            if (etag) lastEtagRef.current = etag;
+            setHtmlStatus("idle");
+            return;
+          }
+          const data = (await res.json().catch(() => ({}))) as { html?: string; error?: string };
           if (!res.ok || typeof data.html !== "string" || !data.html.trim()) {
             setHtmlStatus("error");
             setHtmlPreview(null);
             return;
           }
+          const etag = res.headers.get("etag");
+          if (etag) lastEtagRef.current = etag;
           setHtmlPreview(data.html);
           setHtmlStatus("idle");
         } catch {
@@ -125,7 +151,7 @@ export default function ReportLivePreviewBanner({
         debounceRef.current = null;
       }
     };
-  }, [canFetchHtml, reportId, viewerToken, payloadKey, livePayload]);
+  }, [canFetchHtml, reportId, viewerToken, supabaseAccessToken, payloadKey, livePayload]);
 
   return (
     <div

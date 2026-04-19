@@ -1,4 +1,5 @@
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { verifyBearerMatchesReportOwner } from "@/lib/supabaseAuthFromRequest";
 
 export type AssertReportAccessOk = {
   ok: true;
@@ -61,4 +62,27 @@ export function validateReportAccessRow(
     typeof uid === "string" && uid.length > 0 ? uid : null;
 
   return { ok: true, userId };
+}
+
+/**
+ * Propriétaire connecté (JWT Supabase = `reports.user_id`) OU jeton d’accès rapport (lien partagé).
+ */
+export async function assertReportAccessWithOptionalSession(
+  req: Request,
+  reportId: string,
+  accessTokenRaw: string,
+  row: ReportGateRow | null,
+): Promise<AssertReportAccessResult> {
+  if (!row) {
+    return { ok: false, status: 404, error: "Report not found" };
+  }
+  if (await verifyBearerMatchesReportOwner(req, row.user_id)) {
+    const uid = row.user_id;
+    const userId =
+      typeof uid === "string" && uid.length > 0 ? uid : null;
+    if (userId) {
+      return { ok: true, userId };
+    }
+  }
+  return validateReportAccessRow(reportId, accessTokenRaw, row);
 }

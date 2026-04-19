@@ -1,4 +1,4 @@
-import { validateReportAccessRow } from "@/lib/assertReportAccessForApi";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 import {
@@ -73,7 +73,12 @@ export async function POST(req: Request) {
     return Response.json({ error: readError.message }, { status: 500 });
   }
 
-  const gate = validateReportAccessRow(reportId, accessTokenRaw, report);
+  const gate = await assertReportAccessWithOptionalSession(
+    req,
+    reportId,
+    accessTokenRaw,
+    report,
+  );
   if (!gate.ok) {
     return Response.json(
       { error: gate.error, code: gate.code },

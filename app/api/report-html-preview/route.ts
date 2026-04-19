@@ -1,6 +1,10 @@
-import { validateReportAccessRow } from "@/lib/assertReportAccessForApi";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { buildLiveReportHtmlPreview } from "@/lib/buildLiveReportHtmlPreview";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import {
+  ifNoneMatchPrecludesBody,
+  weakEtagForReportHtmlPreview,
+} from "@/lib/stablePayloadHash";
 
 /** Aperçu HTML proche du PDF ; compilation + clauses légales peuvent dépasser le défaut Vercel. */
 export const maxDuration = 60;
@@ -50,7 +54,12 @@ export async function POST(req: Request) {
     return Response.json({ error: readError.message }, { status: 500 });
   }
 
-  const gate = validateReportAccessRow(reportId, accessTokenRaw, report);
+  const gate = await assertReportAccessWithOptionalSession(
+    req,
+    reportId,
+    accessTokenRaw,
+    report,
+  );
   if (!gate.ok) {
     return Response.json(
       { error: gate.error, code: gate.code },
@@ -74,6 +83,18 @@ export async function POST(req: Request) {
     payload = raw;
   }
 
+  const etag = weakEtagForReportHtmlPreview(payload, reportId);
+  const inm = req.headers.get("if-none-match");
+  if (ifNoneMatchPrecludesBody(inm, etag)) {
+    return new Response(null, {
+      status: 304,
+      headers: {
+        ETag: etag,
+        "Cache-Control": "private, no-cache",
+      },
+    });
+  }
+
   const html = await buildLiveReportHtmlPreview(supabase, payload);
   if (!html || !html.trim()) {
     return Response.json(
@@ -92,5 +113,13 @@ export async function POST(req: Request) {
     );
   }
 
-  return Response.json({ html });
+  return Response.json(
+    { html },
+    {
+      headers: {
+        ETag: etag,
+        "Cache-Control": "private, no-cache",
+      },
+    },
+  );
 }

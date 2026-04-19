@@ -805,6 +805,38 @@ export default function InspectionCoverForm({
 
   return (
     <div className="space-y-10">
+      {/*
+        Toujours montés : en vue « Résumé », InspectionResumePanel déclenche .click() sur ces refs.
+        Les entrées du panneau « Outils » réutilisent les mêmes id (labels htmlFor).
+      */}
+      <input
+        id="cover-description-files"
+        ref={descriptionFileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Photos façades / toiture pour remplir la description sommaire"
+      />
+      <input
+        id="cover-notes-photo"
+        ref={notesPhotoRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Photo de notes manuscrites pour le rapport"
+      />
+      <input
+        id="cover-notes-audio"
+        ref={notesAudioRef}
+        type="file"
+        accept="audio/*,.m4a,.mp3,.webm"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Mémo vocal pour le rapport"
+      />
       <div
         className={`rounded-lg border px-4 py-3 text-sm ${
           linkedToReport
@@ -819,7 +851,7 @@ export default function InspectionCoverForm({
         </p>
         <p className={`mt-1 ${linkedToReport ? "text-emerald-900/95" : "text-amber-900/90"}`}>
           {workspace === "resume"
-            ? "Vue Résumé : corrigez le texte comme un document. Les imports (DV, photos, notes) sont sous « Outils & imports »."
+            ? "Vue Résumé : corrigez le texte comme un document. Les actions rapides (photos, description, notes) fonctionnent ici ; le détail des champs reste sous « Outils & imports »."
             : linkedToReport
               ? "Outils et champs détaillés : extraction DV, météo, photos description / condition, notes terrain, historique des versions."
               : "Brouillon local ou liaison rapport ; extraction DV / photos nécessite OPENAI_API_KEY côté serveur."}
@@ -1214,13 +1246,12 @@ export default function InspectionCoverForm({
         {data.description_sommaire.mode === "photos_ia" ? (
           <div className="flex flex-wrap items-end gap-3">
             <div>
-              <input
-                ref={descriptionFileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                multiple
-                className="text-sm"
-              />
+              <label
+                htmlFor="cover-description-files"
+                className="inline-flex cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                Choisir des photos…
+              </label>
               <p className="mt-1 text-xs text-slate-500">
                 Façades, toiture, fondations visibles, etc. Puis lance l’analyse — tu peux corriger chaque champ
                 après coup.
@@ -1427,22 +1458,26 @@ export default function InspectionCoverForm({
             />
             <div className="flex flex-wrap gap-4 text-sm">
               <div>
-                <label className={labelClass}>Photo de notes manuscrites</label>
-                <input
-                  ref={notesPhotoRef}
-                  type="file"
-                  accept="image/*"
-                  className="mt-1 block w-full text-sm"
-                />
+                <label className={labelClass} htmlFor="cover-notes-photo">
+                  Photo de notes manuscrites
+                </label>
+                <label
+                  htmlFor="cover-notes-photo"
+                  className="mt-1 inline-flex cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                >
+                  Choisir une image…
+                </label>
               </div>
               <div>
-                <label className={labelClass}>Mémo vocal</label>
-                <input
-                  ref={notesAudioRef}
-                  type="file"
-                  accept="audio/*,.m4a,.mp3,.webm"
-                  className="mt-1 block w-full text-sm"
-                />
+                <label className={labelClass} htmlFor="cover-notes-audio">
+                  Mémo vocal
+                </label>
+                <label
+                  htmlFor="cover-notes-audio"
+                  className="mt-1 inline-flex cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                >
+                  Choisir un fichier audio…
+                </label>
               </div>
             </div>
             <button
