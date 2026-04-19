@@ -3,8 +3,10 @@
  * Ne remplace pas Edge `reports-pdf` (production).
  */
 import { buildHtmlFromReportPayload } from "@/lib/buildInspectionReportHtml";
+import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
 import { buildProInspectionHtmlFromPayload } from "@/lib/pdf/proInspectionTemplateHtml";
 import { generatePdfWithPuppeteer } from "@/lib/pdf/generatePdfPuppeteer";
+import { fetchLegalClausesForCoverJurisdiction } from "@/lib/qcLegalClauses";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export async function POST(req: Request) {
@@ -55,8 +57,24 @@ export async function POST(req: Request) {
     if (!report) return Response.json({ error: "Rapport introuvable" }, { status: 404 });
 
     const payload = (report.payload ?? {}) as Record<string, unknown>;
+    let legalClauseRows: Awaited<
+      ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
+    > | undefined;
+    const cover = parseCoverV1FromUnknown(payload.cover_v1);
+    if (cover) {
+      try {
+        legalClauseRows = await fetchLegalClausesForCoverJurisdiction(
+          supabase,
+          cover.conformite_juridiction,
+        );
+      } catch {
+        legalClauseRows = undefined;
+      }
+    }
     if (template === "canonical") {
-      const built = buildHtmlFromReportPayload(payload);
+      const built = buildHtmlFromReportPayload(payload, {
+        legalClauseRows,
+      });
       if (!built) {
         return Response.json(
           { error: "Impossible de construire le HTML canonique pour ce payload." },

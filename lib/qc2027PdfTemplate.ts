@@ -21,6 +21,10 @@ import {
   QC_SYSTEM_ZONE_GROUPS,
   type QcSystemCode,
 } from "@/lib/qcSystemSections";
+import {
+  groupClausesBySection,
+  type QcLegalClauseRow,
+} from "@/lib/qcLegalClauses";
 
 function esc(s: string): string {
   return s
@@ -69,6 +73,16 @@ export const REPORT_QC2027_SUPPLEMENT_CSS =
   ".qc-muted{color:#64748b;font-size:13px}" +
   ".qc-section-sys{border:1px solid #e2e8f0;border-radius:8px;padding:0.9em 1em;margin:0.75em 0;background:#fafafa}" +
   ".qc-finding{margin:0.6em 0;padding-left:0.5em;border-left:3px solid #94a3b8}" +
+  ".qc-finding-sev-high{border-left-color:#b91c1c;background:#fff1f2}" +
+  ".qc-finding-sev-med{border-left-color:#ea580c;background:#fff7ed}" +
+  ".qc-finding-sev-low{border-left-color:#16a34a;background:#f0fdf4}" +
+  ".qc-exec-grid{display:flex;flex-direction:column;gap:12px;margin:1em 0}" +
+  ".qc-card{border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;background:#fff}" +
+  ".qc-card.qc-sev-high{border-color:#fecaca;background:#fff1f2}" +
+  ".qc-card.qc-sev-med{border-color:#fed7aa;background:#fffbeb}" +
+  ".severity-high{color:#b00020;font-weight:700}" +
+  ".severity-medium{color:#c2410c;font-weight:600}" +
+  ".severity-low{color:#15803d}" +
   "table.qc-photo-grid{width:100%;border-collapse:collapse;font-size:13px;margin:0.5em 0}" +
   "table.qc-photo-grid th,table.qc-photo-grid td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}" +
   "table.qc-photo-grid th{background:#f1f5f9}";
@@ -76,6 +90,14 @@ export const REPORT_QC2027_SUPPLEMENT_CSS =
 type ReportLanguage = "fr" | "en";
 
 type ParsedEntry = { zone: string; severity: string };
+
+type SectionRow = {
+  title?: unknown;
+  observation?: unknown;
+  analysis?: unknown;
+  recommendation?: unknown;
+  severity?: unknown;
+};
 
 function parseEntriesFromPayload(payload: Record<string, unknown>): ParsedEntry[] {
   const raw = payload.entries;
@@ -221,18 +243,54 @@ function buildCoverPage(
 </section>`.trim();
 }
 
+function findingSeverityClass(sev: string): string {
+  const s = sev.toLowerCase();
+  if (/élev|high|haut|majeur|crit|important/i.test(s)) return "qc-finding-sev-high";
+  if (/moyen|medium|modér/i.test(s)) return "qc-finding-sev-med";
+  return "qc-finding-sev-low";
+}
+
 function executiveBlock(
   payload: Record<string, unknown>,
   entries: ParsedEntry[],
+  sections: SectionRow[],
   lang: ReportLanguage,
 ): string {
   const L = labels(lang);
   const majors = entries.filter((e) => e.severity === "high").length;
   const minors = entries.filter((e) => e.severity !== "high").length;
-  const summary =
-    typeof payload.summary === "string" ? payload.summary.trim() : "";
-  const client =
-    typeof payload.client_section === "string" ? payload.client_section.trim() : "";
+
+  const majorLines: string[] = [];
+  const mediumLines: string[] = [];
+  entries.forEach((e, i) => {
+    const sec = sections[i];
+    const title = sec?.title != null ? String(sec.title).trim() : "";
+    const obs =
+      typeof sec?.observation === "string" ? sec.observation.trim() : "";
+    const line = title && obs ? `${title} — ${obs}` : title || obs;
+    if (!line) return;
+    if (e.severity === "high") majorLines.push(line);
+    else mediumLines.push(line);
+  });
+
+  const majorList = majorLines.length > 0
+    ? `<ul style="margin:0.35em 0;padding-left:1.25em">${majorLines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`
+    : `<p class="qc-muted">—</p>`;
+  const mediumList = mediumLines.length > 0
+    ? `<ul style="margin:0.35em 0;padding-left:1.25em">${mediumLines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`
+    : `<p class="qc-muted">—</p>`;
+
+  const execCards = `
+  <div class="qc-exec-grid">
+    <div class="qc-card qc-sev-high">
+      <p class="severity-high" style="margin:0 0 0.5em">${lang === "en" ? "Major issues" : "Problèmes majeurs"}</p>
+      ${majorList}
+    </div>
+    <div class="qc-card qc-sev-med">
+      <p class="severity-medium" style="margin:0 0 0.5em">${lang === "en" ? "Items to monitor" : "Points à surveiller"}</p>
+      ${mediumList}
+    </div>
+  </div>`;
 
   const bullets = `<ul style="margin:0.5em 0;padding-left:1.25em">
     <li><strong>${esc(L.major)}</strong> — ${majors}</li>
@@ -246,10 +304,14 @@ function executiveBlock(
         )}</strong></p>`
       : "";
 
+  const summary =
+    typeof payload.summary === "string" ? payload.summary.trim() : "";
   const summaryP = summary
     ? `<p style="white-space:pre-wrap;line-height:1.45">${esc(summary)}</p>`
     : "";
 
+  const client =
+    typeof payload.client_section === "string" ? payload.client_section.trim() : "";
   const clientBlock = client
     ? `<div style="margin-top:1em;padding:0.85em;border:1px solid #e2e8f0;border-radius:8px;background:#fff">
         <h4 style="margin:0 0 0.35em;font-size:14px">${esc(
@@ -263,6 +325,10 @@ function executiveBlock(
 <section>
   <h2 style="margin-top:0">${esc(L.execTitle)}</h2>
   <h3 style="font-size:16px;margin:0.5em 0">${esc(L.execConstats)}</h3>
+  ${execCards}
+  <h3 style="font-size:15px;margin:1em 0 0.35em">${esc(
+    lang === "en" ? "Counts" : "Synthèse quantitative",
+  )}</h3>
   ${bullets}
   ${risk}
   ${summaryP}
@@ -290,14 +356,6 @@ function limitationsBlock(cover: InspectionCoverPayloadV1, lang: ReportLanguage)
   </ul>
 </section>`.trim();
 }
-
-type SectionRow = {
-  title?: unknown;
-  observation?: unknown;
-  analysis?: unknown;
-  recommendation?: unknown;
-  severity?: unknown;
-};
 
 function systemsBlock(
   payload: Record<string, unknown>,
@@ -332,8 +390,9 @@ function systemsBlock(
             typeof sec.recommendation === "string" ? sec.recommendation.trim() : "";
           const sev =
             typeof sec.severity === "string" ? sec.severity.trim() : "";
+          const sevClass = findingSeverityClass(sev || "low");
           return `
-<div class="qc-finding">
+<div class="qc-finding ${sevClass}">
   <h4 style="margin:0 0 0.35em;font-size:14px">${esc(title)}</h4>
   ${sev ? `<p style="margin:0.25em 0"><em>${esc(L.state)} : ${esc(sev)}</em></p>` : ""}
   ${obs ? `<p style="margin:0.35em 0"><strong>${esc(L.anomalies)}</strong> ${esc(obs)}</p>` : ""}
@@ -450,6 +509,33 @@ function generalRecoBlock(payload: Record<string, unknown>, lang: ReportLanguage
 </section>`.trim();
 }
 
+function renderReferenceClausesHtml(
+  rows: QcLegalClauseRow[] | undefined,
+  lang: ReportLanguage,
+): string {
+  if (!rows || rows.length === 0) return "";
+  const grouped = groupClausesBySection(rows);
+  const title =
+    lang === "en"
+      ? "Reference clauses (registry — CA + province)"
+      : "Clauses de référence (registre — CA + province)";
+  const parts: string[] = [];
+  parts.push(`<h3 style="font-size:15px;margin-top:1em">${esc(title)}</h3>`);
+  for (const [section, clauses] of Object.entries(grouped)) {
+    parts.push(
+      `<h4 style="font-size:14px;margin:0.75em 0 0.35em">${esc(section)}</h4>`,
+    );
+    parts.push(
+      `<ul style="margin:0.25em 0;padding-left:1.25em;font-size:13px;line-height:1.45">`,
+    );
+    for (const c of clauses) {
+      parts.push(`<li>${esc(c)}</li>`);
+    }
+    parts.push(`</ul>`);
+  }
+  return parts.join("");
+}
+
 function bilingualNoticeFragment(
   compliance: Record<string, unknown>,
   lang: ReportLanguage,
@@ -487,6 +573,7 @@ function legalClausesBlock(
   cover: InspectionCoverPayloadV1,
   payload: Record<string, unknown>,
   lang: ReportLanguage,
+  legalRows: QcLegalClauseRow[] | undefined,
 ): string {
   const L = labels(lang);
   const compliance =
@@ -501,6 +588,7 @@ function legalClausesBlock(
   const mode = cover.compliance_profile_v1?.mode ?? "QC_2027";
   const note = effectiveComplianceNote(cover).trim();
   const bilingual = compliance ? bilingualNoticeFragment(compliance, lang) : "";
+  const registry = renderReferenceClausesHtml(legalRows, lang);
 
   return `
 <section class="qc-break">
@@ -513,17 +601,30 @@ function legalClausesBlock(
   }
   ${legal ? `<p style="white-space:pre-wrap;line-height:1.45">${esc(legal)}</p>` : ""}
   ${bilingual}
+  ${registry}
 </section>`.trim();
 }
 
-function signatureBlock(cover: InspectionCoverPayloadV1, lang: ReportLanguage): string {
+function signatureBlock(
+  cover: InspectionCoverPayloadV1,
+  profile: InspectorProfileV1 | null,
+  lang: ReportLanguage,
+): string {
   const L = labels(lang);
+  const raw = profile?.signature_data_url?.trim();
+  const sigImg =
+    raw &&
+    (raw.startsWith("data:image/") || raw.startsWith("http")) &&
+    raw.length < 900_000
+      ? `<div style="margin-top:0.75em"><img src=${JSON.stringify(raw)} alt="" style="max-width:220px;max-height:96px;object-fit:contain"/></div>`
+      : "";
   return `
 <section class="qc-break">
   <h2>${esc(L.signTitle)}</h2>
   <p><strong>${esc(L.signName)}</strong> ${esc(cover.inspecteur_nom.trim() || "—")}</p>
   <p><strong>${esc(L.signLic)}</strong> ${esc(cover.inspecteur_numero_certification.trim() || "—")}</p>
   <p><strong>${esc(L.signCo)}</strong> ${esc(cover.compagnie.trim() || "—")}</p>
+  ${sigImg}
 </section>`.trim();
 }
 
@@ -536,6 +637,8 @@ export function buildQc2027HtmlFromPayload(
     language: ReportLanguage;
     basePrintCss: string;
     defaultTitle: string;
+    /** Clauses `qc_legal_clauses` (CA + province), injectées dans le PDF */
+    legalClauseRows?: QcLegalClauseRow[];
   },
 ): string | null {
   const sections = sectionsRaw.filter((x) => x && typeof x === "object") as SectionRow[];
@@ -565,14 +668,14 @@ export function buildQc2027HtmlFromPayload(
 
   parts.push(buildCoverPage(cover, profile, lang));
   parts.push(`<div class="qc-break"></div>`);
-  parts.push(executiveBlock(payload, entries, lang));
+  parts.push(executiveBlock(payload, entries, sections, lang));
   parts.push(limitationsBlock(cover, lang));
   parts.push(systemsBlock(payload, sections, entries, lang));
   parts.push(photoCoverageBlock(payload, lang));
   parts.push(criticalObservationsBlock(sections, entries, lang));
   parts.push(generalRecoBlock(payload, lang));
-  parts.push(legalClausesBlock(cover, payload, lang));
-  parts.push(signatureBlock(cover, lang));
+  parts.push(legalClausesBlock(cover, payload, lang, opts.legalClauseRows));
+  parts.push(signatureBlock(cover, profile, lang));
 
   parts.push(
     `<div class="footer" style="margin-top:2em;font-size:12px;color:#64748b">Inspect<strong>Flow</strong> — ${

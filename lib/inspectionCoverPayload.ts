@@ -17,6 +17,8 @@ export type InspectorProfileV1 = {
   compagnie: string;
   /** Data URL image (léger de préférence) */
   logo_data_url: string | null;
+  /** Signature scan / image (data URL), optionnel — PDF premium */
+  signature_data_url?: string | null;
 };
 
 export const INSPECTOR_PROFILE_STORAGE_KEY = "inspectflow:inspector_profile_v1";
@@ -505,5 +507,8 @@ export function parseInspectorProfileFromUnknown(raw: unknown): InspectorProfile
       typeof o.numero_certification === "string" ? o.numero_certification : "",
     compagnie: typeof o.compagnie === "string" ? o.compagnie : "",
     logo_data_url: typeof o.logo_data_url === "string" ? o.logo_data_url : null,
+    signature_data_url: typeof o.signature_data_url === "string"
+      ? o.signature_data_url
+      : null,
   };
 }

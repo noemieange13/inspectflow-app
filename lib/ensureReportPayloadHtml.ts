@@ -5,6 +5,8 @@ import {
   buildHtmlFromReportPayload,
   isHtmlLongEnough,
 } from "@/lib/buildInspectionReportHtml";
+import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
+import { fetchLegalClausesForCoverJurisdiction } from "@/lib/qcLegalClauses";
 
 /**
  * Garantit `reports.payload.html` avant l’appel à `reports-pdf` : génération côté serveur
@@ -33,7 +35,29 @@ export async function ensureReportPayloadHtml(
   if (!report) return { ok: false, error: "Rapport introuvable" };
 
   const payload = (report.payload ?? {}) as Record<string, unknown>;
-  const built = buildHtmlFromReportPayload(payload);
+
+  let legalClauseRows: Awaited<
+    ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
+  > | undefined;
+  const coverForClauses = parseCoverV1FromUnknown(payload.cover_v1);
+  if (coverForClauses) {
+    try {
+      legalClauseRows = await fetchLegalClausesForCoverJurisdiction(
+        supabase,
+        coverForClauses.conformite_juridiction,
+      );
+    } catch (e) {
+      console.warn(
+        "ensureReportPayloadHtml: qc_legal_clauses fetch failed",
+        e instanceof Error ? e.message : e,
+      );
+      legalClauseRows = undefined;
+    }
+  }
+
+  const built = buildHtmlFromReportPayload(payload, {
+    legalClauseRows,
+  });
 
   if (!built || !isHtmlLongEnough(built)) {
     const language = payload.language === "en" || payload.lang === "en"

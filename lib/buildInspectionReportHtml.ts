@@ -6,6 +6,11 @@ import {
 } from "@/lib/inspectionCoverPayload";
 import { buildCoverSectionHtml } from "@/lib/coverSectionHtml";
 import { buildQc2027HtmlFromPayload } from "@/lib/qc2027PdfTemplate";
+import type { QcLegalClauseRow } from "@/lib/qcLegalClauses";
+
+export type BuildHtmlFromReportPayloadOptions = {
+  legalClauseRows?: QcLegalClauseRow[];
+};
 
 /**
  * HTML minimal pour reports-pdf (payload.html), à partir de lignes defects / observations.
@@ -252,6 +257,7 @@ function normalizeSectionsFromPayload(raw: unknown): unknown[] | null {
 
 export function buildHtmlFromReportPayload(
   payload: Record<string, unknown> | null | undefined,
+  options?: BuildHtmlFromReportPayloadOptions,
 ): string | null {
   if (!payload || typeof payload !== "object") return null;
   const language = getReportLanguage(payload);
@@ -282,6 +288,7 @@ export function buildHtmlFromReportPayload(
           language,
           basePrintCss: REPORT_BASE_PRINT_CSS,
           defaultTitle: t.defaultTitle,
+          legalClauseRows: options?.legalClauseRows,
         },
       );
       if (qcDoc) return qcDoc;
