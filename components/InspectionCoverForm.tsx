@@ -39,7 +39,11 @@ import {
   TerrainWeatherGpsBadge,
   terrainAutoFieldClass,
 } from "@/components/terrain/TerrainPrimitives";
-import { fetchWeatherOpenMeteo, geolocationPosition } from "@/lib/weatherOpenMeteo";
+import {
+  fetchWeatherOpenMeteo,
+  geocodeAddressOpenMeteo,
+  geolocationPosition,
+} from "@/lib/weatherOpenMeteo";
 
 export type InspectionCoverFormProps = {
   reportId?: string;
@@ -108,7 +112,11 @@ export default function InspectionCoverForm({
   initialCoverFromReport,
   initialInspectorProfileFromReport,
 }: InspectionCoverFormProps = {}) {
-  const [data, setData] = useState<InspectionCoverPayloadV1>(defaultCoverPayloadV1);
+  const [data, setData] = useState<InspectionCoverPayloadV1>(() => ({
+    ...defaultCoverPayloadV1(),
+    date_heure_affichage: "",
+    date_heure_iso: null,
+  }));
   const [profile, setProfile] = useState<InspectorProfileV1 | null>(null);
   const [iaMessage, setIaMessage] = useState<string | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
@@ -267,15 +275,34 @@ export default function InspectionCoverForm({
       update("conditions_meteo", w.line_fr);
       setWeatherFilledByGps(true);
     } catch (e) {
+      const address = data.propriete.adresse.trim();
+      if (address) {
+        try {
+          const geo = await geocodeAddressOpenMeteo(address);
+          const w = await fetchWeatherOpenMeteo(geo.latitude, geo.longitude);
+          update("conditions_meteo", w.line_fr);
+          setWeatherFilledByGps(false);
+          setIaMessage(
+            `Position bloquée, météo remplie via l’adresse (« ${geo.label} »).`,
+          );
+          return;
+        } catch (fallbackErr) {
+          const reason = fallbackErr instanceof Error ? fallbackErr.message : "échec du fallback adresse";
+          setIaMessage(
+            `Impossible de récupérer la météo (position + adresse). Détail: ${reason}.`,
+          );
+          return;
+        }
+      }
       setIaMessage(
         e instanceof Error
-          ? e.message
+          ? `${e.message} Ajoutez une adresse de propriété puis relancez « Remplir via position / adresse ».`
           : "Impossible de récupérer la météo (permission lieu refusée ou réseau).",
       );
     } finally {
       setWeatherLoading(false);
     }
-  }, [update]);
+  }, [data.propriete.adresse, update]);
 
   const persistProfile = useCallback(() => {
     const p: InspectorProfileV1 = {
@@ -1036,7 +1063,7 @@ export default function InspectionCoverForm({
               onClick={() => void fillWeather()}
               disabled={weatherLoading}
             >
-              {weatherLoading ? "Météo…" : "Remplir via position + Open-Meteo"}
+              {weatherLoading ? "Météo…" : "Remplir via position / adresse + Open-Meteo"}
             </button>
           </div>
           <div>
