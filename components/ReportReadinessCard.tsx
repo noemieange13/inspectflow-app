@@ -9,6 +9,16 @@ import { emitProductEvent } from "@/lib/productTelemetry";
 
 export type ReadinessStepOpenedFrom = "cta" | "guided" | "list";
 
+function formatAckAtFr(ackAt: string): string {
+  const d = new Date(ackAt);
+  if (Number.isNaN(d.getTime())) return ackAt;
+  return new Intl.DateTimeFormat("fr-CA", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "America/Toronto",
+  }).format(d);
+}
+
 function gateStyle(
   gate: CoverReadinessResult["gate"],
   hasCriticalBlocking: boolean,
@@ -291,7 +301,7 @@ export default function ReportReadinessCard({
           role="status"
         >
           ⚠️ Le rapport a été modifié depuis la validation du{" "}
-          {new Date(ackAt).toLocaleString("fr-CA")}. Vérifiez à nouveau avant export ou
+          {formatAckAtFr(ackAt)}. Vérifiez à nouveau avant export ou
           accusez réception sur la couverture si tout est à jour.
         </div>
       ) : null}
@@ -415,7 +425,7 @@ export default function ReportReadinessCard({
           </button>
           {ackAt ? (
             <span className="text-xs opacity-80">
-              Accusé enregistré : {new Date(ackAt).toLocaleString("fr-CA")}
+              Accusé enregistré : {formatAckAtFr(ackAt)}
             </span>
           ) : (
             <span className="text-xs opacity-80">
@@ -426,7 +436,7 @@ export default function ReportReadinessCard({
       ) : null}
       {gate === "ready" && ackAt ? (
         <p className="mt-2 text-xs opacity-80">
-          Validation enregistrée : {new Date(ackAt).toLocaleString("fr-CA")}
+          Validation enregistrée : {formatAckAtFr(ackAt)}
         </p>
       ) : null}
     </div>
