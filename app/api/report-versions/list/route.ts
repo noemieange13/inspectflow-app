@@ -1,46 +1,67 @@
-import { listReportVersions } from "@/lib/reportVersions";
-import { createServiceRoleClient } from "@/lib/supabaseServer";
-import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
+import { createClient } from "@supabase/supabase-js"
 
-/**
- * POST JSON `{ report_id, access_token }` — liste des versions (timeline).
- */
 export async function POST(req: Request) {
-  let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return Response.json({ ok: false, error: "JSON invalide." }, { status: 400 });
-  }
+    const body = await req.json()
 
-  const o = body as Record<string, unknown>;
-  const reportId = typeof o.report_id === "string" ? o.report_id.trim() : "";
-  const accessTokenRaw =
-    typeof o.access_token === "string" ? o.access_token : "";
+    const report_id = body?.report_id
+    const access_token = body?.access_token
 
-  if (!reportId) {
-    return Response.json({ ok: false, error: "report_id requis." }, { status: 400 });
-  }
-
-  try {
-    const supabase = await createServiceRoleClient();
-    const gate = await assertReportViewerAccess(supabase, reportId, accessTokenRaw);
-    if (!gate.ok) {
-      return Response.json(gate.body, { status: gate.status });
+    // 🔒 validation input
+    if (!report_id) {
+      return Response.json({
+        data: [],
+        error: "MISSING_REPORT_ID",
+        meta: {
+          max_versions: 50
+        }
+      })
     }
 
-    const list = await listReportVersions(supabase, reportId);
-    if ("error" in list) {
-      return Response.json({ ok: false, error: list.error }, { status: 500 });
+    // 🧠 init Supabase (service role recommandé côté serveur)
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
+    // 📊 query
+    const { data, error } = await supabase
+      .from("report_versions")
+      .select("*")
+      .eq("report_id", report_id)
+      .order("created_at", { ascending: false })
+
+    // ❌ erreur DB
+    if (error) {
+      console.error("DB ERROR:", error)
+
+      return Response.json({
+        data: [],
+        error: "DB_ERROR",
+        meta: {
+          max_versions: 50
+        }
+      })
     }
+
+    // ✅ succès
+    return Response.json({
+      data: Array.isArray(data) ? data : [],
+      error: null,
+      meta: {
+        max_versions: 50
+      }
+    })
+
+  } catch (err) {
+    console.error("SERVER ERROR:", err)
 
     return Response.json({
-      ok: true,
-      versions: list.rows,
-      max_versions: 50,
-    });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return Response.json({ ok: false, error: message }, { status: 500 });
+      data: [],
+      error: "SERVER_ERROR",
+      meta: {
+        max_versions: 50
+      }
+    })
   }
 }

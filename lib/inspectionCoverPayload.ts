@@ -240,6 +240,21 @@ export function defaultCoverPayloadV1(): InspectionCoverPayloadV1 {
   };
 }
 
+/**
+ * État initial du formulaire couverture côté Next (composant client SSR).
+ * `defaultCoverPayloadV1()` fixe date/heure avec `new Date()` : le HTML serveur et le premier
+ * rendu client diffèrent → erreur d’hydratation React (ex. #418). Les champs date restent
+ * vides jusqu’au `useEffect` qui applique soit le rapport, soit l’horodatage auto.
+ */
+export function hydrationSafeInitialCoverPayloadV1(): InspectionCoverPayloadV1 {
+  const base = defaultCoverPayloadV1();
+  return {
+    ...base,
+    date_heure_affichage: "",
+    date_heure_iso: "",
+  };
+}
+
 export function defaultComplianceNote(j: ComplianceJurisdiction): string {
   const base =
     "Document d'inspection visuelle — non juridique. Ce rapport ne remplace pas les avis de professionnels désignés ni les exigences des autorités compétentes. ";

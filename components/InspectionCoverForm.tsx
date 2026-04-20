@@ -11,6 +11,7 @@ import {
   defaultComplianceNote,
   defaultCoverPayloadV1,
   formatFrDateTime,
+  hydrationSafeInitialCoverPayloadV1,
   loadInspectorProfile,
   parseCoverV1FromUnknown,
   saveInspectorProfile,
@@ -108,7 +109,7 @@ export default function InspectionCoverForm({
   initialCoverFromReport,
   initialInspectorProfileFromReport,
 }: InspectionCoverFormProps = {}) {
-  const [data, setData] = useState<InspectionCoverPayloadV1>(defaultCoverPayloadV1);
+  const [data, setData] = useState<InspectionCoverPayloadV1>(hydrationSafeInitialCoverPayloadV1);
   const [profile, setProfile] = useState<InspectorProfileV1 | null>(null);
   const [iaMessage, setIaMessage] = useState<string | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
