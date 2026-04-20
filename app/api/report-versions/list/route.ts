@@ -2,6 +2,20 @@ import { listReportVersions } from "@/lib/reportVersions";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
 
+class AdminAuthMissingError extends Error {
+  constructor(message = "Admin authentication required.") {
+    super(message);
+    this.name = "AdminAuthMissingError";
+  }
+}
+
+class AdminAuthInvalidError extends Error {
+  constructor(message = "Invalid admin authentication.") {
+    super(message);
+    this.name = "AdminAuthInvalidError";
+  }
+}
+
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   const encoder = new TextEncoder();
@@ -24,13 +38,22 @@ function basicAuthExpectedHeader(user: string, pass: string): string {
   return `Basic ${btoa(binary)}`;
 }
 
-function hasValidDashboardBasicAuth(req: Request): boolean {
+function assertLegacyReportAdminAccess(req: Request): void {
   const user = process.env.DASHBOARD_USER?.trim();
   const pass = process.env.DASHBOARD_PASS?.trim();
-  if (!user || !pass) return false;
+  if (!user || !pass) {
+    throw new Error("Admin auth not configured (DASHBOARD_USER/DASHBOARD_PASS).");
+  }
+
   const auth = req.headers.get("authorization") ?? "";
+  if (!auth.trim()) {
+    throw new AdminAuthMissingError();
+  }
+
   const expected = basicAuthExpectedHeader(user, pass);
-  return constantTimeEqual(auth, expected);
+  if (!constantTimeEqual(auth, expected)) {
+    throw new AdminAuthInvalidError();
+  }
 }
 
 /**
@@ -75,11 +98,8 @@ export async function POST(req: Request) {
       typeof (report as { access_token?: unknown } | null)?.access_token === "string"
         ? String((report as { access_token: string }).access_token).trim()
         : "";
-    if (!dbToken && !hasValidDashboardBasicAuth(req)) {
-      return Response.json(
-        { ok: false, error: "Admin authentication required for legacy reports." },
-        { status: 400 },
-      );
+    if (!dbToken) {
+      assertLegacyReportAdminAccess(req);
     }
 
     const list = await listReportVersions(supabase, reportId);
@@ -93,6 +113,12 @@ export async function POST(req: Request) {
       max_versions: 50,
     });
   } catch (e) {
+    if (e instanceof AdminAuthMissingError) {
+      return Response.json({ ok: false, error: e.message }, { status: 401 });
+    }
+    if (e instanceof AdminAuthInvalidError) {
+      return Response.json({ ok: false, error: e.message }, { status: 403 });
+    }
     const message = e instanceof Error ? e.message : String(e);
     return Response.json({ ok: false, error: message }, { status: 500 });
   }
