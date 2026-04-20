@@ -2,6 +2,37 @@ import { listReportVersions } from "@/lib/reportVersions";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
 
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  const encoder = new TextEncoder();
+  const ab = encoder.encode(a);
+  const bb = encoder.encode(b);
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) {
+    diff |= ab[i]! ^ bb[i]!;
+  }
+  return diff === 0;
+}
+
+function basicAuthExpectedHeader(user: string, pass: string): string {
+  const raw = `${user}:${pass}`;
+  const bytes = new TextEncoder().encode(raw);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  return `Basic ${btoa(binary)}`;
+}
+
+function hasValidDashboardBasicAuth(req: Request): boolean {
+  const user = process.env.DASHBOARD_USER?.trim();
+  const pass = process.env.DASHBOARD_PASS?.trim();
+  if (!user || !pass) return false;
+  const auth = req.headers.get("authorization") ?? "";
+  const expected = basicAuthExpectedHeader(user, pass);
+  return constantTimeEqual(auth, expected);
+}
+
 /**
  * POST JSON `{ report_id, access_token }` — liste des versions (timeline).
  */
@@ -26,7 +57,29 @@ export async function POST(req: Request) {
     const supabase = await createServiceRoleClient();
     const gate = await assertReportViewerAccess(supabase, reportId, accessTokenRaw);
     if (!gate.ok) {
-      return Response.json(gate.body, { status: gate.status });
+      return Response.json(gate.body, { status: gate.status >= 500 ? 500 : 400 });
+    }
+
+    // Durcissement : pour les rapports sans viewer token en base (legacy), exiger une auth admin.
+    const { data: report, error: reportErr } = await supabase
+      .from("reports")
+      .select("access_token")
+      .eq("id", reportId)
+      .maybeSingle();
+
+    if (reportErr) {
+      return Response.json({ ok: false, error: reportErr.message }, { status: 500 });
+    }
+
+    const dbToken =
+      typeof (report as { access_token?: unknown } | null)?.access_token === "string"
+        ? String((report as { access_token: string }).access_token).trim()
+        : "";
+    if (!dbToken && !hasValidDashboardBasicAuth(req)) {
+      return Response.json(
+        { ok: false, error: "Admin authentication required for legacy reports." },
+        { status: 400 },
+      );
     }
 
     const list = await listReportVersions(supabase, reportId);
