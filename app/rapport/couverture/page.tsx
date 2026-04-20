@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import InspectionCoverForm from "@/components/InspectionCoverForm";
+import InspectionCoverFormHydrated from "@/components/InspectionCoverFormHydrated";
 import {
   INSPECTOR_PROFILE_PAYLOAD_KEY,
   parseCoverV1FromUnknown,
@@ -91,7 +91,7 @@ export default async function CouverturePage({ searchParams }: Props) {
             section à la prochaine génération.
           </p>
         </header>
-        <InspectionCoverForm
+        <InspectionCoverFormHydrated
           reportId={reportId}
           viewerToken={viewerToken}
           reportHasPdf={reportHasPdf}
@@ -127,7 +127,7 @@ export default async function CouverturePage({ searchParams }: Props) {
           (même jeton que le viewer).
         </p>
       </header>
-      <InspectionCoverForm />
+      <InspectionCoverFormHydrated />
     </div>
   );
 }
