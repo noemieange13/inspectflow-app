@@ -47,16 +47,56 @@ export async function fetchWeatherOpenMeteo(
   };
 }
 
+export async function geocodeAddressOpenMeteo(
+  address: string,
+): Promise<{ latitude: number; longitude: number; label: string }> {
+  const q = address.trim();
+  if (!q) throw new Error("Adresse manquante pour la météo.");
+  const url =
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}` +
+    "&count=1&language=fr&format=json";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Géocodage HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    results?: Array<{
+      latitude: number;
+      longitude: number;
+      name?: string;
+      admin1?: string;
+      country?: string;
+    }>;
+  };
+  const hit = data.results?.[0];
+  if (!hit) throw new Error("Adresse introuvable pour la météo.");
+  const label = [hit.name, hit.admin1, hit.country].filter(Boolean).join(", ");
+  return { latitude: hit.latitude, longitude: hit.longitude, label: label || q };
+}
+
 export function geolocationPosition(): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       reject(new Error("Géolocalisation non disponible"));
       return;
     }
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 15_000,
-      maximumAge: 60_000,
-    });
+    navigator.geolocation.getCurrentPosition(
+      resolve,
+      (err) => {
+        const msg = String(err?.message || "");
+        if (msg.toLowerCase().includes("permissions policy")) {
+          reject(
+            new Error(
+              "Géolocalisation bloquée par la politique du navigateur (Permissions Policy).",
+            ),
+          );
+          return;
+        }
+        reject(new Error(msg || "Permission de localisation refusée."));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15_000,
+        maximumAge: 60_000,
+      },
+    );
   });
 }
