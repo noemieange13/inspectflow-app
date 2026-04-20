@@ -108,7 +108,11 @@ export default function InspectionCoverForm({
   initialCoverFromReport,
   initialInspectorProfileFromReport,
 }: InspectionCoverFormProps = {}) {
-  const [data, setData] = useState<InspectionCoverPayloadV1>(defaultCoverPayloadV1);
+  const [data, setData] = useState<InspectionCoverPayloadV1>(() => ({
+    ...defaultCoverPayloadV1(),
+    date_heure_affichage: "",
+    date_heure_iso: null,
+  }));
   const [profile, setProfile] = useState<InspectorProfileV1 | null>(null);
   const [iaMessage, setIaMessage] = useState<string | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
