@@ -107,7 +107,7 @@ export default function SimpleInspectionWrapper({
   }
 
   function handleDV() {
-    props.onOpenOutils();
+    props.onPickSellerDeclaration();
   }
 
   if (step === "entry") {

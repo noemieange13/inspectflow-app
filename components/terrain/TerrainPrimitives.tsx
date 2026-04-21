@@ -55,14 +55,15 @@ export function TerrainDescriptionModePills(props: {
 
 type TerrainSmartEntryHeroProps = {
   dvLoading: boolean;
-  onDvFile: (file: File | null) => void;
+  /** Id de l’input fichier DV unique (formulaire parent, ex. cover-seller-dv). */
+  sellerDvInputId?: string;
   onManual: () => void;
   showDvSuccessHint: boolean;
 };
 
 export function TerrainSmartEntryHero({
   dvLoading,
-  onDvFile,
+  sellerDvInputId = "cover-seller-dv",
   onManual,
   showDvSuccessHint,
 }: TerrainSmartEntryHeroProps) {
@@ -77,21 +78,11 @@ export function TerrainSmartEntryHero({
       </p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
         <label
+          htmlFor={sellerDvInputId}
           className={`inline-flex cursor-pointer items-center justify-center rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-blue-800 ${
             dvLoading ? "pointer-events-none opacity-60" : ""
           }`}
         >
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-            className="hidden"
-            disabled={dvLoading}
-            onChange={(e) => {
-              const f = e.target.files?.[0] ?? null;
-              e.target.value = "";
-              void onDvFile(f);
-            }}
-          />
           {dvLoading ? "Analyse DV…" : "Importer DV — photo ou PDF"}
         </label>
         <button

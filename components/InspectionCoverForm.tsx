@@ -143,6 +143,7 @@ export default function InspectionCoverForm({
   const [workspace, setWorkspace] = useState<"resume" | "outils">("resume");
   const didAutoDateRef = useRef(false);
   const descriptionFileInputRef = useRef<HTMLInputElement>(null);
+  const sellerDvFileInputRef = useRef<HTMLInputElement>(null);
   const notesPhotoRef = useRef<HTMLInputElement>(null);
   const notesAudioRef = useRef<HTMLInputElement>(null);
 
@@ -456,9 +457,16 @@ export default function InspectionCoverForm({
           client_courriel?: string;
         };
         error?: string;
+        hint?: string;
+        code?: string;
+        openAi?: { status: number; body: string };
       };
       if (!res.ok || !j.ok || !j.extracted) {
-        throw new Error(j.error ?? `Erreur ${res.status}`);
+        const parts = [j.error, j.hint].filter(Boolean);
+        if (j.openAi?.body) {
+          parts.push(`OpenAI (${j.openAi.status}): ${j.openAi.body.slice(0, 280)}`);
+        }
+        throw new Error(parts.length ? parts.join(" — ") : `Erreur ${res.status}`);
       }
       const e = j.extracted;
       setData((prev) => ({
@@ -873,9 +881,23 @@ export default function InspectionCoverForm({
   return (
     <div className="space-y-10">
       {/*
-        Toujours montés : en vue « Résumé », SimpleInspectionWrapper / InspectionResumePanel déclenche .click() sur ces refs.
-        Les entrées du panneau « Outils » réutilisent les mêmes id (labels htmlFor).
+        Toujours montés : description / notes + DV vendeur (`cover-seller-dv`). Résumé et Outils utilisent les mêmes ids (labels htmlFor).
       */}
+      <input
+        id="cover-seller-dv"
+        ref={sellerDvFileInputRef}
+        type="file"
+        accept=".pdf,application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Déclaration du vendeur — photo ou PDF pour remplir requérant et propriété"
+        disabled={dvLoading}
+        onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          e.target.value = "";
+          void onDvPhoto(f);
+        }}
+      />
       <input
         id="cover-description-files"
         ref={descriptionFileInputRef}
@@ -1012,7 +1034,7 @@ export default function InspectionCoverForm({
           onOpenOutils={() => setWorkspace("outils")}
           onPickDescriptionPhotos={() => descriptionFileInputRef.current?.click()}
           onRunDescriptionFromPhotos={() => runDescriptionFromPhotos()}
-          onDvFile={(f) => void onDvPhoto(f)}
+          onPickSellerDeclaration={() => sellerDvFileInputRef.current?.click()}
           onTriggerNotesPhoto={() => notesPhotoRef.current?.click()}
           onTriggerNotesAudio={() => notesAudioRef.current?.click()}
           terrainNoteText={terrainNoteText}
@@ -1087,7 +1109,7 @@ export default function InspectionCoverForm({
         <>
       <TerrainSmartEntryHero
         dvLoading={dvLoading}
-        onDvFile={(f) => void onDvPhoto(f)}
+        sellerDvInputId="cover-seller-dv"
         onManual={scrollToManualFields}
         showDvSuccessHint={!!data.ia_hints?.dv_photo_imported}
       />
@@ -1243,19 +1265,9 @@ export default function InspectionCoverForm({
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <label
+            htmlFor="cover-seller-dv"
             className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-2.5 text-sm font-semibold ${dvLoading ? "pointer-events-none opacity-60" : ""}`}
           >
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-              className="hidden"
-              disabled={dvLoading}
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                e.target.value = "";
-                void onDvPhoto(f);
-              }}
-            />
             <span>{dvLoading ? "Analyse du document…" : "Ré-importer DV (photo ou PDF)"}</span>
           </label>
         </div>

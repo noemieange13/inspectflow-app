@@ -1,5 +1,47 @@
 import type { AiResult } from "@/lib/aiResult";
 
+function openAiOrgHeader(): string {
+  return (
+    process.env.OPENAI_ORGANIZATION?.trim() ||
+    process.env.OPENAI_ORG_ID?.trim() ||
+    ""
+  );
+}
+
+/** Bearer (+ org) sans Content-Type — obligatoire pour `multipart/form-data` (upload fichiers). */
+function openAiBearerOnlyHeaders(apiKey: string): Record<string, string> {
+  const org = openAiOrgHeader();
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+  };
+  if (org) h["OpenAI-Organization"] = org;
+  return h;
+}
+
+/** En-têtes JSON + Authorization + organisation optionnelle. */
+function openAiJsonHeaders(apiKey: string): Record<string, string> {
+  return {
+    ...openAiBearerOnlyHeaders(apiKey),
+    "Content-Type": "application/json",
+  };
+}
+
+function openAiErrorSnippet(status: number, bodyText: string): { status: number; body: string } {
+  let body = bodyText.slice(0, 600);
+  try {
+    const j = JSON.parse(bodyText) as {
+      error?: { message?: string; code?: string; type?: string };
+    };
+    const e = j.error;
+    if (e?.message) {
+      body = [e.code, e.type, e.message].filter(Boolean).join(" — ").slice(0, 600);
+    }
+  } catch {
+    /* garder body brut */
+  }
+  return { status, body };
+}
+
 function mergeAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
   if (a.aborted) return a;
   if (b.aborted) return b;
@@ -78,11 +120,25 @@ function parseDvCoverExtractJson(raw: string): AiResult<DvCoverExtract> {
   }
 }
 
+function extractOutputTextPart(part: unknown): string | null {
+  if (!part || typeof part !== "object") return null;
+  const p = part as Record<string, unknown>;
+  const typ = p.type;
+  if ((typ === "output_text" || typ === "text") && typeof p.text === "string") {
+    const t = p.text.trim();
+    if (t) return t;
+  }
+  return null;
+}
+
 function extractTextFromResponsesApi(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const o = body as Record<string, unknown>;
   if (typeof o.output_text === "string" && o.output_text.trim()) {
     return o.output_text.trim();
+  }
+  if (typeof o.output === "string" && o.output.trim()) {
+    return o.output.trim();
   }
   const output = o.output;
   if (!Array.isArray(output)) return null;
@@ -90,18 +146,55 @@ function extractTextFromResponsesApi(body: unknown): string | null {
     if (!block || typeof block !== "object") continue;
     const b = block as Record<string, unknown>;
     const content = b.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const p = part as Record<string, unknown>;
-      const typ = p.type;
-      if ((typ === "output_text" || typ === "text") && typeof p.text === "string") {
-        const t = p.text.trim();
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        const t = extractOutputTextPart(part);
         if (t) return t;
       }
     }
+    const direct = extractOutputTextPart(b);
+    if (direct) return direct;
   }
   return null;
+}
+
+async function uploadOpenAiUserDataPdf(
+  apiKey: string,
+  pdfBuf: Buffer,
+  signal: AbortSignal,
+): Promise<string | null> {
+  const blob = new Blob([new Uint8Array(pdfBuf)], { type: "application/pdf" });
+  const fd = new FormData();
+  fd.append("purpose", "user_data");
+  fd.append("file", blob, "declaration-vendeur.pdf");
+  const res = await fetch("https://api.openai.com/v1/files", {
+    method: "POST",
+    headers: openAiBearerOnlyHeaders(apiKey),
+    body: fd,
+    signal,
+  });
+  const t = await res.text();
+  if (!res.ok) {
+    console.error("[AI] openai files upload", res.status, t.slice(0, 500));
+    return null;
+  }
+  try {
+    const j = JSON.parse(t) as { id?: string };
+    return j.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function deleteOpenAiFile(apiKey: string, fileId: string): Promise<void> {
+  try {
+    await fetch(`https://api.openai.com/v1/files/${encodeURIComponent(fileId)}`, {
+      method: "DELETE",
+      headers: openAiBearerOnlyHeaders(apiKey),
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -143,10 +236,7 @@ export async function extractSellerDeclarationCoverFromImage(input: {
   try {
     res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: openAiJsonHeaders(apiKey),
       signal,
       body: JSON.stringify({
         model,
@@ -178,7 +268,7 @@ export async function extractSellerDeclarationCoverFromImage(input: {
   if (!res.ok) {
     const t = await res.text();
     console.error("[AI] extractSellerDeclarationCoverFromImage HTTP", res.status, t.slice(0, 500));
-    return { ok: false, reason: "error" };
+    return { ok: false, reason: "error", openAi: openAiErrorSnippet(res.status, t) };
   }
 
   const rawJson = (await res.json()) as {
@@ -222,55 +312,63 @@ export async function extractSellerDeclarationCoverFromPdf(input: {
     ? mergeAbortSignals(controller.signal, input.signal)
     : controller.signal;
 
-  let res: Response;
+  let uploadedFileId: string | null = null;
   try {
-    res = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      signal,
-      body: JSON.stringify({
-        model,
-        max_output_tokens: 1200,
-        temperature: 0.1,
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: `${system}\n\n${user}` },
-              {
-                type: "input_file",
-                filename: "declaration-vendeur.pdf",
-                file_data: `data:application/pdf;base64,${input.pdfBase64}`,
-              },
-            ],
-          },
-        ],
-      }),
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      return { ok: false, reason: input.signal?.aborted ? "aborted" : "timeout" };
+    const pdfBuf = Buffer.from(input.pdfBase64, "base64");
+    uploadedFileId = await uploadOpenAiUserDataPdf(apiKey, pdfBuf, signal);
+
+    const filePart: Record<string, string> = uploadedFileId
+      ? { type: "input_file", file_id: uploadedFileId }
+      : {
+          type: "input_file",
+          filename: "declaration-vendeur.pdf",
+          file_data: `data:application/pdf;base64,${input.pdfBase64}`,
+        };
+
+    let res: Response;
+    try {
+      res = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: openAiJsonHeaders(apiKey),
+        signal,
+        body: JSON.stringify({
+          model,
+          max_output_tokens: 1200,
+          temperature: 0.1,
+          input: [
+            {
+              role: "user",
+              content: [{ type: "input_text", text: `${system}\n\n${user}` }, filePart],
+            },
+          ],
+        }),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return { ok: false, reason: input.signal?.aborted ? "aborted" : "timeout" };
+      }
+      console.error("[AI] extractSellerDeclarationCoverFromPdf exception", err);
+      return { ok: false, reason: "error" };
     }
-    console.error("[AI] extractSellerDeclarationCoverFromPdf exception", err);
-    return { ok: false, reason: "error" };
+
+    if (!res.ok) {
+      const t = await res.text();
+      console.error("[AI] extractSellerDeclarationCoverFromPdf HTTP", res.status, t.slice(0, 500));
+      return { ok: false, reason: "error", openAi: openAiErrorSnippet(res.status, t) };
+    }
+
+    const body = (await res.json()) as unknown;
+    const raw = extractTextFromResponsesApi(body);
+    if (!raw) {
+      console.error("[AI] extractSellerDeclarationCoverFromPdf empty output", JSON.stringify(body).slice(0, 800));
+      return { ok: false, reason: "error" };
+    }
+
+    return parseDvCoverExtractJson(raw);
   } finally {
     clearTimeout(kill);
+    if (uploadedFileId) {
+      void deleteOpenAiFile(apiKey, uploadedFileId);
+    }
   }
-
-  if (!res.ok) {
-    const t = await res.text();
-    console.error("[AI] extractSellerDeclarationCoverFromPdf HTTP", res.status, t.slice(0, 500));
-    return { ok: false, reason: "error" };
-  }
-
-  const body = (await res.json()) as unknown;
-  const raw = extractTextFromResponsesApi(body);
-  if (!raw) {
-    return { ok: false, reason: "error" };
-  }
-
-  return parseDvCoverExtractJson(raw);
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import ReportReadinessCard from "@/components/ReportReadinessCard";
 import type { ReadinessIssue } from "@/lib/reportReadiness";
@@ -142,7 +142,8 @@ export type InspectionResumePanelProps = {
   /** Imports inline (même pipeline que l’onglet Outils) */
   onPickDescriptionPhotos: () => void;
   onRunDescriptionFromPhotos: () => void | Promise<void>;
-  onDvFile: (f: File | null) => void;
+  /** Ouvre le sélecteur fichier DV unique (monté dans InspectionCoverForm). */
+  onPickSellerDeclaration: () => void;
   onTriggerNotesPhoto: () => void;
   onTriggerNotesAudio: () => void;
   terrainNoteText: string;
@@ -183,7 +184,7 @@ export default function InspectionResumePanel({
   onOpenOutils,
   onPickDescriptionPhotos,
   onRunDescriptionFromPhotos,
-  onDvFile,
+  onPickSellerDeclaration,
   onTriggerNotesPhoto,
   onTriggerNotesAudio,
   terrainNoteText,
@@ -207,8 +208,6 @@ export default function InspectionResumePanel({
   const proprieteLine = useMemo(() => formatProprieteUneLigne(data.propriete), [data.propriete]);
   const descriptionText = useMemo(() => effectiveDescriptionNarrative(data), [data]);
 
-  const dvRef = useRef<HTMLInputElement>(null);
-
   const clientAny =
     data.propriete.client_nom.trim() ||
     data.propriete.client_telephone.trim() ||
@@ -223,18 +222,6 @@ export default function InspectionResumePanel({
 
   return (
     <div className="space-y-6">
-      <input
-        ref={dvRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0] ?? null;
-          e.target.value = "";
-          void onDvFile(f);
-        }}
-      />
-
       <div className="sticky top-0 z-20 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/95 px-4 py-3 text-sm shadow-sm backdrop-blur-sm">
         <div className="min-w-0 flex-1 space-y-0.5 text-slate-800">
           <p className="truncate font-medium">
@@ -310,7 +297,7 @@ export default function InspectionResumePanel({
           type="button"
           disabled={dvLoading}
           className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white disabled:opacity-50"
-          onClick={() => dvRef.current?.click()}
+          onClick={() => onPickSellerDeclaration()}
         >
           {dvLoading ? "DV…" : "Importer DV (photo ou PDF)"}
         </button>

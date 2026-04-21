@@ -75,10 +75,15 @@ export async function POST(req: Request) {
   }
 
   if (!process.env.OPENAI_API_KEY?.trim()) {
+    const onVercel = Boolean(process.env.VERCEL);
     return Response.json(
       {
         ok: false,
+        code: "MISSING_OPENAI_API_KEY",
         error: "Extraction indisponible : OPENAI_API_KEY manquante côté serveur.",
+        hint: onVercel
+          ? "Vercel : Project → Settings → Environment Variables → ajoute OPENAI_API_KEY (Production et Preview si besoin), puis Redeploy."
+          : "Local : ajoute OPENAI_API_KEY dans .env.local à la racine du projet, puis redémarre `npm run dev`.",
       },
       { status: 503 },
     );
@@ -94,6 +99,21 @@ export async function POST(req: Request) {
       });
 
   if (!result.ok) {
+    const oa = result.openAi;
+    if (asPdf && oa?.status === 401) {
+      return Response.json(
+        {
+          ok: false,
+          code: "OPENAI_UNAUTHORIZED",
+          error:
+            "OpenAI a refusé l’authentification (401) pour l’extraction PDF. Vérifie OPENAI_API_KEY sur Vercel (clé secrète complète sk-… ou sk-proj-…, sans guillemets ni espace). Si ton compte impose une organisation, définis OPENAI_ORGANIZATION.",
+          openAi: oa,
+          hint:
+            "En attendant, importe la DV en image (JPEG ou PNG) : elle utilise /v1/chat/completions et contourne souvent ce cas.",
+        },
+        { status: 502 },
+      );
+    }
     return Response.json(
       {
         ok: false,
@@ -101,8 +121,9 @@ export async function POST(req: Request) {
           result.reason === "timeout"
             ? "Délai dépassé. Réessaie avec un fichier plus petit."
             : asPdf
-              ? "Impossible d’extraire le texte du PDF (illisible ou modèle indisponible). Réessaie ou saisis à la main."
+              ? "Impossible d’extraire le texte du PDF (illisible, modèle indisponible ou erreur OpenAI). Réessaie ou saisis à la main."
               : "Impossible d’extraire le texte (image floue ou document non reconnu). Réessaie ou saisis à la main.",
+        openAi: oa,
       },
       { status: 502 },
     );
