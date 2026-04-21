@@ -38,6 +38,7 @@ export default function ReportPageReadiness({
   couvertureBaseHref,
   reportSelfHref,
   viewerAccessToken,
+  simpleMode = false,
 }: {
   reportId: string;
   coverRaw: unknown;
@@ -49,6 +50,8 @@ export default function ReportPageReadiness({
   reportSelfHref: string;
   /** Jeton viewer — requis pour enregistrer une reco. IA via Copilot. */
   viewerAccessToken?: string;
+  /** Mode simplifié: masque les panneaux avancés (agent + QC détaillé). */
+  simpleMode?: boolean;
 }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -92,6 +95,10 @@ export default function ReportPageReadiness({
 
   /** Recharge le payload serveur (readiness à jour) au retour sur l’onglet / la fenêtre — sans WebSocket. */
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Dernière entrée en `document.hidden` (sélecteur de fichiers natif, impression, etc.). */
+  const tabHiddenAtRef = useRef<number | null>(null);
+  /** Jusqu’à quand ignorer un `focus` déclenché juste après une courte disparition (ex. dialogue fichier). */
+  const skipFocusRefreshUntilRef = useRef<number>(0);
   const scheduleReadinessRefresh = useCallback(
     (source: "visibilitychange" | "focus") => {
       if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
@@ -112,13 +119,28 @@ export default function ReportPageReadiness({
 
   useEffect(() => {
     const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        tabHiddenAtRef.current = Date.now();
+        return;
+      }
       if (document.visibilityState !== "visible") return;
+      const hiddenAt = tabHiddenAtRef.current;
+      tabHiddenAtRef.current = null;
+      const hiddenMs = hiddenAt != null ? Date.now() - hiddenAt : null;
+      // Fenêtre très brièvement « cachée » (Chrome + sélecteur de fichiers Windows) : ne pas
+      // router.refresh() — sinon le compositeur rapport remonte et annule les uploads en cours.
+      if (hiddenMs != null && hiddenMs < 1800) {
+        skipFocusRefreshUntilRef.current = Date.now() + 2000;
+        return;
+      }
       setReadinessRingPulse(true);
       window.setTimeout(() => setReadinessRingPulse(false), 1400);
       scheduleReadinessRefresh("visibilitychange");
     };
     const onWindowFocus = () => {
-      if (document.visibilityState === "visible") scheduleReadinessRefresh("focus");
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() < skipFocusRefreshUntilRef.current) return;
+      scheduleReadinessRefresh("focus");
     };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onWindowFocus);
@@ -176,7 +198,8 @@ export default function ReportPageReadiness({
   );
 
   useEffect(() => {
-    setSuggestionStatsV3(new Map());
+    const id = window.setTimeout(() => setSuggestionStatsV3(new Map()), 0);
+    return () => window.clearTimeout(id);
   }, [reportId]);
 
   useEffect(() => {
@@ -335,7 +358,7 @@ export default function ReportPageReadiness({
         readinessRingPulse ? "ring-2 ring-emerald-400/70 ring-offset-2 ring-offset-slate-50" : ""
       }`}
     >
-      <InspectionAgentBar reportId={reportId} />
+      {!simpleMode ? <InspectionAgentBar reportId={reportId} /> : null}
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
         État avant export PDF
       </p>
@@ -363,7 +386,8 @@ export default function ReportPageReadiness({
           </span>
         </li>
       </ul>
-      {coverParsed &&
+      {!simpleMode &&
+      coverParsed &&
       getComplianceExportMode(coverParsed) === "QC_2027" &&
       result.qcCertification ? (
         <QcCertificationStatusPanel
@@ -389,11 +413,11 @@ export default function ReportPageReadiness({
       ) : null}
       <ReportReadinessCard
         result={result}
-        compact
+        compact={simpleMode ? false : true}
         ackAt={ackAt}
         couvertureBaseHref={couvertureBaseHref}
         reportSelfHref={reportSelfHref}
-        guidedMode
+        guidedMode={!simpleMode}
         initialGuidedStepZero={initialGuidedStepZero}
         onGuidedStepCommit={onGuidedStepCommit}
       />

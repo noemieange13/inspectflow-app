@@ -96,6 +96,11 @@ function compactCoverContext(d: InspectionCoverPayloadV1): Record<string, string
 const inputClass =
   "mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 const labelClass = "block text-sm font-medium text-slate-700";
+const COVER_SIMPLE_UX = true;
+const actionPrimaryClass =
+  "inline-flex min-h-12 items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-60";
+const actionSecondaryClass =
+  "inline-flex min-h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-60";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -131,6 +136,7 @@ export default function InspectionCoverForm({
   const [weatherFilledByGps, setWeatherFilledByGps] = useState(false);
   const [compassSampling, setCompassSampling] = useState(false);
   const [draftSaveHint, setDraftSaveHint] = useState<string | null>(null);
+  const [profileSaveHint, setProfileSaveHint] = useState<string | null>(null);
   /** `resume` = écran unique « document » ; `outils` = imports DV / photos / notes (ex-formulaire). */
   const [workspace, setWorkspace] = useState<"resume" | "outils">("resume");
   const didAutoDateRef = useRef(false);
@@ -311,8 +317,18 @@ export default function InspectionCoverForm({
       compagnie: data.compagnie.trim(),
       logo_data_url: profile?.logo_data_url ?? null,
     };
-    saveInspectorProfile(p);
+    if (!saveInspectorProfile(p)) {
+      setProfileSaveHint(null);
+      setIaMessage(
+        "Impossible d’enregistrer le profil dans ce navigateur (stockage plein, mode privé ou données bloquées). Réessayez après avoir réduit la taille du logo ou vidé un peu l’espace local.",
+      );
+      return;
+    }
     setProfile(p);
+    setProfileSaveHint(`Profil navigateur mis à jour — ${new Date().toLocaleTimeString("fr-CA")}`);
+    setIaMessage(
+      "Profil inspecteur enregistré dans ce navigateur — nom, certification, compagnie et logo (si présent). Pensez à « Enregistrer sur le rapport » pour le PDF.",
+    );
   }, [data.inspecteur_nom, data.inspecteur_numero_certification, data.compagnie, profile?.logo_data_url]);
 
   const onLogo = useCallback((file: File | null) => {
@@ -349,15 +365,37 @@ export default function InspectionCoverForm({
     });
   }, []);
 
-  const tryCompassFacade = useCallback(() => {
+  const tryCompassFacade = useCallback(async () => {
     if (typeof window === "undefined" || !window.DeviceOrientationEvent) {
       setIaMessage(
-        "Boussole indisponible : choisissez Nord / Sud / Est / Ouest ci-dessous.",
+        "Boussole indisponible sur ce navigateur — choisissez Nord / Sud / Est / Ouest ci-dessous.",
       );
       return;
     }
+
+    // iOS 13+ (Safari) : sans cette permission, aucun événement `deviceorientation` n’est émis.
+    const OrientationCtor = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<"granted" | "denied" | "default">;
+    };
+    if (typeof OrientationCtor.requestPermission === "function") {
+      try {
+        const perm = await OrientationCtor.requestPermission();
+        if (perm !== "granted") {
+          setIaMessage(
+            "Accès à la boussole refusé — indiquez l’orientation à la main (Nord / Sud / Est / Ouest).",
+          );
+          return;
+        }
+      } catch {
+        setIaMessage(
+          "Impossible d’activer la boussole — choisissez l’orientation manuellement.",
+        );
+        return;
+      }
+    }
+
     setCompassSampling(true);
-    setIaMessage("Inclinez l’appareil ; échantillon du cap en cours…");
+    setIaMessage("Tenez le téléphone à plat et tournez-vous ; lecture du cap…");
     let settled = false;
     const done = (dir: FacadeOrientation) => {
       if (settled) return;
@@ -387,7 +425,7 @@ export default function InspectionCoverForm({
         window.removeEventListener("deviceorientation", onOrient);
         setCompassSampling(false);
         setIaMessage(
-          "Cap non reçu — utilisez le choix manuel Nord / Sud / Est / Ouest.",
+          "Cap non reçu (souvent sur ordinateur de bureau ou capteur inactif) — utilisez le choix manuel Nord / Sud / Est / Ouest.",
         );
       }
     }, 3500);
@@ -878,34 +916,33 @@ export default function InspectionCoverForm({
         </p>
         <p className={`mt-1 ${linkedToReport ? "text-emerald-900/95" : "text-amber-900/90"}`}>
           {workspace === "resume"
-            ? "Vue Résumé : corrigez le texte comme un document. Les actions rapides (photos, description, notes) fonctionnent ici ; le détail des champs reste sous « Outils & imports »."
+            ? "Mode simple: photos, constats et PDF avec le moins de rédaction possible."
             : linkedToReport
-              ? "Outils et champs détaillés : extraction DV, météo, photos description / condition, notes terrain, historique des versions."
-              : "Brouillon local ou liaison rapport ; extraction DV / photos nécessite OPENAI_API_KEY côté serveur."}
+              ? "Mode détaillé: tous les champs réglementaires restent éditables."
+              : "Brouillon local ou liaison rapport ; extraction DV / photos assistée quand disponible."}
         </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-slate-600">Affichage :</span>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <button
             type="button"
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold ${
+            className={`rounded-xl px-4 py-3 text-left text-sm font-semibold shadow-sm transition ${
               workspace === "resume"
                 ? "bg-emerald-800 text-white"
                 : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
             }`}
             onClick={() => setWorkspace("resume")}
           >
-            Résumé de l’inspection
+            📋 Résumé (simple)
           </button>
           <button
             type="button"
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold ${
+            className={`rounded-xl px-4 py-3 text-left text-sm font-semibold shadow-sm transition ${
               workspace === "outils"
                 ? "bg-emerald-800 text-white"
                 : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
             }`}
             onClick={() => setWorkspace("outils")}
           >
-            Outils &amp; imports
+            🧰 Champs détaillés
           </button>
         </div>
         {linkedToReport ? (
@@ -922,6 +959,28 @@ export default function InspectionCoverForm({
           </p>
         ) : null}
       </div>
+
+      {linkedToReport ? (
+        <div className="sticky top-2 z-20 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur-sm">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={remoteSaving}
+              className="inline-flex min-h-12 flex-1 items-center justify-center rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-60"
+              onClick={() => void saveToReport()}
+            >
+              {remoteSaving ? "Enregistrement…" : "Enregistrer sur le rapport"}
+            </button>
+            <button
+              type="button"
+              className={actionSecondaryClass}
+              onClick={() => setWorkspace((prev) => (prev === "resume" ? "outils" : "resume"))}
+            >
+              {workspace === "resume" ? "Voir champs détaillés" : "Retour mode simple"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {iaMessage ? (
         <div
@@ -1018,6 +1077,7 @@ export default function InspectionCoverForm({
               };
             });
           }}
+          onSaveInspectorProfile={persistProfile}
         />
       ) : (
         <>
@@ -1059,7 +1119,7 @@ export default function InspectionCoverForm({
             {weatherFilledByGps ? <TerrainWeatherGpsBadge /> : null}
             <button
               type="button"
-              className="mt-2 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              className={`mt-2 ${actionPrimaryClass}`}
               onClick={() => void fillWeather()}
               disabled={weatherLoading}
             >
@@ -1079,7 +1139,7 @@ export default function InspectionCoverForm({
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
+                className={actionSecondaryClass}
                 onClick={fillNow}
               >
                 Maintenant (navigateur)
@@ -1143,11 +1203,14 @@ export default function InspectionCoverForm({
             ) : null}
             <button
               type="button"
-              className="mt-2 rounded-md border border-slate-300 px-3 py-1.5 text-xs"
+              className={`mt-2 ${actionSecondaryClass}`}
               onClick={persistProfile}
             >
               Enregistrer le profil inspecteur (navigateur)
             </button>
+            {profileSaveHint ? (
+              <p className="mt-1 text-xs font-medium text-emerald-700">{profileSaveHint}</p>
+            ) : null}
           </div>
           <div className="md:col-span-2">
             <label className={labelClass}>INTERVENANTS SUR PLACE</label>
@@ -1176,7 +1239,7 @@ export default function InspectionCoverForm({
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <label
-            className={`inline-flex cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-300 px-3 py-2 text-sm ${dvLoading ? "pointer-events-none opacity-60" : ""}`}
+            className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-2.5 text-sm font-semibold ${dvLoading ? "pointer-events-none opacity-60" : ""}`}
           >
             <input
               type="file"
@@ -1275,7 +1338,7 @@ export default function InspectionCoverForm({
             <div>
               <label
                 htmlFor="cover-description-files"
-                className="inline-flex cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+                className={actionSecondaryClass}
               >
                 Choisir des photos…
               </label>
@@ -1287,7 +1350,7 @@ export default function InspectionCoverForm({
             <button
               type="button"
               disabled={descriptionExtracting}
-              className="rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+              className={actionPrimaryClass}
               onClick={() => void runDescriptionFromPhotos()}
             >
               {descriptionExtracting ? "Analyse…" : "Analyser les photos sélectionnées"}
@@ -1333,7 +1396,7 @@ export default function InspectionCoverForm({
             <button
               type="button"
               disabled={conditionSynthesizing}
-              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              className={actionPrimaryClass}
               onClick={() => void runConditionFromReportPhotos()}
             >
               {conditionSynthesizing
@@ -1490,7 +1553,7 @@ export default function InspectionCoverForm({
                 </label>
                 <label
                   htmlFor="cover-notes-photo"
-                  className="mt-1 inline-flex cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                  className={`mt-1 ${actionSecondaryClass} cursor-pointer`}
                 >
                   Choisir une image…
                 </label>
@@ -1501,7 +1564,7 @@ export default function InspectionCoverForm({
                 </label>
                 <label
                   htmlFor="cover-notes-audio"
-                  className="mt-1 inline-flex cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                  className={`mt-1 ${actionSecondaryClass} cursor-pointer`}
                 >
                   Choisir un fichier audio…
                 </label>
@@ -1510,7 +1573,7 @@ export default function InspectionCoverForm({
             <button
               type="button"
               disabled={notesSubmitting}
-              className="rounded-md bg-emerald-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
               onClick={() => void submitTerrainNotes()}
             >
               {notesSubmitting ? "Envoi…" : "Envoyer au rapport"}
@@ -1531,12 +1594,12 @@ export default function InspectionCoverForm({
         </>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
         {linkedToReport ? (
           <button
             type="button"
             disabled={remoteSaving}
-            className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-60"
+            className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-60"
             onClick={() => void saveToReport()}
           >
             {remoteSaving ? "Enregistrement…" : "Enregistrer sur le rapport"}
@@ -1545,21 +1608,23 @@ export default function InspectionCoverForm({
         {linkedToReport ? (
           <Link
             href={`/report/${encodeURIComponent(reportId!)}?token=${encodeURIComponent(viewerToken!)}`}
-            className="rounded-lg border border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-50"
+            className="inline-flex min-h-12 items-center justify-center rounded-xl border border-emerald-700 bg-white px-5 py-3 text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-50"
           >
             Ouvrir le rapport — constats et PDF
           </Link>
         ) : null}
+        {!COVER_SIMPLE_UX ? (
+          <button
+            type="button"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+            onClick={exportJson}
+          >
+            Exporter JSON (cover_v1)
+          </button>
+        ) : null}
         <button
           type="button"
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-          onClick={exportJson}
-        >
-          Exporter JSON (cover_v1)
-        </button>
-        <button
-          type="button"
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800"
+          className="inline-flex min-h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800"
           onClick={saveDraft}
         >
           Sauver brouillon local

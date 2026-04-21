@@ -66,7 +66,7 @@ export default function ReportLivePreviewBanner({
     try {
       return JSON.stringify(livePayload);
     } catch {
-      return String(Date.now());
+      return "";
     }
   }, [livePayload]);
 
@@ -85,17 +85,22 @@ export default function ReportLivePreviewBanner({
 
   useEffect(() => {
     if (!canFetchHtml) {
-      setHtmlPreview(null);
-      setHtmlStatus("idle");
-      lastEtagRef.current = null;
-      return;
+      const resetId = window.setTimeout(() => {
+        setHtmlPreview(null);
+        setHtmlStatus("idle");
+        lastEtagRef.current = null;
+      }, 0);
+      return () => window.clearTimeout(resetId);
     }
 
     if (debounceRef.current != null) {
       window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
     }
 
-    setHtmlStatus("loading");
+    const loadingId = window.setTimeout(() => {
+      setHtmlStatus("loading");
+    }, 0);
 
     debounceRef.current = window.setTimeout(() => {
       debounceRef.current = null;
@@ -146,6 +151,7 @@ export default function ReportLivePreviewBanner({
     }, PREVIEW_DEBOUNCE_MS);
 
     return () => {
+      window.clearTimeout(loadingId);
       if (debounceRef.current != null) {
         window.clearTimeout(debounceRef.current);
         debounceRef.current = null;

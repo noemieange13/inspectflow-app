@@ -142,12 +142,15 @@ export default function ReportReadinessCard({
   const [guidedStep, setGuidedStep] = useState(0);
   const guidedFingerprint = `${blocking.map((b) => b.code).join(",")}|${warnings.map((w) => w.code).join(",")}`;
   useEffect(() => {
-    const max = Math.max(0, orderedActionable.length - 1);
-    if (initialGuidedStepZero != null && Number.isFinite(initialGuidedStepZero)) {
-      setGuidedStep(Math.min(Math.max(0, initialGuidedStepZero), max));
-    } else {
-      setGuidedStep(0);
-    }
+    const id = window.setTimeout(() => {
+      const max = Math.max(0, orderedActionable.length - 1);
+      if (initialGuidedStepZero != null && Number.isFinite(initialGuidedStepZero)) {
+        setGuidedStep(Math.min(Math.max(0, initialGuidedStepZero), max));
+      } else {
+        setGuidedStep(0);
+      }
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [guidedFingerprint, initialGuidedStepZero, orderedActionable.length]);
 
   const showGuided = !!(guidedMode && !onFocusIssue && orderedActionable.length > 1);
@@ -166,10 +169,13 @@ export default function ReportReadinessCard({
 
   useEffect(() => {
     const valid = new Set([...blocking, ...warnings].map((x) => x.code));
-    setPeekedCodes((prev) => {
-      const next = new Set([...prev].filter((c) => valid.has(c)));
-      return next.size === prev.size && [...next].every((c) => prev.has(c)) ? prev : next;
-    });
+    const id = window.setTimeout(() => {
+      setPeekedCodes((prev) => {
+        const next = new Set([...prev].filter((c) => valid.has(c)));
+        return next.size === prev.size && [...next].every((c) => prev.has(c)) ? prev : next;
+      });
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [blocking, warnings]);
 
   const firstFixHref =

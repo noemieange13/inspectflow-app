@@ -140,12 +140,12 @@ begin
   elsif ev = 'qc_certification_checked'
     and coalesce(NEW.payload->>'is_valid', '') = 'true' then
 
-    select e.payload->>'is_valid' into prev_valid
-    from public.qc_events e
-    where e.report_id = NEW.report_id
-      and e.event_name = 'qc_certification_checked'
-      and e.created_at < NEW.created_at
-    order by e.created_at desc
+    select payload->>'is_valid' into prev_valid
+    from public.qc_events
+    where report_id = NEW.report_id
+      and event_name = 'qc_certification_checked'
+      and created_at < NEW.created_at
+    order by created_at desc
     limit 1;
 
     if prev_valid = 'true' then
@@ -154,14 +154,14 @@ begin
 
     -- V2 : boucle applies (comportement historique)
     for applied_key in
-      select distinct e.suggestion_id
-      from public.qc_events e
-      where e.report_id = NEW.report_id
-        and e.event_name = 'qc_ai_suggestion_applied'
-        and e.suggestion_id is not null
-        and trim(e.suggestion_id) <> ''
-        and e.created_at < NEW.created_at
-        and e.created_at >= NEW.created_at - interval '14 days'
+      select distinct suggestion_id
+      from public.qc_events
+      where report_id = NEW.report_id
+        and event_name = 'qc_ai_suggestion_applied'
+        and suggestion_id is not null
+        and trim(suggestion_id) <> ''
+        and created_at < NEW.created_at
+        and created_at >= NEW.created_at - interval '14 days'
     loop
       update public.qc_ai_suggestion_stats s
       set success_after_apply = s.success_after_apply + 1,
@@ -176,15 +176,15 @@ begin
     set success_after_apply = s.success_after_apply + 1,
         updated_at = now()
     from (
-      select e.suggestion_id as k, public.qc_context_hash(coalesce(e.context, '{}'::jsonb)) as ch
-      from public.qc_events e
-      where e.report_id = NEW.report_id
-        and e.event_name = 'qc_ai_suggestion_applied'
-        and e.suggestion_id is not null
-        and trim(e.suggestion_id) <> ''
-        and e.created_at < NEW.created_at
-        and e.created_at >= NEW.created_at - interval '14 days'
-      order by e.created_at desc
+      select suggestion_id as k, public.qc_context_hash(coalesce(context, '{}'::jsonb)) as ch
+      from public.qc_events
+      where report_id = NEW.report_id
+        and event_name = 'qc_ai_suggestion_applied'
+        and suggestion_id is not null
+        and trim(suggestion_id) <> ''
+        and created_at < NEW.created_at
+        and created_at >= NEW.created_at - interval '14 days'
+      order by created_at desc
       limit 1
     ) la
     where s.key = la.k

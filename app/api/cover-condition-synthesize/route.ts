@@ -33,13 +33,6 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "report_id requis." }, { status: 400 });
   }
 
-  if (!process.env.OPENAI_API_KEY?.trim()) {
-    return Response.json(
-      { ok: false, error: "OPENAI_API_KEY manquante côté serveur." },
-      { status: 503 },
-    );
-  }
-
   try {
     const supabase = await createServiceRoleClient();
     const gate = await assertReportViewerAccess(supabase, reportId, accessTokenRaw);

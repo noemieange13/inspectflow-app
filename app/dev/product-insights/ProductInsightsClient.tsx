@@ -41,10 +41,9 @@ function saveBuffer(rows: Row[]) {
 }
 
 export default function ProductInsightsClient() {
-  const [rows, setRows] = useState<Row[]>([]);
+  const [rows, setRows] = useState<Row[]>(() => loadBuffer());
 
   useEffect(() => {
-    setRows(loadBuffer());
     const onEv = (e: Event) => {
       const ce = e as CustomEvent<{ name?: string; t?: number; [k: string]: unknown }>;
       const d = ce.detail;
@@ -124,9 +123,6 @@ export default function ProductInsightsClient() {
       .filter((x): x is number => typeof x === "number");
     const photoDurations = photoFin
       .map((r) => r.detail.duration_ms)
-      .filter((x): x is number => typeof x === "number");
-    const photoFailed = photoFin
-      .map((r) => r.detail.failed_count)
       .filter((x): x is number => typeof x === "number");
     const avgPhotosPerBatch =
       photoCounts.length > 0

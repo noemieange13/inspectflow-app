@@ -114,6 +114,7 @@ export default async function Page({ params, searchParams }: Props) {
           couvertureBaseHref={couvertureBaseHref}
           reportSelfHref={reportSelfHref}
           viewerAccessToken={viewerToken?.trim() || undefined}
+          simpleMode
         />
       </Suspense>
       <ZeroDraftReportComposer

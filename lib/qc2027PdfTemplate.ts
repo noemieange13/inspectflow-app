@@ -774,7 +774,6 @@ export function buildQc2027HtmlFromPayload(
 
   const entries = parseEntriesFromPayload(payload);
   const lang = opts.language;
-  const t = labels(lang);
 
   const title =
     typeof payload.title === "string" && payload.title.trim()

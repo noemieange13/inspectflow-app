@@ -156,6 +156,8 @@ export type InspectionResumePanelProps = {
   onBlurLimitationsFreeText?: () => void;
   onToggleLimitationChecklist: (id: LimitationChecklistId) => void;
   onSuggestLimitations: () => void;
+  /** Enregistre nom / certification / compagnie / logo dans le navigateur (localStorage). */
+  onSaveInspectorProfile: () => void;
 };
 
 export default function InspectionResumePanel({
@@ -192,6 +194,7 @@ export default function InspectionResumePanel({
   onBlurLimitationsFreeText,
   onToggleLimitationChecklist,
   onSuggestLimitations,
+  onSaveInspectorProfile,
 }: InspectionResumePanelProps) {
   const proprieteLine = useMemo(() => formatProprieteUneLigne(data.propriete), [data.propriete]);
   const descriptionText = useMemo(() => effectiveDescriptionNarrative(data), [data]);
@@ -564,7 +567,18 @@ export default function InspectionResumePanel({
             />
           </div>
         </div>
-        <p className="mt-2 text-xs text-slate-500">Logo : chargez-le dans Outils &amp; imports.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+            onClick={onSaveInspectorProfile}
+          >
+            Enregistrer le profil inspecteur (navigateur)
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          Logo : chargez-le dans Outils &amp; imports, puis enregistrez le profil avec le bouton ci-dessus.
+        </p>
       </DocBlock>
 
       <DocBlock kicker="Conformité (province)" status={resumeBlockStatus("compliance", data)}>

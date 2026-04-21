@@ -9,7 +9,6 @@ import {
   findInsufficientQcPhotoCoverage,
   findMissingQcSystemSections,
   QC_SYSTEM_CODES,
-  QC_SYSTEM_ZONE_GROUPS,
   type QcSystemCode,
   type ReportEntryLike,
 } from "@/lib/qcSystemSections";
