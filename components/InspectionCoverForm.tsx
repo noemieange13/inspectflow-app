@@ -285,8 +285,16 @@ export default function InspectionCoverForm({
       compagnie: data.compagnie.trim(),
       logo_data_url: profile?.logo_data_url ?? null,
     };
-    saveInspectorProfile(p);
+    if (!saveInspectorProfile(p)) {
+      setIaMessage(
+        "Impossible d’enregistrer le profil dans ce navigateur (stockage plein, mode privé ou données bloquées). Réessayez après avoir réduit la taille du logo ou vidé un peu l’espace local.",
+      );
+      return;
+    }
     setProfile(p);
+    setIaMessage(
+      "Profil inspecteur enregistré dans ce navigateur — nom, certification, compagnie et logo (si présent). Pensez à « Enregistrer sur le rapport » pour le PDF.",
+    );
   }, [data.inspecteur_nom, data.inspecteur_numero_certification, data.compagnie, profile?.logo_data_url]);
 
   const onLogo = useCallback((file: File | null) => {
@@ -1014,6 +1022,7 @@ export default function InspectionCoverForm({
               };
             });
           }}
+          onSaveInspectorProfile={persistProfile}
         />
       ) : (
         <>

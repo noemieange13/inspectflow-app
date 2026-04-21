@@ -339,9 +339,15 @@ export function loadInspectorProfile(): InspectorProfileV1 | null {
   }
 }
 
-export function saveInspectorProfile(p: InspectorProfileV1): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(INSPECTOR_PROFILE_STORAGE_KEY, JSON.stringify(p));
+/** Retourne `false` si le navigateur refuse l’écriture (quota, mode privé, etc.). */
+export function saveInspectorProfile(p: InspectorProfileV1): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    localStorage.setItem(INSPECTOR_PROFILE_STORAGE_KEY, JSON.stringify(p));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeFacadeOrientation(v: unknown): FacadeOrientation {
