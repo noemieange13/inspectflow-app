@@ -52,3 +52,11 @@ Ce document sert de garde-fou produit: simplifier l'UX sans perdre les exigences
 - Entree claire: "Sur place" ou "Importer photos".
 - Mission 3 etapes: Photos -> Constats -> PDF.
 - Panneaux avances caches en mode simple (disponibles en mode avance).
+
+## Niveau « wow » produit vs hors-depot (honnete)
+
+- **Design Figma pixel-perfect / kit marketing complet**: hors code ; le depot evolue par increments UI (Tailwind, accessibilite, rythme visuel). Pas de substitut a une maquette native Figma dans le repo.
+- **PDF client « ultra premium »**: le flux applicatif documente reste **`reports-pdf`** + gabarits (`lib/qc2027PdfTemplate.ts`, `lib/pdf/proInspectionTemplateHtml.ts`, etc.). L’art direction (polices marque, grilles, iconographie) se fait dans ces couches ou hors app, pas via un second moteur PDF parallele.
+- **Mode « invisible total »** (chrome minimal, bruit zero): piste produit — a trancher (toggle utilisateur, persistance, impact audit/traçabilite). Aujourd’hui: mode simple + lanceur `SimpleInspectionWrapper` reduisent la friction sans masquer les obligations metier.
+- **IA avancee** (meilleures photos pour tous constats, redaction complete auto): alignee sur les APIs et heuristiques existantes ; pas d’IA « fake » ou non branchée. Tout champ propose par IA reste **editable** (exigence ci-dessus).
+- **Commercialisable / competitif**: la couverture fonctionnelle suit ce document + `docs/PROD_STATE.md` ; les phrases commerciales (site, ads) restent hors de ce fichier de traçabilite technique.

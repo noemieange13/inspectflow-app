@@ -95,6 +95,7 @@ function DocBlock({
   status,
   iaConfidence,
   sectionId,
+  simpleResumeMode,
   children,
 }: {
   kicker: string;
@@ -102,6 +103,7 @@ function DocBlock({
   iaConfidence?: IaConfidenceLevel | null;
   /** Ancre pour « corriger en 1 clic » depuis la carte readiness (go 8). */
   sectionId?: string;
+  simpleResumeMode: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -111,10 +113,12 @@ function DocBlock({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className={subtle}>{kicker}</p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <IaConfidencePill level={iaConfidence ?? null} />
-          <StatusPill status={status} />
-        </div>
+        {!simpleResumeMode ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <IaConfidencePill level={iaConfidence ?? null} />
+            <StatusPill status={status} />
+          </div>
+        ) : null}
       </div>
       <div className="mt-2">{children}</div>
     </section>
@@ -137,7 +141,7 @@ export type InspectionResumePanelProps = {
   onOpenOutils: () => void;
   /** Imports inline (même pipeline que l’onglet Outils) */
   onPickDescriptionPhotos: () => void;
-  onRunDescriptionFromPhotos: () => void;
+  onRunDescriptionFromPhotos: () => void | Promise<void>;
   onDvFile: (f: File | null) => void;
   onTriggerNotesPhoto: () => void;
   onTriggerNotesAudio: () => void;
@@ -158,6 +162,8 @@ export type InspectionResumePanelProps = {
   onSuggestLimitations: () => void;
   /** Enregistre nom / certification / compagnie / logo dans le navigateur (localStorage). */
   onSaveInspectorProfile: () => void;
+  /** Vue résumé allégée (badges masqués, readiness court, sections lourdes repliées). Défaut: true. */
+  simpleMode?: boolean;
 };
 
 export default function InspectionResumePanel({
@@ -166,6 +172,7 @@ export default function InspectionResumePanel({
   reportId,
   viewerToken,
   reportHasPdf,
+  simpleMode,
   onChangeRequerants,
   onChangeProprieteField,
   onChangeCondition,
@@ -196,6 +203,7 @@ export default function InspectionResumePanel({
   onSuggestLimitations,
   onSaveInspectorProfile,
 }: InspectionResumePanelProps) {
+  const simpleResumeMode = simpleMode ?? true;
   const proprieteLine = useMemo(() => formatProprieteUneLigne(data.propriete), [data.propriete]);
   const descriptionText = useMemo(() => effectiveDescriptionNarrative(data), [data]);
 
@@ -239,13 +247,9 @@ export default function InspectionResumePanel({
           <p className="truncate text-xs text-slate-600">
             {data.propriete.adresse.trim() || "Adresse — importez une DV ou saisissez ci-dessous."}
           </p>
-          {reportHasPdf ? (
+          {!simpleResumeMode && reportHasPdf ? (
             <p className="text-xs font-medium text-emerald-800">
               Un PDF est déjà associé à ce rapport — ouvrez la prévisualisation pour le consulter ou le régénérer.
-            </p>
-          ) : previewHref ? (
-            <p className="text-xs text-slate-500">
-              Après les premiers enregistrements, générez le PDF depuis la page rapport.
             </p>
           ) : null}
         </div>
@@ -265,13 +269,26 @@ export default function InspectionResumePanel({
 
       <AutoMagicBanner cover={data} />
 
-      <ReportReadinessCard
-        result={readiness}
-        onAcknowledge={onAckReadiness}
-        ackAt={data.readiness_ack_v1?.acknowledged_at ?? null}
-        onFocusIssue={onFocusReadinessIssue}
-        reportSelfHref={previewHref}
-      />
+      {simpleResumeMode ? (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
+          <p className="font-semibold text-slate-900">
+            {readiness.gate === "ready" ? "🟢 Prêt à envoyer" : "🔎 Vérification requise"}
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            {readiness.gate === "ready"
+              ? "Tous les champs restent modifiables avant génération du PDF."
+              : "Complétez les champs marqués obligatoires, puis enregistrez."}
+          </p>
+        </div>
+      ) : (
+        <ReportReadinessCard
+          result={readiness}
+          onAcknowledge={onAckReadiness}
+          ackAt={data.readiness_ack_v1?.acknowledged_at ?? null}
+          onFocusIssue={onFocusReadinessIssue}
+          reportSelfHref={previewHref}
+        />
+      )}
 
       <p className="text-sm text-slate-600">
         Corrigez comme un document. Actions rapides ci-dessous — tout reste modifiable. Vue avancée :{" "}
@@ -304,28 +321,41 @@ export default function InspectionResumePanel({
         >
           📸 Choisir photos
         </button>
-        <button
-          type="button"
-          disabled={descriptionExtracting}
-          className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white disabled:opacity-50"
-          onClick={onRunDescriptionFromPhotos}
-        >
-          {descriptionExtracting ? "Analyse…" : "🔍 Remplir description"}
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white"
-          onClick={onTriggerNotesPhoto}
-        >
-          📝 Photo de notes
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white"
-          onClick={onTriggerNotesAudio}
-        >
-          🎤 Mémo vocal
-        </button>
+        {!simpleResumeMode ? (
+          <>
+            <button
+              type="button"
+              disabled={descriptionExtracting}
+              className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white disabled:opacity-50"
+              onClick={onRunDescriptionFromPhotos}
+            >
+              {descriptionExtracting ? "Analyse…" : "🔍 Remplir description"}
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white"
+              onClick={onTriggerNotesPhoto}
+            >
+              📝 Photo de notes
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white"
+              onClick={onTriggerNotesAudio}
+            >
+              🎤 Mémo vocal
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800"
+            onClick={onSubmitTerrainNotes}
+            disabled={notesSubmitting}
+          >
+            {notesSubmitting ? "Envoi…" : "📨 Envoyer au rapport"}
+          </button>
+        )}
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
@@ -351,6 +381,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("requerant", data)}
         iaConfidence={blockIaConfidence("requerant", data)}
         sectionId="resume-requerant"
+        simpleResumeMode={simpleResumeMode}
       >
         <textarea
           className={docTextarea}
@@ -366,6 +397,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("propriete", data)}
         iaConfidence={blockIaConfidence("propriete", data)}
         sectionId="resume-propriete"
+        simpleResumeMode={simpleResumeMode}
       >
         <p className="mb-2 text-sm leading-relaxed text-slate-800">{proprieteLine || "—"}</p>
         <div className="grid gap-2 md:grid-cols-3">
@@ -394,6 +426,7 @@ export default function InspectionResumePanel({
         kicker="Client (facultatif)"
         status={resumeBlockStatus("client", data)}
         sectionId="resume-client"
+        simpleResumeMode={simpleResumeMode}
       >
         {!clientAny ? (
           <p className="mb-2 text-xs text-slate-500">Optionnel — la DV peut remplir ces champs.</p>
@@ -426,6 +459,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("description", data)}
         iaConfidence={blockIaConfidence("description", data)}
         sectionId="resume-description"
+        simpleResumeMode={simpleResumeMode}
       >
         <textarea
           className={`${docTextarea} min-h-[140px]`}
@@ -450,6 +484,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("condition", data)}
         iaConfidence={blockIaConfidence("condition", data)}
         sectionId="resume-condition"
+        simpleResumeMode={simpleResumeMode}
       >
         <textarea
           className={docTextarea}
@@ -470,10 +505,52 @@ export default function InspectionResumePanel({
         </div>
       </DocBlock>
 
+      {simpleResumeMode ? (
+        <details id="resume-limitations" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Limitations de l’inspection
+          </summary>
+          <div className="mt-3">
+            <p className="mb-2 text-xs text-slate-600">
+              Obligatoire pour le Québec (profil QC). Coches + texte libre — des clauses types non modifiables sont ajoutées au PDF.
+            </p>
+            <div className="mb-3 space-y-2">
+              {LIMITATION_CHECKLIST_DEFS.map((d) => (
+                <label key={d.id} className="flex cursor-pointer items-start gap-2 text-sm text-slate-800">
+                  <input
+                    type="checkbox"
+                    className="mt-1 rounded border-slate-300"
+                    checked={data.limitations_checklist?.[d.id] === true}
+                    onChange={() => onToggleLimitationChecklist(d.id)}
+                  />
+                  <span>{d.labelFr}</span>
+                </label>
+              ))}
+            </div>
+            <textarea
+              className={`${docTextarea} min-h-[100px]`}
+              value={data.limitations_free_text ?? ""}
+              onChange={(e) => onChangeLimitationsFreeText(e.target.value)}
+              onBlur={() => onBlurLimitationsFreeText?.()}
+              placeholder="Précisez le mandat, les zones non visitées, les systèmes non testés, etc."
+            />
+            <div className="mt-2">
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                onClick={() => onSuggestLimitations()}
+              >
+                Suggérer depuis météo / description
+              </button>
+            </div>
+          </div>
+        </details>
+      ) : (
       <DocBlock
         kicker="Limitations de l’inspection"
         status={resumeBlockStatus("limitations", data)}
         sectionId="resume-limitations"
+        simpleResumeMode={simpleResumeMode}
       >
         <p className="mb-2 text-xs text-slate-600">
           Obligatoire pour le Québec (profil QC). Coches + texte libre — des clauses types non modifiables sont ajoutées au PDF.
@@ -508,8 +585,13 @@ export default function InspectionResumePanel({
           </button>
         </div>
       </DocBlock>
+      )}
 
-      <DocBlock kicker="Orientation de la façade principale" status={resumeBlockStatus("orientation", data)}>
+      <DocBlock
+        kicker="Orientation de la façade principale"
+        status={resumeBlockStatus("orientation", data)}
+        simpleResumeMode={simpleResumeMode}
+      >
         <select
           className={`${docTextarea} cursor-pointer`}
           value={data.orientation_facade}
@@ -528,10 +610,63 @@ export default function InspectionResumePanel({
         </select>
       </DocBlock>
 
+      {simpleResumeMode ? (
+        <details id="resume-inspecteur" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Inspecteur — rendu PDF
+          </summary>
+          <div className="mt-3">
+            <div className="flex flex-wrap items-start gap-4">
+              {profile?.logo_data_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={profile.logo_data_url}
+                  alt=""
+                  className="h-14 w-auto max-w-[140px] object-contain"
+                />
+              ) : (
+                <div className="flex h-14 w-24 items-center justify-center rounded border border-dashed border-slate-200 text-[10px] text-slate-400">
+                  logo
+                </div>
+              )}
+              <div className="min-w-0 flex-1 space-y-2">
+                <input
+                  className={docTextarea}
+                  value={data.inspecteur_nom}
+                  onChange={(e) => update("inspecteur_nom", e.target.value)}
+                  placeholder="Nom"
+                />
+                <input
+                  className={docTextarea}
+                  value={data.inspecteur_numero_certification}
+                  onChange={(e) => update("inspecteur_numero_certification", e.target.value)}
+                  placeholder="Licence / certification"
+                />
+                <input
+                  className={docTextarea}
+                  value={data.compagnie}
+                  onChange={(e) => update("compagnie", e.target.value)}
+                  placeholder="Entreprise"
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                onClick={onSaveInspectorProfile}
+              >
+                Enregistrer le profil inspecteur (navigateur)
+              </button>
+            </div>
+          </div>
+        </details>
+      ) : (
       <DocBlock
         kicker="Inspecteur — rendu PDF"
         status={resumeBlockStatus("inspecteur", data)}
         sectionId="resume-inspecteur"
+        simpleResumeMode={simpleResumeMode}
       >
         <div className="flex flex-wrap items-start gap-4">
           {profile?.logo_data_url ? (
@@ -580,8 +715,38 @@ export default function InspectionResumePanel({
           Logo : chargez-le dans Outils &amp; imports, puis enregistrez le profil avec le bouton ci-dessus.
         </p>
       </DocBlock>
+      )}
 
-      <DocBlock kicker="Conformité (province)" status={resumeBlockStatus("compliance", data)}>
+      {simpleResumeMode ? (
+        <details className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Conformité (province)
+          </summary>
+          <div className="mt-3">
+            <select
+              className={`${docTextarea} cursor-pointer`}
+              value={data.conformite_juridiction}
+              onChange={(e) => onJurisdictionSelect(e.target.value as ComplianceJurisdiction)}
+            >
+              {Object.entries(COMPLIANCE_LABELS).map(([code, lab]) => (
+                <option key={code} value={code}>
+                  {lab}
+                </option>
+              ))}
+            </select>
+            <textarea
+              className={`${docTextarea} mt-2 min-h-[120px]`}
+              value={data.notes_conformite}
+              onChange={(e) => onComplianceNotesChange(e.target.value)}
+            />
+          </div>
+        </details>
+      ) : (
+      <DocBlock
+        kicker="Conformité (province)"
+        status={resumeBlockStatus("compliance", data)}
+        simpleResumeMode={simpleResumeMode}
+      >
         <select
           className={`${docTextarea} cursor-pointer`}
           value={data.conformite_juridiction}
@@ -599,6 +764,7 @@ export default function InspectionResumePanel({
           onChange={(e) => onComplianceNotesChange(e.target.value)}
         />
       </DocBlock>
+      )}
     </div>
   );
 }
