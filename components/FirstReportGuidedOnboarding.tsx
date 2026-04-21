@@ -12,21 +12,24 @@ type Props = {
   language: ReportLanguage;
   /** Ne pas afficher si le PDF est déjà là ou en cours de consultation « terminé ». */
   suppress: boolean;
-  entriesCount: number;
   validPhotoCount: number;
+  /** Titre du rapport saisi (étape 1 sur la page — couverture/DV est sur l’autre page). */
+  reportTitleStarted: boolean;
+  onGoToCover: () => void;
   onGoToPhotos: () => void;
   onGoToGenerate: () => void;
 };
 
 /**
- * Parcours guidé « premier rapport » : constat → photo ici → PDF (succès rapide).
+ * Parcours guidé « premier rapport » : couverture/DV → photos + QC → PDF (aligné sur le compositeur).
  */
 export default function FirstReportGuidedOnboarding({
   reportId,
   language,
   suppress,
-  entriesCount,
   validPhotoCount,
+  reportTitleStarted,
+  onGoToCover,
   onGoToPhotos,
   onGoToGenerate,
 }: Props) {
@@ -59,7 +62,7 @@ export default function FirstReportGuidedOnboarding({
 
   if (!visible || suppress) return null;
 
-  const step1Done = entriesCount >= 1;
+  const step1Done = reportTitleStarted;
   const step2Done = validPhotoCount >= 1;
 
   const copy =
@@ -67,22 +70,24 @@ export default function FirstReportGuidedOnboarding({
       ? {
           title: "Your first report in a few minutes",
           subtitle:
-            "Follow these steps once — then InspectFlow carries the inspection for you.",
-          step1: "1. Add at least one finding",
-          step2: '2. Take a photo (tap "Photos" below)',
-          step3: "3. Generate the PDF to finish",
-          ctaPhotos: "Take a photo here",
+            "Cover and seller declaration first, then photos — InspectFlow drafts most of the text for you.",
+          step1: "1. Cover & seller declaration (requester, clients, property)",
+          step2: "2. Add photos, then use QC to draft findings",
+          step3: "3. Save and generate the PDF (step 3 on the right)",
+          ctaCover: "Go to step 1 (cover)",
+          ctaPhotos: "Go to photos",
           ctaPdf: "Go to PDF",
           dismiss: "Got it, hide this",
         }
       : {
           title: "Votre premier rapport en quelques minutes",
           subtitle:
-            "Suivez ces étapes une fois — ensuite le flux porte l’inspection pour vous.",
-          step1: "1. Ajoutez au moins un constat",
-          step2: "2. Prenez une photo (zone Photos ci-dessous)",
-          step3: "3. Générez le PDF pour conclure",
-          ctaPhotos: "Prendre une photo ici",
+            "Couverture et DV d’abord, puis les photos — InspectFlow rédige presque tout à votre place.",
+          step1: "1. Couverture et déclaration du vendeur (requérant, clients, bien)",
+          step2: "2. Photos, puis QC pour proposer les constats",
+          step3: "3. Enregistrer et générer le PDF (étape 3 à droite)",
+          ctaCover: "Aller à l’étape 1 (couverture)",
+          ctaPhotos: "Aller aux photos",
           ctaPdf: "Aller au PDF",
           dismiss: "J’ai compris, masquer",
         };
@@ -127,6 +132,13 @@ export default function FirstReportGuidedOnboarding({
         </li>
       </ul>
       <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onGoToCover}
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100"
+        >
+          {copy.ctaCover}
+        </button>
         <button
           type="button"
           onClick={onGoToPhotos}

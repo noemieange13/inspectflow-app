@@ -506,6 +506,13 @@ export default function ZeroDraftReportComposer({
     scrollToPhotosZone();
   }, [scrollToPhotosZone]);
 
+  const goToCoverStepForOnboarding = useCallback(() => {
+    document.getElementById("inspectflow-step-1")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, []);
+
   const goToGenerateForOnboarding = useCallback(() => {
     document.getElementById("inspectflow-step-3")?.scrollIntoView({
       behavior: "smooth",
@@ -2046,8 +2053,9 @@ export default function ZeroDraftReportComposer({
         reportId={reportId}
         language={language}
         suppress={!!pdfLink || !!initialData?.hasPdf}
-        entriesCount={entries.length}
         validPhotoCount={validPhotoCount}
+        reportTitleStarted={title.trim().length > 2}
+        onGoToCover={goToCoverStepForOnboarding}
         onGoToPhotos={goToPhotosForOnboarding}
         onGoToGenerate={goToGenerateForOnboarding}
       />
