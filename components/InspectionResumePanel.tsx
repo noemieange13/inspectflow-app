@@ -35,7 +35,6 @@ const docTextarea =
   "mt-1 w-full rounded-lg border border-transparent bg-white/80 px-3 py-2.5 text-[15px] leading-relaxed text-slate-900 shadow-sm outline-none ring-slate-200 transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-2";
 
 const subtle = "text-xs font-medium uppercase tracking-wide text-slate-500";
-const SIMPLE_RESUME_MODE = true;
 
 function IaConfidencePill({ level }: { level: IaConfidenceLevel | null }) {
   if (!level) return null;
@@ -96,6 +95,7 @@ function DocBlock({
   status,
   iaConfidence,
   sectionId,
+  simpleResumeMode,
   children,
 }: {
   kicker: string;
@@ -103,6 +103,7 @@ function DocBlock({
   iaConfidence?: IaConfidenceLevel | null;
   /** Ancre pour « corriger en 1 clic » depuis la carte readiness (go 8). */
   sectionId?: string;
+  simpleResumeMode: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -112,7 +113,7 @@ function DocBlock({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className={subtle}>{kicker}</p>
-        {!SIMPLE_RESUME_MODE ? (
+        {!simpleResumeMode ? (
           <div className="flex flex-wrap items-center gap-1.5">
             <IaConfidencePill level={iaConfidence ?? null} />
             <StatusPill status={status} />
@@ -140,7 +141,7 @@ export type InspectionResumePanelProps = {
   onOpenOutils: () => void;
   /** Imports inline (même pipeline que l’onglet Outils) */
   onPickDescriptionPhotos: () => void;
-  onRunDescriptionFromPhotos: () => void;
+  onRunDescriptionFromPhotos: () => void | Promise<void>;
   onDvFile: (f: File | null) => void;
   onTriggerNotesPhoto: () => void;
   onTriggerNotesAudio: () => void;
@@ -161,6 +162,8 @@ export type InspectionResumePanelProps = {
   onSuggestLimitations: () => void;
   /** Enregistre nom / certification / compagnie / logo dans le navigateur (localStorage). */
   onSaveInspectorProfile: () => void;
+  /** Vue résumé allégée (badges masqués, readiness court, sections lourdes repliées). Défaut: true. */
+  simpleMode?: boolean;
 };
 
 export default function InspectionResumePanel({
@@ -169,6 +172,7 @@ export default function InspectionResumePanel({
   reportId,
   viewerToken,
   reportHasPdf,
+  simpleMode,
   onChangeRequerants,
   onChangeProprieteField,
   onChangeCondition,
@@ -199,6 +203,7 @@ export default function InspectionResumePanel({
   onSuggestLimitations,
   onSaveInspectorProfile,
 }: InspectionResumePanelProps) {
+  const simpleResumeMode = simpleMode ?? true;
   const proprieteLine = useMemo(() => formatProprieteUneLigne(data.propriete), [data.propriete]);
   const descriptionText = useMemo(() => effectiveDescriptionNarrative(data), [data]);
 
@@ -242,7 +247,7 @@ export default function InspectionResumePanel({
           <p className="truncate text-xs text-slate-600">
             {data.propriete.adresse.trim() || "Adresse — importez une DV ou saisissez ci-dessous."}
           </p>
-          {!SIMPLE_RESUME_MODE && reportHasPdf ? (
+          {!simpleResumeMode && reportHasPdf ? (
             <p className="text-xs font-medium text-emerald-800">
               Un PDF est déjà associé à ce rapport — ouvrez la prévisualisation pour le consulter ou le régénérer.
             </p>
@@ -264,7 +269,7 @@ export default function InspectionResumePanel({
 
       <AutoMagicBanner cover={data} />
 
-      {SIMPLE_RESUME_MODE ? (
+      {simpleResumeMode ? (
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
           <p className="font-semibold text-slate-900">
             {readiness.gate === "ready" ? "🟢 Prêt à envoyer" : "🔎 Vérification requise"}
@@ -316,7 +321,7 @@ export default function InspectionResumePanel({
         >
           📸 Choisir photos
         </button>
-        {!SIMPLE_RESUME_MODE ? (
+        {!simpleResumeMode ? (
           <>
             <button
               type="button"
@@ -376,6 +381,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("requerant", data)}
         iaConfidence={blockIaConfidence("requerant", data)}
         sectionId="resume-requerant"
+        simpleResumeMode={simpleResumeMode}
       >
         <textarea
           className={docTextarea}
@@ -391,6 +397,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("propriete", data)}
         iaConfidence={blockIaConfidence("propriete", data)}
         sectionId="resume-propriete"
+        simpleResumeMode={simpleResumeMode}
       >
         <p className="mb-2 text-sm leading-relaxed text-slate-800">{proprieteLine || "—"}</p>
         <div className="grid gap-2 md:grid-cols-3">
@@ -419,6 +426,7 @@ export default function InspectionResumePanel({
         kicker="Client (facultatif)"
         status={resumeBlockStatus("client", data)}
         sectionId="resume-client"
+        simpleResumeMode={simpleResumeMode}
       >
         {!clientAny ? (
           <p className="mb-2 text-xs text-slate-500">Optionnel — la DV peut remplir ces champs.</p>
@@ -451,6 +459,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("description", data)}
         iaConfidence={blockIaConfidence("description", data)}
         sectionId="resume-description"
+        simpleResumeMode={simpleResumeMode}
       >
         <textarea
           className={`${docTextarea} min-h-[140px]`}
@@ -475,6 +484,7 @@ export default function InspectionResumePanel({
         status={resumeBlockStatus("condition", data)}
         iaConfidence={blockIaConfidence("condition", data)}
         sectionId="resume-condition"
+        simpleResumeMode={simpleResumeMode}
       >
         <textarea
           className={docTextarea}
@@ -495,7 +505,7 @@ export default function InspectionResumePanel({
         </div>
       </DocBlock>
 
-      {SIMPLE_RESUME_MODE ? (
+      {simpleResumeMode ? (
         <details id="resume-limitations" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">
             Limitations de l’inspection
@@ -540,6 +550,7 @@ export default function InspectionResumePanel({
         kicker="Limitations de l’inspection"
         status={resumeBlockStatus("limitations", data)}
         sectionId="resume-limitations"
+        simpleResumeMode={simpleResumeMode}
       >
         <p className="mb-2 text-xs text-slate-600">
           Obligatoire pour le Québec (profil QC). Coches + texte libre — des clauses types non modifiables sont ajoutées au PDF.
@@ -576,7 +587,11 @@ export default function InspectionResumePanel({
       </DocBlock>
       )}
 
-      <DocBlock kicker="Orientation de la façade principale" status={resumeBlockStatus("orientation", data)}>
+      <DocBlock
+        kicker="Orientation de la façade principale"
+        status={resumeBlockStatus("orientation", data)}
+        simpleResumeMode={simpleResumeMode}
+      >
         <select
           className={`${docTextarea} cursor-pointer`}
           value={data.orientation_facade}
@@ -595,7 +610,7 @@ export default function InspectionResumePanel({
         </select>
       </DocBlock>
 
-      {SIMPLE_RESUME_MODE ? (
+      {simpleResumeMode ? (
         <details id="resume-inspecteur" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">
             Inspecteur — rendu PDF
@@ -651,6 +666,7 @@ export default function InspectionResumePanel({
         kicker="Inspecteur — rendu PDF"
         status={resumeBlockStatus("inspecteur", data)}
         sectionId="resume-inspecteur"
+        simpleResumeMode={simpleResumeMode}
       >
         <div className="flex flex-wrap items-start gap-4">
           {profile?.logo_data_url ? (
@@ -701,7 +717,7 @@ export default function InspectionResumePanel({
       </DocBlock>
       )}
 
-      {SIMPLE_RESUME_MODE ? (
+      {simpleResumeMode ? (
         <details className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-600">
             Conformité (province)
@@ -726,7 +742,11 @@ export default function InspectionResumePanel({
           </div>
         </details>
       ) : (
-      <DocBlock kicker="Conformité (province)" status={resumeBlockStatus("compliance", data)}>
+      <DocBlock
+        kicker="Conformité (province)"
+        status={resumeBlockStatus("compliance", data)}
+        simpleResumeMode={simpleResumeMode}
+      >
         <select
           className={`${docTextarea} cursor-pointer`}
           value={data.conformite_juridiction}

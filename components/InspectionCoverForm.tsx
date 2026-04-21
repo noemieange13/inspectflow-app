@@ -31,7 +31,7 @@ import {
   type LimitationChecklistId,
   suggestLimitationsFromCover,
 } from "@/lib/limitations";
-import InspectionResumePanel from "@/components/InspectionResumePanel";
+import SimpleInspectionWrapper from "@/components/SimpleInspectionWrapper";
 import ReportVersionTimeline from "@/components/ReportVersionTimeline";
 import {
   TerrainDescriptionModePills,
@@ -129,6 +129,8 @@ export default function InspectionCoverForm({
   const [remoteSaving, setRemoteSaving] = useState(false);
   const [dvLoading, setDvLoading] = useState(false);
   const [descriptionExtracting, setDescriptionExtracting] = useState(false);
+  /** Incrémenté à chaque sélection sur l’input « photos description » (lanceur 1 bouton). */
+  const [descriptionFilesTick, setDescriptionFilesTick] = useState(0);
   const [conditionSynthesizing, setConditionSynthesizing] = useState(false);
   const [notesSubmitting, setNotesSubmitting] = useState(false);
   const [aiImproveLoading, setAiImproveLoading] = useState<null | "description" | "condition">(null);
@@ -871,7 +873,7 @@ export default function InspectionCoverForm({
   return (
     <div className="space-y-10">
       {/*
-        Toujours montés : en vue « Résumé », InspectionResumePanel déclenche .click() sur ces refs.
+        Toujours montés : en vue « Résumé », SimpleInspectionWrapper / InspectionResumePanel déclenche .click() sur ces refs.
         Les entrées du panneau « Outils » réutilisent les mêmes id (labels htmlFor).
       */}
       <input
@@ -883,6 +885,7 @@ export default function InspectionCoverForm({
         className="sr-only"
         tabIndex={-1}
         aria-label="Photos façades / toiture pour remplir la description sommaire"
+        onChange={() => setDescriptionFilesTick((n) => n + 1)}
       />
       <input
         id="cover-notes-photo"
@@ -931,7 +934,7 @@ export default function InspectionCoverForm({
             }`}
             onClick={() => setWorkspace("resume")}
           >
-            📋 Résumé (simple)
+            Résumé (simple)
           </button>
           <button
             type="button"
@@ -942,7 +945,7 @@ export default function InspectionCoverForm({
             }`}
             onClick={() => setWorkspace("outils")}
           >
-            🧰 Champs détaillés
+            Champs détaillés
           </button>
         </div>
         {linkedToReport ? (
@@ -992,7 +995,8 @@ export default function InspectionCoverForm({
       ) : null}
 
       {workspace === "resume" ? (
-        <InspectionResumePanel
+        <SimpleInspectionWrapper
+          descriptionFilesTick={descriptionFilesTick}
           data={data}
           profile={profile}
           reportId={reportId}
@@ -1007,7 +1011,7 @@ export default function InspectionCoverForm({
           update={update}
           onOpenOutils={() => setWorkspace("outils")}
           onPickDescriptionPhotos={() => descriptionFileInputRef.current?.click()}
-          onRunDescriptionFromPhotos={() => void runDescriptionFromPhotos()}
+          onRunDescriptionFromPhotos={() => runDescriptionFromPhotos()}
           onDvFile={(f) => void onDvPhoto(f)}
           onTriggerNotesPhoto={() => notesPhotoRef.current?.click()}
           onTriggerNotesAudio={() => notesAudioRef.current?.click()}
