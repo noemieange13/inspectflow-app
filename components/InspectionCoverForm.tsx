@@ -19,10 +19,7 @@ import {
   type InspectionCoverPayloadV1,
   type InspectorProfileV1,
 } from "@/lib/inspectionCoverPayload";
-import {
-  effectiveDescriptionNarrative,
-  formatDescriptionSommaireFr,
-} from "@/lib/coverResumeFormat";
+import { effectiveDescriptionNarrative } from "@/lib/coverResumeFormat";
 import { evaluateCoverReadiness } from "@/lib/reportReadiness";
 import type { ReadinessIssue } from "@/lib/reportReadiness";
 import { emitProductEvent } from "@/lib/productTelemetry";
@@ -44,6 +41,9 @@ import {
   geocodeAddressOpenMeteo,
   geolocationPosition,
 } from "@/lib/weatherOpenMeteo";
+import { getDisplaySummary } from "@/lib/inspectionDisplay";
+import { coerceInspectionResult } from "@/lib/inspectionResultCoerce";
+import type { InspectionResult } from "@/lib/types/inspection";
 
 export type InspectionCoverFormProps = {
   reportId?: string;
@@ -102,6 +102,29 @@ const actionPrimaryClass =
 const actionSecondaryClass =
   "inline-flex min-h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-60";
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Lecture fichier impossible."));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Lecture fichier impossible."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function buildTerrainDescriptionFromResult(r: InspectionResult): string {
+  if (!r.ok) return "";
+  const issueLines = r.issues.map(
+    (i) =>
+      `• [${i.severity}] ${i.type}: ${i.description} — ${i.recommendation}`,
+  );
+  return [r.summary, r.nextStep ? `\nProchaine étape : ${r.nextStep}` : "", issueLines.length ? `\n${issueLines.join("\n")}` : ""]
+    .join("")
+    .trim();
+}
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="border-b border-slate-200 pb-2 text-lg font-semibold tracking-tight text-slate-900">
@@ -129,6 +152,10 @@ export default function InspectionCoverForm({
   const [remoteSaving, setRemoteSaving] = useState(false);
   const [dvLoading, setDvLoading] = useState(false);
   const [descriptionExtracting, setDescriptionExtracting] = useState(false);
+  /** Réponse structurée `/api/analyze` (affichage terrain immédiat). */
+  const [terrainInspectionResult, setTerrainInspectionResult] = useState<InspectionResult | null>(
+    null,
+  );
   /** Incrémenté à chaque sélection sur l’input « photos description » (lanceur 1 bouton). */
   const [descriptionFilesTick, setDescriptionFilesTick] = useState(0);
   const [conditionSynthesizing, setConditionSynthesizing] = useState(false);
@@ -515,52 +542,59 @@ export default function InspectionCoverForm({
     }
     setDescriptionExtracting(true);
     setIaMessage(null);
+    setTerrainInspectionResult(null);
     try {
-      const fd = new FormData();
-      for (let i = 0; i < list.length; i++) {
-        fd.append("files", list[i]!);
-      }
-      const res = await fetch("/api/cover-description-extract", {
+      const files = Array.from(list);
+      const images = await Promise.all(files.map((f) => readFileAsDataUrl(f)));
+
+      const res = await fetch("/api/analyze", {
         method: "POST",
-        body: fd,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "inspection",
+          images,
+        }),
       });
-      const j = (await res.json()) as {
-        ok?: boolean;
-        extracted?: Record<string, string>;
-        error?: string;
-      };
-      if (!res.ok || !j.ok || !j.extracted) {
-        throw new Error(j.error ?? `Erreur ${res.status}`);
+
+      const parsed = coerceInspectionResult(await res.json());
+      if (!parsed) {
+        setTerrainInspectionResult(null);
+        setIaMessage("Réponse d’analyse invalide. Réessaie.");
+        return;
       }
-      const e = j.extracted;
-      setData((prev) => {
-        const description_sommaire = {
-          ...prev.description_sommaire,
-          mode: "photos_ia" as const,
-          type_maison: e.type_maison?.trim() || prev.description_sommaire.type_maison,
-          construit_en: e.construit_en?.trim() || prev.description_sommaire.construit_en,
-          facade: e.facade?.trim() || prev.description_sommaire.facade,
-          cotes: e.cotes?.trim() || prev.description_sommaire.cotes,
-          arriere: e.arriere?.trim() || prev.description_sommaire.arriere,
-          toiture: e.toiture?.trim() || prev.description_sommaire.toiture,
-          type_fondation: e.type_fondation?.trim() || prev.description_sommaire.type_fondation,
-          type_structure: e.type_structure?.trim() || prev.description_sommaire.type_structure,
-          chauffage: e.chauffage?.trim() || prev.description_sommaire.chauffage,
-        };
-        return {
+
+      setTerrainInspectionResult(parsed);
+
+      const display = getDisplaySummary(parsed);
+      if (parsed.ok) {
+        const textBlock = buildTerrainDescriptionFromResult(parsed);
+        setData((prev) => ({
           ...prev,
-          description_sommaire,
-          generated_description_text: formatDescriptionSommaireFr(description_sommaire),
+          description_sommaire: {
+            ...prev.description_sommaire,
+            mode: "photos_ia" as const,
+          },
+          generated_description_text: textBlock || prev.generated_description_text,
+          condition_generale:
+            parsed.summary.trim() && !prev.condition_generale.trim()
+              ? parsed.summary.trim()
+              : prev.condition_generale,
           ia_hints: {
             ...prev.ia_hints,
             photos_description_imported: true,
           },
-        };
-      });
-      setIaMessage(
-        "Description sommaire remplie à partir des photos. Vérifie et complète les champs si besoin.",
-      );
+        }));
+        setIaMessage(
+          `${display.title ? `${display.title} ` : ""}(gravité : ${display.severity}).`,
+        );
+      } else {
+        setIaMessage(
+          [parsed.error, parsed.hint].filter(Boolean).join(" — ") ||
+            "Analyse indisponible.",
+        );
+      }
     } catch (err) {
+      setTerrainInspectionResult(null);
       setIaMessage(
         err instanceof Error ? err.message : "Échec de l’analyse des photos.",
       );
@@ -1013,6 +1047,54 @@ export default function InspectionCoverForm({
           role="status"
         >
           {iaMessage}
+        </div>
+      ) : null}
+
+      {terrainInspectionResult ? (
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm shadow-sm ${
+            terrainInspectionResult.ok
+              ? "border-emerald-200 bg-emerald-50/90 text-emerald-950"
+              : "border-amber-200 bg-amber-50/90 text-amber-950"
+          }`}
+          role="region"
+          aria-label="Synthèse analyse terrain"
+        >
+          {(() => {
+            const d = getDisplaySummary(terrainInspectionResult);
+            return (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Synthèse terrain
+                </p>
+                <p className="text-[15px] font-semibold leading-snug text-slate-900">
+                  {terrainInspectionResult.ok
+                    ? d.title || "Analyse complétée"
+                    : [terrainInspectionResult.error, terrainInspectionResult.hint]
+                        .filter(Boolean)
+                        .join(" — ") || "Analyse indisponible"}
+                </p>
+                <p className="text-sm text-slate-700">
+                  <span className="font-medium">Gravité :</span> {d.severity}
+                  {terrainInspectionResult.ok && terrainInspectionResult.issues.length > 0 ? (
+                    <span className="text-slate-600">
+                      {" "}
+                      · {terrainInspectionResult.issues.length} point(s) relevé(s)
+                    </span>
+                  ) : null}
+                </p>
+                {terrainInspectionResult.ok ? (
+                  <p className="border-t border-emerald-200/80 pt-2 text-sm leading-relaxed text-slate-800">
+                    <span className="font-medium text-slate-900">Action :</span> {d.action}
+                  </p>
+                ) : terrainInspectionResult.hint ? (
+                  <p className="border-t border-amber-200/80 pt-2 text-sm text-amber-950">
+                    {terrainInspectionResult.hint}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
         </div>
       ) : null}
 
