@@ -92,6 +92,10 @@ export default function ReportPageReadiness({
 
   /** Recharge le payload serveur (readiness à jour) au retour sur l’onglet / la fenêtre — sans WebSocket. */
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Dernière entrée en `document.hidden` (sélecteur de fichiers natif, impression, etc.). */
+  const tabHiddenAtRef = useRef<number | null>(null);
+  /** Jusqu’à quand ignorer un `focus` déclenché juste après une courte disparition (ex. dialogue fichier). */
+  const skipFocusRefreshUntilRef = useRef<number>(0);
   const scheduleReadinessRefresh = useCallback(
     (source: "visibilitychange" | "focus") => {
       if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
@@ -112,13 +116,28 @@ export default function ReportPageReadiness({
 
   useEffect(() => {
     const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        tabHiddenAtRef.current = Date.now();
+        return;
+      }
       if (document.visibilityState !== "visible") return;
+      const hiddenAt = tabHiddenAtRef.current;
+      tabHiddenAtRef.current = null;
+      const hiddenMs = hiddenAt != null ? Date.now() - hiddenAt : null;
+      // Fenêtre très brièvement « cachée » (Chrome + sélecteur de fichiers Windows) : ne pas
+      // router.refresh() — sinon le compositeur rapport remonte et annule les uploads en cours.
+      if (hiddenMs != null && hiddenMs < 1800) {
+        skipFocusRefreshUntilRef.current = Date.now() + 2000;
+        return;
+      }
       setReadinessRingPulse(true);
       window.setTimeout(() => setReadinessRingPulse(false), 1400);
       scheduleReadinessRefresh("visibilitychange");
     };
     const onWindowFocus = () => {
-      if (document.visibilityState === "visible") scheduleReadinessRefresh("focus");
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() < skipFocusRefreshUntilRef.current) return;
+      scheduleReadinessRefresh("focus");
     };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onWindowFocus);
@@ -176,7 +195,8 @@ export default function ReportPageReadiness({
   );
 
   useEffect(() => {
-    setSuggestionStatsV3(new Map());
+    const id = window.setTimeout(() => setSuggestionStatsV3(new Map()), 0);
+    return () => window.clearTimeout(id);
   }, [reportId]);
 
   useEffect(() => {

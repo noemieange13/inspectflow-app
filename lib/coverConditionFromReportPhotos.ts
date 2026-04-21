@@ -3,11 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ConditionSynthResult } from "@/lib/conditionSynthResult";
 import { averageConfidenceFromRows } from "@/lib/photoAnalysisConfidence";
 import { snippetsFromPhotoAnalysis } from "@/lib/photoAnalysisSnippets";
-import {
-  loadPhotoRowsForReport,
-  loadPhotoRowsSnapshotByIds,
-  type ReportPhotoRow,
-} from "@/lib/reportPhotosForReport";
+import { loadPhotoRowsForReport, loadPhotoRowsSnapshotByIds } from "@/lib/reportPhotosForReport";
 import {
   synthesizeConditionGeneraleFromImages,
   synthesizeConditionGeneraleFromSnippets,

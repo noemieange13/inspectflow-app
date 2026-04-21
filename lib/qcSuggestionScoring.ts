@@ -85,7 +85,7 @@ export function computeContextualScore(
   const adoption = (stats.applied + PRIOR) / (stats.shown + 2 * PRIOR);
   const successR = (stats.success + PRIOR) / (stats.applied + 2 * PRIOR);
   const rejection = stats.rejected / stats.shown;
-  let baseScore = 0.5 * adoption + 0.3 * successR - 0.7 * rejection;
+  const baseScore = 0.5 * adoption + 0.3 * successR - 0.7 * rejection;
   if (!stats.lastAppliedAt) return baseScore;
   const days = daysSince(stats.lastAppliedAt);
   const decay = Math.exp(-days / 30);

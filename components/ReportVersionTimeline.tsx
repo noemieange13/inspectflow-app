@@ -1,12 +1,14 @@
-"use client"
+"use client";
 
-import { useReportVersions } from "@/lib/useReportVersions"
+import { useReportVersions, type ReportVersionRow } from "@/lib/useReportVersions";
 
-export default function ReportVersionTimeline({
-  reportId,
-  viewerToken
-}: any) {
-  const { rows, loading, error } = useReportVersions(reportId, viewerToken)
+type Props = {
+  reportId?: string;
+  viewerToken?: string;
+};
+
+export default function ReportVersionTimeline({ reportId, viewerToken }: Props) {
+  const { rows, loading, error } = useReportVersions(reportId, viewerToken);
 
   // 🔒 guards globaux
   if (loading) return <div style={{ padding: 12 }}>Chargement...</div>
@@ -34,7 +36,7 @@ export default function ReportVersionTimeline({
         </div>
       )}
 
-      {rows.map((v: any, index: number) => {
+      {rows.map((v: ReportVersionRow, index: number) => {
         try {
           const date = v?.created_at
             ? new Date(v.created_at).toLocaleString()

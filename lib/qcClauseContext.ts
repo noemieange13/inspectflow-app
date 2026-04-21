@@ -2,7 +2,7 @@
  * Contexte d’évaluation pour `qc_legal_clauses.applies_if` (clauses conditionnelles).
  */
 
-import { QC_SYSTEM_ZONE_GROUPS, type QcSystemCode } from "@/lib/qcSystemSections";
+import { QC_SYSTEM_ZONE_GROUPS } from "@/lib/qcSystemSections";
 
 export type ClauseEvaluationContext = Record<string, boolean | number | string>;
 

@@ -33,16 +33,19 @@ export default function FirstReportGuidedOnboarding({
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (suppress) {
-      setVisible(false);
-      return;
-    }
-    try {
-      const dismissed = localStorage.getItem(storageDismissedKey(reportId));
-      setVisible(!dismissed);
-    } catch {
-      setVisible(!suppress);
-    }
+    const id = window.setTimeout(() => {
+      if (suppress) {
+        setVisible(false);
+        return;
+      }
+      try {
+        const dismissed = localStorage.getItem(storageDismissedKey(reportId));
+        setVisible(!dismissed);
+      } catch {
+        setVisible(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [reportId, suppress]);
 
   const dismiss = useCallback(() => {

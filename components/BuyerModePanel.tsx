@@ -27,7 +27,9 @@ export default function BuyerModePanel({
   const [open, setOpen] = useState(viewMode === "buyer");
 
   useEffect(() => {
-    if (viewMode === "buyer") setOpen(true);
+    if (viewMode !== "buyer") return;
+    const id = window.setTimeout(() => setOpen(true), 0);
+    return () => window.clearTimeout(id);
   }, [viewMode]);
 
   const summary = useMemo(
