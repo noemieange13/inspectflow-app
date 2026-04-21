@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -12,6 +13,7 @@ import {
   ZONES,
   type IssueCode,
   normalizeReportLanguage,
+  parseStructuredEntriesFromPayload,
   type JurisdictionProfile,
   type ReportLanguage,
   type ReportEntryInput,
@@ -75,6 +77,45 @@ function defaultEntry(): ReportEntryInput {
   };
 }
 
+/** Bloc numéroté pour le parcours inspecteur (zéro rédaction). */
+function InspectorStepBlock({
+  step,
+  title,
+  hint,
+  id,
+  surfaceClassName = "bg-white",
+  children,
+}: {
+  step: number;
+  title: string;
+  hint?: string;
+  id?: string;
+  /** e.g. `bg-slate-50` for the preview column */
+  surfaceClassName?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      id={id}
+      className={`scroll-mt-24 rounded-xl border border-slate-200 p-4 shadow-sm md:p-5 ${surfaceClassName}`}
+    >
+      <div className="mb-4 flex flex-wrap items-start gap-3 border-b border-slate-100 pb-3">
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white"
+          aria-hidden
+        >
+          {step}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-base font-semibold tracking-tight text-slate-900">{title}</h3>
+          {hint ? <p className="mt-1 text-xs leading-relaxed text-slate-600">{hint}</p> : null}
+        </div>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -88,6 +129,32 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
       reject(err);
     });
   });
+}
+
+async function readResponseJson<T>(res: Response): Promise<T | null> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+type DraftBaselineSnapshot = {
+  title: string;
+  inspectorNote: string;
+  clientFacingSnapshot: string;
+  entriesJson: string;
+};
+
+function serializeEntriesForBaseline(entries: ReportEntryInput[]): string {
+  return JSON.stringify(
+    entries.map((e) => ({
+      zone: e.zone,
+      issue: e.issue,
+      severity: e.severity,
+      note: e.note ?? "",
+    })),
+  );
 }
 
 type PayloadSection = {
@@ -124,7 +191,11 @@ export default function ZeroDraftReportComposer({
     (existingPayload && typeof existingPayload.inspector_note === "string" ? existingPayload.inspector_note : null)
     ?? "",
   );
-  const [entries, setEntries] = useState<ReportEntryInput[]>([defaultEntry()]);
+  const [entries, setEntries] = useState<ReportEntryInput[]>(() => {
+    if (!existingPayload) return [defaultEntry()];
+    const parsed = parseStructuredEntriesFromPayload(existingPayload.entries);
+    return parsed.length > 0 ? parsed : [defaultEntry()];
+  });
   const [language, setLanguage] = useState<ReportLanguage>(
     existingPayload && (existingPayload.language === "en" || existingPayload.language === "fr")
       ? existingPayload.language as ReportLanguage
@@ -136,6 +207,8 @@ export default function ZeroDraftReportComposer({
       : "ca_general",
   );
   const [loading, setLoading] = useState(false);
+  /** Sauvegarde `/api/report-content` seule (sans PDF). */
+  const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Réponse API report-content (ex. rapport verrouillé en base). */
   const [contentSaveErrorCode, setContentSaveErrorCode] = useState<string | null>(null);
@@ -154,10 +227,26 @@ export default function ZeroDraftReportComposer({
       error?: string;
       ai_score?: number;
       selected_for_report?: boolean;
+      /** ID `photos.id` côté Supabase (pour inférer zones depuis `analysis`). */
+      serverPhotoId?: string | null;
       /** Zone bâtiment pour couverture photo QC (agrégée dans `photos_coverage_v1`). */
       linked_zone?: ZoneCode;
     }[]
   >([]);
+  const [photoQcDraftBusy, setPhotoQcDraftBusy] = useState(false);
+  type QcMergePendingState = {
+    photoZones: Record<string, string>;
+    proposed: ReportEntryInput[];
+    zonePatchCount: number;
+    photoCount: number;
+  };
+  const [qcMergePending, setQcMergePending] = useState<QcMergePendingState | null>(null);
+  /** Incrémenté pour relancer `/api/report-photos-for-editor` après analyse vision. */
+  const [photoAnalysisRefreshEpoch, setPhotoAnalysisRefreshEpoch] = useState(0);
+  const lastPhotoEditorFetchKeyRef = useRef<string | null>(null);
+  const analysisRefreshTimersRef = useRef<number[]>([]);
+  const draftBaselineRef = useRef<DraftBaselineSnapshot | null>(null);
+  const draftBaselineCapturedRef = useRef(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoUploadProgress, setPhotoUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [photoDropHover, setPhotoDropHover] = useState(false);
@@ -284,6 +373,103 @@ export default function ZeroDraftReportComposer({
     [photos],
   );
 
+  useEffect(() => {
+    lastPhotoEditorFetchKeyRef.current = null;
+    setPhotoAnalysisRefreshEpoch(0);
+    draftBaselineCapturedRef.current = false;
+    draftBaselineRef.current = null;
+  }, [reportId]);
+
+  useEffect(() => {
+    if (!showEditor) return;
+    if (draftBaselineCapturedRef.current) return;
+    draftBaselineCapturedRef.current = true;
+    draftBaselineRef.current = {
+      title: title.trim(),
+      inspectorNote,
+      clientFacingSnapshot: clientSectionValue,
+      entriesJson: serializeEntriesForBaseline(entries),
+    };
+  }, [showEditor, title, inspectorNote, clientSectionValue, entries]);
+
+  useEffect(() => {
+    return () => {
+      for (const id of analysisRefreshTimersRef.current) {
+        window.clearTimeout(id);
+      }
+      analysisRefreshTimersRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    const token = viewerToken?.trim();
+    if (!token) return;
+    const fetchKey = `${reportId}:${photoAnalysisRefreshEpoch}`;
+    if (lastPhotoEditorFetchKeyRef.current === fetchKey) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/report-photos-for-editor", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ report_id: reportId, access_token: token }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          photos?: Array<{
+            id: string;
+            photo_number: number | null;
+            url: string | null;
+            linked_zone?: string;
+          }>;
+        };
+        if (cancelled || !res.ok || body.success !== true || !Array.isArray(body.photos)) return;
+        lastPhotoEditorFetchKeyRef.current = fetchKey;
+        setPhotos((prev) => {
+          const merged = [...prev];
+          for (const ph of body.photos!) {
+            if (!ph?.id) continue;
+            const num =
+              typeof ph.photo_number === "number" && Number.isFinite(ph.photo_number)
+                ? ph.photo_number
+                : null;
+            const zoneRaw = ph.linked_zone;
+            const linked: ZoneCode =
+              typeof zoneRaw === "string" && ZONES.some((z) => z.value === zoneRaw)
+                ? (zoneRaw as ZoneCode)
+                : "autre";
+            const serverUrl =
+              typeof ph.url === "string" && ph.url.startsWith("http") ? ph.url : null;
+            const idx = merged.findIndex((p) => p.serverPhotoId === ph.id);
+            if (idx >= 0) {
+              const p = merged[idx]!;
+              const nextUrl = p.url ?? serverUrl;
+              const nextZone =
+                (p.linked_zone ?? "autre") === "autre" && linked !== "autre" ? linked : (p.linked_zone ?? linked);
+              merged[idx] = { ...p, url: nextUrl, linked_zone: nextZone };
+              continue;
+            }
+            merged.push({
+              id: `srv-${ph.id}`,
+              name: num != null ? `Photo ${num}` : `Photo ${ph.id.slice(0, 8)}…`,
+              url: serverUrl,
+              uploading: false,
+              serverPhotoId: ph.id,
+              linked_zone: linked,
+              selected_for_report: false,
+            });
+          }
+          return merged;
+        });
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reportId, viewerToken, photoAnalysisRefreshEpoch]);
+
   const terrainStepLive = useMemo(
     () =>
       computeTerrainGuideStep({
@@ -321,9 +507,9 @@ export default function ZeroDraftReportComposer({
   }, [scrollToPhotosZone]);
 
   const goToGenerateForOnboarding = useCallback(() => {
-    document.getElementById("inspectflow-generate-pdf-cta")?.scrollIntoView({
+    document.getElementById("inspectflow-step-3")?.scrollIntoView({
       behavior: "smooth",
-      block: "center",
+      block: "start",
     });
   }, []);
 
@@ -557,11 +743,13 @@ export default function ZeroDraftReportComposer({
     : generated.risk_level === "medium"
     ? "bg-amber-100 text-amber-700 border-amber-200"
     : "bg-emerald-100 text-emerald-700 border-emerald-200";
-  const labels = language === "en"
-    ? {
-      title: "Automated report mode",
+  const labels = useMemo(
+    () =>
+      (language === "en"
+        ? {
+      title: "Almost no writing — three steps",
       subtitle:
-        "Select findings and the system drafts observation/analysis/recommendation sections automatically.",
+        "Cover & seller declaration, then photos that draft your findings, then client text and PDF. Menus do most of the work.",
       reportTitle: "Report title",
       inspectorNote: "Field note (optional)",
       language: "Language",
@@ -633,11 +821,42 @@ export default function ZeroDraftReportComposer({
       htmlPreviewTitle: "Live report layout (same HTML as PDF)",
       htmlPreviewLoading: "Building HTML preview…",
       htmlPreviewError: "HTML preview unavailable (draft may be too minimal).",
+      step1Title: "Step 1 — Cover, seller declaration & report language",
+      step1Hint:
+        "Requester, clients and property identity belong on the cover together with the seller declaration. On this screen you only set the report title and PDF language.",
+      step1CoverBoxTitle: "Start on the cover page",
+      step1CoverBoxBody:
+        "That is where the requérant, clients and address are recorded together with the declaration — needed before a proper PDF.",
+      step2Title: "Step 2 — Photos & findings (mostly pick lists)",
+      step2Hint:
+        "Upload photos, wait a few seconds for analysis, then use QC to suggest zones and draft finding rows. Technical sections write themselves from your picks.",
+      step3Title: "Step 3 — Optional notes, client letter, preview & PDF",
+      step3Hint:
+        "Field note and client summary can stay automatic. Save the draft to the server, then generate when cover checks pass.",
+      entriesBlockHint:
+        "Use the dropdowns for zone and issue — type a note only if you want extra detail.",
+      qcMergeDialogTitle: "This report was edited — how should QC apply?",
+      qcMergeDialogBody:
+        "New photo zones and draft findings are available. Because the title, client summary, field note, or findings changed since the page loaded, choose whether to merge AI draft findings with your current rows or only update “Other” photo zones.",
+      qcMergeMergeAll: "Merge draft findings anyway",
+      qcMergeZonesOnly: "Update photo zones only",
+      qcMergeCancel: "Cancel",
+      applyPhotoQcDraft: "Zones + QC draft findings (1 click)",
+      applyPhotoQcDraftRun: "Apply now",
+      applyPhotoQcDraftHint:
+        "Uses analyses already stored for this report’s photos. Only updates photos still on “Other”; manually chosen zones are kept. If you edited the title, client summary, field note, or findings, a short choice appears: merge draft findings, zones only, or cancel. Re-fetch runs automatically after bulk upload while vision finishes.",
+      saveDraftButton: "Save draft to server (no PDF)",
+      saveDraftHint:
+        "Persists structured findings, client summary, inspector note, and photo coverage. Use this to validate zero-touch edits before generating the PDF.",
+      qcDraftZonesOnlyManualEdits:
+        "Photo zones updated. Automatic QC draft findings were not merged because the title, client summary, field note, or findings were edited manually.",
+      qcDraftSkippedFindingsNoZones:
+        "QC draft findings were skipped (manual edits) and no “Other” photo zones were updated — try again after vision analysis finishes, or reset zones to Other where needed.",
     }
     : {
-      title: "Mode zéro rédaction",
+      title: "Presque sans rédaction — trois étapes",
       subtitle:
-        "Sélectionnez les constats, puis le système rédige automatiquement les sections observation/analyse/recommandation.",
+        "Couverture et DV, puis photos qui remplissent les constats, puis texte client et PDF. Les listes remplacent presque la frappe.",
       reportTitle: "Titre du rapport",
       inspectorNote: "Note terrain (optionnelle)",
       language: "Langue",
@@ -683,6 +902,8 @@ export default function ZeroDraftReportComposer({
         "Note : polish IA interrompu (délai ou limite) ; le brouillon a été enregistré.",
       polishSkippedUnavailable:
         "Note : polish IA indisponible ; le brouillon a été enregistré.",
+      polishSkippedTimeout:
+        "Note : polish IA interrompu (délai réseau / OpenAI) ; le brouillon a été enregistré.",
       reportLockedShort:
         "Ce rapport est finalisé ou verrouillé — la base refuse l'enregistrement.",
       reportLockedHelp:
@@ -707,7 +928,40 @@ export default function ZeroDraftReportComposer({
       htmlPreviewTitle: "Mise en page du rapport (même HTML que le PDF)",
       htmlPreviewLoading: "Génération de l'aperçu HTML…",
       htmlPreviewError: "Aperçu HTML indisponible (brouillon peut-être trop minimal).",
-    };
+      step1Title: "Étape 1 — Couverture, déclaration du vendeur (DV) et langue",
+      step1Hint:
+        "Requérant, clients et adresse du bien se saisissent sur la page couverture avec la DV. Ici vous indiquez seulement le titre du rapport et la langue du PDF.",
+      step1CoverBoxTitle: "Commencer par la couverture",
+      step1CoverBoxBody:
+        "C’est là qu’on enregistre requérant, clients et identité du bien avec la déclaration du vendeur — nécessaire avant un PDF conforme.",
+      step2Title: "Étape 2 — Photos et constats (surtout des listes)",
+      step2Hint:
+        "Téléversez les photos, attendez quelques secondes l’analyse, puis utilisez QC pour proposer les zones et des lignes de constats. Les sections techniques se rédigent à partir de vos choix.",
+      step3Title: "Étape 3 — Notes (optionnel), texte client, aperçu et PDF",
+      step3Hint:
+        "La note terrain et le compte rendu client peuvent rester sur le texte automatique. Enregistrez le brouillon, puis générez le PDF quand la couverture est complète.",
+      entriesBlockHint:
+        "Choisissez la zone et le type de problème dans les listes — une note seulement si vous voulez préciser.",
+      qcMergeDialogTitle: "Rapport modifié — comment appliquer le QC ?",
+      qcMergeDialogBody:
+        "De nouvelles zones photo et des brouillons de constats sont disponibles. Comme le titre, le compte rendu client, la note ou les constats ont changé depuis le chargement de la page, choisissez : fusionner les brouillons proposés avec vos lignes actuelles, mettre à jour uniquement les photos « Autre », ou annuler.",
+      qcMergeMergeAll: "Fusionner les brouillons quand même",
+      qcMergeZonesOnly: "Mettre à jour les zones photo seulement",
+      qcMergeCancel: "Annuler",
+      applyPhotoQcDraft: "Zones + brouillons QC (1 clic)",
+      applyPhotoQcDraftRun: "Appliquer",
+      applyPhotoQcDraftHint:
+        "S’appuie sur les analyses déjà enregistrées pour les photos du rapport. Met à jour seulement les photos encore sur « Autre » ; les zones choisies manuellement sont conservées. Si le titre, le compte rendu client, la note ou les constats ont été modifiés à la main, une fenêtre propose : fusionner les brouillons, zones seulement, ou annuler. Rechargement auto après lot pour laisser finir l’analyse vision.",
+      saveDraftButton: "Enregistrer le brouillon (serveur, sans PDF)",
+      saveDraftHint:
+        "Enregistre en base les constats, le compte rendu client, la note terrain et la couverture photo. À utiliser pour valider le parcours zéro rédaction avant de générer le PDF.",
+      qcDraftZonesOnlyManualEdits:
+        "Zones photo mises à jour. Les brouillons de constats QC n’ont pas été fusionnés car le titre, le compte rendu client, la note terrain ou les constats ont été modifiés à la main.",
+      qcDraftSkippedFindingsNoZones:
+        "Constats automatiques ignorés (brouillon modifié) et aucune zone photo « Autre » à mettre à jour — réessayez après l’analyse vision, ou remettez des zones sur « Autre » si besoin.",
+    }),
+    [language],
+  );
 
   useEffect(() => {
     if (
@@ -873,6 +1127,8 @@ export default function ZeroDraftReportComposer({
             /* ignore */
           }
         }
+        const serverPid =
+          typeof body.photo_id === "string" && body.photo_id.trim() ? body.photo_id.trim() : null;
         setPhotos((prev) => {
           const preset = terrainPresetZoneRef.current;
           return prev.map((p) => {
@@ -881,6 +1137,7 @@ export default function ZeroDraftReportComposer({
               ...p,
               uploading: false,
               url: typeof body.url === "string" ? body.url : null,
+              serverPhotoId: ok ? serverPid : p.serverPhotoId,
               error: !ok
                 ? (typeof body.error === "string" ? body.error : `Erreur ${res.status}`)
                 : undefined,
@@ -987,9 +1244,382 @@ export default function ZeroDraftReportComposer({
           failed_count,
         });
       }
+      const successCount = outcomes.filter(Boolean).length;
+      if (successCount > 0) {
+        for (const tid of analysisRefreshTimersRef.current) {
+          window.clearTimeout(tid);
+        }
+        analysisRefreshTimersRef.current = [];
+        for (const delay of [2500, 7000, 15_000]) {
+          analysisRefreshTimersRef.current.push(
+            window.setTimeout(() => {
+              setPhotoAnalysisRefreshEpoch((n) => n + 1);
+            }, delay),
+          );
+        }
+      }
     },
     [reportId, language, uploadOnePhoto],
   );
+
+  const finalizeQcPhotoDraftApply = useCallback(
+    (params: {
+      photoZones: Record<string, string>;
+      proposed: ReportEntryInput[];
+      skipEntryMerge: boolean;
+      zonePatchCount: number;
+      photoCount: number;
+      entriesSnapshot: ReportEntryInput[];
+      titleSnapshot: string;
+      inspectorSnapshot: string;
+      clientSnapshot: string;
+      merge_choice?: "merge_all" | "zones_only";
+    }) => {
+      const {
+        photoZones,
+        proposed,
+        skipEntryMerge,
+        zonePatchCount,
+        photoCount,
+        entriesSnapshot,
+        titleSnapshot,
+        inspectorSnapshot,
+        clientSnapshot,
+        merge_choice,
+      } = params;
+
+      setPhotos((prev) =>
+        prev.map((p) => {
+          const sid = p.serverPhotoId?.trim();
+          if (!sid) return p;
+          const inferred = photoZones[sid];
+          if (!inferred || !ZONES.some((z) => z.value === inferred)) return p;
+          const z = inferred as ZoneCode;
+          if ((p.linked_zone ?? "autre") !== "autre") return p;
+          return { ...p, linked_zone: z };
+        }),
+      );
+
+      let mergedEntries = entriesSnapshot;
+      if (!skipEntryMerge && proposed.length > 0) {
+        const prev = entriesSnapshot;
+        const isPristineDefault =
+          prev.length === 1 &&
+          prev[0]?.zone === "salon" &&
+          prev[0]?.issue === "water_infiltration" &&
+          prev[0]?.severity === "medium" &&
+          !(prev[0]?.note ?? "").trim();
+        mergedEntries = isPristineDefault
+          ? proposed.map((e) => ({ ...e }))
+          : [...prev, ...proposed];
+        setEntries(mergedEntries);
+      }
+
+      draftBaselineRef.current = {
+        title: titleSnapshot.trim(),
+        inspectorNote: inspectorSnapshot,
+        clientFacingSnapshot: clientSnapshot,
+        entriesJson: serializeEntriesForBaseline(mergedEntries),
+      };
+
+      const proposedApplied = skipEntryMerge ? 0 : proposed.length;
+      const skippedFindingsManual = skipEntryMerge && proposed.length > 0;
+      emitProductEvent("photos_qc_draft_apply", {
+        report_id: reportId,
+        ok: true,
+        zone_patch_count: zonePatchCount,
+        proposed_count: proposedApplied,
+        photo_count: photoCount,
+        skipped_findings_manual_edit: skippedFindingsManual,
+        ...(merge_choice ? { merge_choice } : {}),
+      });
+
+      if (skipEntryMerge && proposed.length > 0) {
+        if (zonePatchCount > 0) {
+          setStatus(labels.qcDraftZonesOnlyManualEdits);
+        } else {
+          setStatus(labels.qcDraftSkippedFindingsNoZones);
+        }
+      } else if (zonePatchCount === 0 && proposed.length === 0) {
+        setStatus(
+          language === "en"
+            ? "Nothing new to apply — zones and QC sections may already match stored analyses."
+            : "Rien de nouveau à appliquer — les zones et la grille QC correspondent peut-être déjà aux analyses.",
+        );
+      } else {
+        setStatus(
+          language === "en"
+            ? `Applied ${zonePatchCount} photo zone(s) and ${proposedApplied} draft finding(s). Review before generating the PDF.`
+            : `${zonePatchCount} zone(s) photo et ${proposedApplied} brouillon(s) de constat appliqués. Relire avant de générer le PDF.`,
+        );
+      }
+    },
+    [reportId, labels, language],
+  );
+
+  const resolveQcMergeChoice = useCallback(
+    (choice: "merge_all" | "zones_only" | "cancel") => {
+      if (choice === "cancel") {
+        setQcMergePending(null);
+        return;
+      }
+      const pending = qcMergePending;
+      if (!pending) return;
+      setQcMergePending(null);
+      const skipEntryMerge = choice === "zones_only";
+      finalizeQcPhotoDraftApply({
+        photoZones: pending.photoZones,
+        proposed: pending.proposed,
+        skipEntryMerge,
+        zonePatchCount: pending.zonePatchCount,
+        photoCount: pending.photoCount,
+        entriesSnapshot: entries,
+        titleSnapshot: title,
+        inspectorSnapshot: inspectorNote,
+        clientSnapshot: clientSectionValue,
+        merge_choice: choice,
+      });
+    },
+    [
+      qcMergePending,
+      entries,
+      title,
+      inspectorNote,
+      clientSectionValue,
+      finalizeQcPhotoDraftApply,
+    ],
+  );
+
+  useEffect(() => {
+    if (!qcMergePending) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setQcMergePending(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [qcMergePending]);
+
+  const applyPhotoQcDraftFromServer = useCallback(async () => {
+    if (!viewerToken?.trim()) {
+      setError(
+        language === "en"
+          ? "Open this page with the full report link (includes ?token=…) to run this action."
+          : "Ouvrez cette page avec le lien complet du rapport (?token=…) pour lancer cette action.",
+      );
+      return;
+    }
+    setPhotoQcDraftBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/report-photos-qc-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_id: reportId,
+          access_token: viewerToken,
+          language,
+          entries: entries.map((e) => ({
+            zone: e.zone,
+            note: e.note ?? "",
+          })),
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        photo_count?: number;
+        photo_zones?: Record<string, string>;
+        proposed_entries?: ReportEntryInput[];
+      };
+      if (!res.ok || !body.success) {
+        throw new Error(typeof body.error === "string" ? body.error : `Erreur ${res.status}`);
+      }
+      const photoZones = body.photo_zones ?? {};
+      const proposed = Array.isArray(body.proposed_entries) ? body.proposed_entries : [];
+      const photoCount = typeof body.photo_count === "number" ? body.photo_count : 0;
+      if (photoCount === 0) {
+        setStatus(
+          language === "en"
+            ? "No usable photo analyses yet — upload photos and wait a few seconds, then retry."
+            : "Pas d’analyses photo exploitables pour l’instant — téléversez des photos, attendez quelques secondes, puis réessayez.",
+        );
+        emitProductEvent("photos_qc_draft_apply", { report_id: reportId, ok: true, empty: true });
+        return;
+      }
+
+      const baseline = draftBaselineRef.current;
+      const manualEdit =
+        baseline != null &&
+        (title.trim() !== baseline.title ||
+          inspectorNote !== baseline.inspectorNote ||
+          clientSectionValue !== baseline.clientFacingSnapshot ||
+          serializeEntriesForBaseline(entries) !== baseline.entriesJson);
+
+      const zonePatchCount = photos.filter((p) => {
+        const sid = p.serverPhotoId?.trim();
+        if (!sid) return false;
+        const inferred = photoZones[sid];
+        if (!inferred || !ZONES.some((z) => z.value === inferred)) return false;
+        return (p.linked_zone ?? "autre") === "autre";
+      }).length;
+
+      if (manualEdit && proposed.length > 0) {
+        setQcMergePending({ photoZones, proposed, zonePatchCount, photoCount });
+        return;
+      }
+
+      finalizeQcPhotoDraftApply({
+        photoZones,
+        proposed,
+        skipEntryMerge: false,
+        zonePatchCount,
+        photoCount,
+        entriesSnapshot: entries,
+        titleSnapshot: title,
+        inspectorSnapshot: inspectorNote,
+        clientSnapshot: clientSectionValue,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      emitProductEvent("photos_qc_draft_apply", { report_id: reportId, ok: false, error: msg });
+    } finally {
+      setPhotoQcDraftBusy(false);
+    }
+  }, [
+    viewerToken,
+    reportId,
+    language,
+    entries,
+    photos,
+    title,
+    inspectorNote,
+    clientSectionValue,
+    finalizeQcPhotoDraftApply,
+  ]);
+
+  const buildReportContentBody = useMemo(
+    () => ({
+      report_id: reportId,
+      access_token: viewerToken ?? "",
+      title,
+      inspector_note: inspectorNote,
+      client_section: clientSectionValue,
+      polish_client: polishClient,
+      entries,
+      language,
+      jurisdiction,
+      photos_coverage: photosCoverageByZone,
+    }),
+    [
+      reportId,
+      viewerToken,
+      title,
+      inspectorNote,
+      clientSectionValue,
+      polishClient,
+      entries,
+      language,
+      jurisdiction,
+      photosCoverageByZone,
+    ],
+  );
+
+  const postReportContent = useCallback(async () => {
+    const reportContentMs = polishClient ? 240_000 : 180_000;
+    const saveRes = await withTimeout(
+      fetch("/api/report-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildReportContentBody),
+      }),
+      reportContentMs,
+      "report-content",
+    );
+    const saveBody = await readResponseJson<{
+      success?: boolean;
+      error?: string;
+      code?: string;
+      polish_outcome?: "applied" | "too_long" | "aborted" | "unavailable" | "timeout";
+    }>(saveRes);
+    if (!saveRes.ok || !saveBody?.success) {
+      if (saveBody?.code === "report_locked") {
+        setContentSaveErrorCode("report_locked");
+      }
+      throw new Error(
+        saveBody?.error ?? `Impossible d'enregistrer le contenu (${saveRes.status})`,
+      );
+    }
+    setContentSaveErrorCode(null);
+    return saveBody;
+  }, [buildReportContentBody, polishClient]);
+
+  const persistReportDraft = useCallback(async () => {
+    if (!viewerToken?.trim()) {
+      setError(
+        language === "en"
+          ? "Open this page with the full report link (includes ?token=…) to save."
+          : "Ouvrez cette page avec le lien complet (?token=…) pour enregistrer.",
+      );
+      return;
+    }
+    if (entries.length === 0) return;
+    setSavingDraft(true);
+    setError(null);
+    setContentSaveErrorCode(null);
+    try {
+      const saveBody = await postReportContent();
+      let done =
+        language === "en"
+          ? "Draft saved to the server. Generate or refresh the PDF when ready."
+          : "Brouillon enregistré sur le serveur. Générez ou rafraîchissez le PDF quand vous serez prêt.";
+      if (
+        polishClient &&
+        saveBody.polish_outcome &&
+        saveBody.polish_outcome !== "applied"
+      ) {
+        const o = saveBody.polish_outcome;
+        const extra =
+          o === "too_long"
+            ? labels.polishSkippedTooLong
+            : o === "aborted"
+              ? labels.polishSkippedAborted
+              : o === "timeout"
+                ? labels.polishSkippedTimeout
+                : labels.polishSkippedUnavailable;
+        done = `${done} ${extra}`;
+      }
+      setStatus(done);
+      emitProductEvent("report_draft_saved", { report_id: reportId });
+      localStorage.removeItem(storageKey);
+      draftBaselineRef.current = {
+        title: title.trim(),
+        inspectorNote,
+        clientFacingSnapshot: clientSectionValue,
+        entriesJson: serializeEntriesForBaseline(entries),
+      };
+      draftBaselineCapturedRef.current = true;
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus(null);
+    } finally {
+      setSavingDraft(false);
+    }
+  }, [
+    viewerToken,
+    postReportContent,
+    language,
+    labels,
+    polishClient,
+    router,
+    storageKey,
+    reportId,
+    title,
+    inspectorNote,
+    clientSectionValue,
+    entries,
+  ]);
 
   const requestPdfGeneration = useCallback(async () => {
     let pdfRes: Response;
@@ -1069,6 +1699,8 @@ export default function ZeroDraftReportComposer({
 
   const clearLocalDraft = () => {
     localStorage.removeItem(storageKey);
+    draftBaselineCapturedRef.current = false;
+    draftBaselineRef.current = null;
     setTitle(language === "en" ? "Automated inspection report" : "Rapport d'inspection automatisé");
     setInspectorNote("");
     setClientOverride(null);
@@ -1082,13 +1714,6 @@ export default function ZeroDraftReportComposer({
   };
 
   const handleGenerate = async () => {
-    const readJsonSafe = async <T,>(res: Response): Promise<T | null> => {
-      try {
-        return (await res.json()) as T;
-      } catch {
-        return null;
-      }
-    };
     try {
       setLoading(true);
       setError(null);
@@ -1135,39 +1760,7 @@ export default function ZeroDraftReportComposer({
       setStatus(
         "Etape 1/2: generation du contenu structure… (1er appel : jusqu’a ~3 min si Next compile la route ou disque lent)",
       );
-      /** 60s trop court : premier POST /api/report-content peut prendre 100s+ (Turbopack + Bureau lent). */
-      const reportContentMs = polishClient ? 240_000 : 180_000;
-      const saveRes = await withTimeout(
-        fetch("/api/report-content", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            report_id: reportId,
-            access_token: viewerToken ?? "",
-            title,
-            inspector_note: inspectorNote,
-            client_section: clientSectionValue,
-            polish_client: polishClient,
-            entries,
-            language,
-            jurisdiction,
-            photos_coverage: photosCoverageByZone,
-          }),
-        }),
-        reportContentMs,
-        "report-content",
-      );
-      const saveBody = await readJsonSafe<{
-        success?: boolean;
-        error?: string;
-        polish_outcome?: "applied" | "too_long" | "aborted" | "unavailable" | "timeout";
-      }>(saveRes);
-      if (!saveRes.ok || !saveBody?.success) {
-        throw new Error(
-          saveBody?.error ??
-            `Impossible d'enregistrer le contenu (${saveRes.status})`,
-        );
-      }
+      const saveBody = await postReportContent();
 
       setStatus("Etape 2/2: generation du PDF...");
       const nextPdfLink = await requestPdfGeneration();
@@ -1507,9 +2100,9 @@ export default function ZeroDraftReportComposer({
             type="button"
             className="mt-2 inline-flex rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
             onClick={() =>
-              document.getElementById("inspectflow-generate-pdf-cta")?.scrollIntoView({
+              document.getElementById("inspectflow-step-3")?.scrollIntoView({
                 behavior: "smooth",
-                block: "center",
+                block: "start",
               })
             }
           >
@@ -1538,179 +2131,74 @@ export default function ZeroDraftReportComposer({
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <label className="block text-sm font-medium text-slate-700">
-            {labels.reportTitle}
-            <input
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              disabled={loading}
-            />
-          </label>
+        <div className="space-y-6">
+          <InspectorStepBlock
+            step={1}
+            title={labels.step1Title}
+            hint={labels.step1Hint}
+            id="inspectflow-step-1"
+          >
+            {viewerToken?.trim() ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/90 p-4">
+                <p className="text-sm font-semibold text-amber-950">{labels.step1CoverBoxTitle}</p>
+                <p className="mt-1 text-xs leading-relaxed text-amber-900">{labels.step1CoverBoxBody}</p>
+                <Link
+                  href={`/rapport/couverture?report=${encodeURIComponent(reportId)}&token=${encodeURIComponent(viewerToken.trim())}`}
+                  className="mt-3 inline-flex rounded-md bg-amber-800 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-900"
+                >
+                  {labels.openCoverPage}
+                </Link>
+              </div>
+            ) : (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {labels.missingToken}
+              </p>
+            )}
 
-          <div className="grid gap-2 md:grid-cols-2">
             <label className="block text-sm font-medium text-slate-700">
-              {labels.language}
-              <select
-                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as ReportLanguage)}
-                disabled={loading}
-              >
-                <option value="fr">Francais</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-            <label className="block text-sm font-medium text-slate-700">
-              {labels.jurisdiction}
-              <select
-                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
-                value={jurisdiction}
-                onChange={(e) => setJurisdiction(e.target.value as JurisdictionProfile)}
-                disabled={loading}
-              >
-                <option value="ca_general">Canada (general)</option>
-                <option value="ca_qc">Quebec (Canada)</option>
-              </select>
-            </label>
-          </div>
-
-          <label className="block text-sm font-medium text-slate-700">
-            {labels.inspectorNote}
-            <textarea
-              className="mt-1 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
-              value={inspectorNote}
-              onChange={(e) => setInspectorNote(e.target.value)}
-              placeholder="Contexte global, acces, contraintes..."
-              disabled={loading}
-            />
-          </label>
-
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <label className="block text-sm font-medium text-slate-800">
-                {labels.clientSection}
-              </label>
-              <button
-                type="button"
-                className="shrink-0 rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
-                disabled={loading}
-                onClick={() => setClientOverride(null)}
-              >
-                {labels.regenerateClient}
-              </button>
-            </div>
-            <p className="mt-1 text-xs text-slate-600">{labels.clientSectionHint}</p>
-            <textarea
-              className="mt-2 min-h-36 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-              value={clientSectionValue}
-              onChange={(e) => setClientOverride(e.target.value)}
-              disabled={loading}
-            />
-            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+              {labels.reportTitle}
               <input
-                type="checkbox"
-                checked={polishClient}
-                onChange={(e) => setPolishClient(e.target.checked)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
                 disabled={loading}
               />
-              {labels.polishClientLabel}
             </label>
-          </div>
 
-          <div id="report-entries-zone" className="scroll-mt-28 space-y-3">
-            {entries.map((entry, idx) => (
-              <div key={idx} className="rounded-lg border border-slate-200 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-slate-800">{labels.finding} #{idx + 1}</p>
-                  <button
-                    type="button"
-                    className="text-xs text-red-600 disabled:text-slate-400"
-                    disabled={entries.length === 1 || loading}
-                    onClick={() => removeEntry(idx)}
-                  >
-                    {labels.remove}
-                  </button>
-                </div>
-
-                <div className="grid gap-2 md:grid-cols-3">
-                  <select
-                    className="rounded-md border border-slate-300 px-2 py-2 text-sm"
-                    value={entry.zone}
-                    onChange={(e) => updateEntry(idx, "zone", e.target.value as ZoneCode)}
-                    disabled={loading}
-                  >
-                    {ZONES.map((zone) => (
-                      <option key={zone.value} value={zone.value}>
-                        {zone.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    className="rounded-md border border-slate-300 px-2 py-2 text-sm"
-                    value={entry.issue}
-                    onChange={(e) => updateEntry(idx, "issue", e.target.value as IssueCode)}
-                    disabled={loading}
-                  >
-                    {ISSUES.map((issue) => (
-                      <option key={issue.value} value={issue.value}>
-                        {issue.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    className="rounded-md border border-slate-300 px-2 py-2 text-sm"
-                    value={entry.severity}
-                    onChange={(e) => updateEntry(idx, "severity", e.target.value as Severity)}
-                    disabled={loading}
-                  >
-                    {SEVERITIES.map((severity) => (
-                      <option key={severity.value} value={severity.value}>
-                        {severity.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <input
-                  className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={entry.note ?? ""}
-                  onChange={(e) => updateEntry(idx, "note", e.target.value)}
-                  placeholder="Note optionnelle pour ce constat..."
+            <div className="grid gap-2 md:grid-cols-2">
+              <label className="block text-sm font-medium text-slate-700">
+                {labels.language}
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as ReportLanguage)}
                   disabled={loading}
-                />
-              </div>
-            ))}
-          </div>
+                >
+                  <option value="fr">Francais</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                {labels.jurisdiction}
+                <select
+                  className="mt-1 w-full rounded-md border border-slate-300 px-2 py-2 text-sm"
+                  value={jurisdiction}
+                  onChange={(e) => setJurisdiction(e.target.value as JurisdictionProfile)}
+                  disabled={loading}
+                >
+                  <option value="ca_general">Canada (general)</option>
+                  <option value="ca_qc">Quebec (Canada)</option>
+                </select>
+              </label>
+            </div>
+          </InspectorStepBlock>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-              onClick={addEntry}
-              disabled={loading}
-            >
-              {labels.addFinding}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-              onClick={clearLocalDraft}
-              disabled={loading}
-            >
-              {labels.clearDraft}
-            </button>
-          </div>
-
-          <NotesCapture
-            reportId={reportId}
-            language={language}
-            onNotesProcessed={handleNotesProcessed}
-          />
-
+          <InspectorStepBlock
+            step={2}
+            title={labels.step2Title}
+            hint={labels.step2Hint}
+            id="inspectflow-step-2"
+          >
           {viewMode === "inspector" ? (
             <TerrainGuidePanel
               language={language}
@@ -1757,6 +2245,24 @@ export default function ZeroDraftReportComposer({
               }
               onPhotoUploaded={() => router.refresh()}
             />
+            {viewerToken?.trim() ? (
+              <div className="mt-3 rounded-lg border border-indigo-200/80 bg-indigo-50/70 px-3 py-2.5 text-xs text-indigo-950">
+                <p className="font-semibold text-sm text-indigo-950">{labels.applyPhotoQcDraft}</p>
+                <p className="mt-1 leading-snug text-indigo-900/90">{labels.applyPhotoQcDraftHint}</p>
+                <button
+                  type="button"
+                  disabled={loading || uploadingPhoto || photoQcDraftBusy}
+                  onClick={() => void applyPhotoQcDraftFromServer()}
+                  className="mt-2 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {photoQcDraftBusy
+                    ? language === "en"
+                      ? "Working…"
+                      : "Traitement…"
+                    : labels.applyPhotoQcDraftRun}
+                </button>
+              </div>
+            ) : null}
             <input
               ref={photoInputRef}
               id="report-photos-input"
@@ -1837,6 +2343,8 @@ export default function ZeroDraftReportComposer({
                 {photos.map((photo) => (
                   <div key={photo.id} className="rounded-md border border-slate-200 p-1.5 text-center">
                     {photo.url ? (
+                      // URLs Storage publiques — évite next/image (domaines / tailles variables en session).
+                      // eslint-disable-next-line @next/next/no-img-element -- thumbnails terrain depuis Supabase public URL
                       <img
                         src={photo.url}
                         alt={photo.name}
@@ -1914,9 +2422,154 @@ export default function ZeroDraftReportComposer({
               </div>
             ) : null}
           </div>
+
+            <p className="text-xs leading-relaxed text-slate-600">{labels.entriesBlockHint}</p>
+            <div id="report-entries-zone" className="scroll-mt-28 space-y-3">
+              {entries.map((entry, idx) => (
+                <div key={idx} className="rounded-lg border border-slate-200 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-800">
+                      {labels.finding} #{idx + 1}
+                    </p>
+                    <button
+                      type="button"
+                      className="text-xs text-red-600 disabled:text-slate-400"
+                      disabled={entries.length === 1 || loading}
+                      onClick={() => removeEntry(idx)}
+                    >
+                      {labels.remove}
+                    </button>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <select
+                      className="rounded-md border border-slate-300 px-2 py-2 text-sm"
+                      value={entry.zone}
+                      onChange={(e) => updateEntry(idx, "zone", e.target.value as ZoneCode)}
+                      disabled={loading}
+                    >
+                      {ZONES.map((zone) => (
+                        <option key={zone.value} value={zone.value}>
+                          {zone.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      className="rounded-md border border-slate-300 px-2 py-2 text-sm"
+                      value={entry.issue}
+                      onChange={(e) => updateEntry(idx, "issue", e.target.value as IssueCode)}
+                      disabled={loading}
+                    >
+                      {ISSUES.map((issue) => (
+                        <option key={issue.value} value={issue.value}>
+                          {issue.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      className="rounded-md border border-slate-300 px-2 py-2 text-sm"
+                      value={entry.severity}
+                      onChange={(e) => updateEntry(idx, "severity", e.target.value as Severity)}
+                      disabled={loading}
+                    >
+                      {SEVERITIES.map((severity) => (
+                        <option key={severity.value} value={severity.value}>
+                          {severity.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <input
+                    className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    value={entry.note ?? ""}
+                    onChange={(e) => updateEntry(idx, "note", e.target.value)}
+                    placeholder="Note optionnelle pour ce constat..."
+                    disabled={loading}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                onClick={addEntry}
+                disabled={loading}
+              >
+                {labels.addFinding}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                onClick={clearLocalDraft}
+                disabled={loading}
+              >
+                {labels.clearDraft}
+              </button>
+            </div>
+          </InspectorStepBlock>
         </div>
 
-        <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
+        <InspectorStepBlock
+          step={3}
+          title={labels.step3Title}
+          hint={labels.step3Hint}
+          id="inspectflow-step-3"
+          surfaceClassName="bg-slate-50"
+        >
+          <label className="block text-sm font-medium text-slate-700">
+            {labels.inspectorNote}
+            <textarea
+              className="mt-1 min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
+              value={inspectorNote}
+              onChange={(e) => setInspectorNote(e.target.value)}
+              placeholder="Contexte global, acces, contraintes..."
+              disabled={loading}
+            />
+          </label>
+
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <label className="block text-sm font-medium text-slate-800">
+                {labels.clientSection}
+              </label>
+              <button
+                type="button"
+                className="shrink-0 rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                disabled={loading}
+                onClick={() => setClientOverride(null)}
+              >
+                {labels.regenerateClient}
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-slate-600">{labels.clientSectionHint}</p>
+            <textarea
+              className="mt-2 min-h-36 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              value={clientSectionValue}
+              onChange={(e) => setClientOverride(e.target.value)}
+              disabled={loading}
+            />
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={polishClient}
+                onChange={(e) => setPolishClient(e.target.checked)}
+                disabled={loading}
+              />
+              {labels.polishClientLabel}
+            </label>
+          </div>
+
+          <NotesCapture
+            reportId={reportId}
+            language={language}
+            onNotesProcessed={handleNotesProcessed}
+          />
+
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-base font-semibold text-slate-900">{labels.previewTitle}</h3>
             <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${riskBadgeClass}`}>
@@ -1969,6 +2622,24 @@ export default function ZeroDraftReportComposer({
                   {labels.openCoverPage}
                 </Link>
               ) : null}
+            </div>
+          ) : null}
+
+          {viewerToken?.trim() ? (
+            <div className="space-y-1.5">
+              <p className="text-xs text-slate-600">{labels.saveDraftHint}</p>
+              <button
+                type="button"
+                disabled={loading || savingDraft || entries.length === 0}
+                onClick={() => void persistReportDraft()}
+                className="w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingDraft
+                  ? language === "en"
+                    ? "Saving…"
+                    : "Enregistrement…"
+                  : labels.saveDraftButton}
+              </button>
             </div>
           ) : null}
 
@@ -2039,8 +2710,52 @@ export default function ZeroDraftReportComposer({
               {labels.openPdf}
             </a>
           ) : null}
-        </div>
+        </InspectorStepBlock>
       </div>
+
+      {qcMergePending ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => resolveQcMergeChoice("cancel")}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="qc-merge-dialog-title"
+            className="max-w-lg rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="qc-merge-dialog-title" className="text-lg font-semibold text-slate-900">
+              {labels.qcMergeDialogTitle}
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">{labels.qcMergeDialogBody}</p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                className="order-3 rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:order-1"
+                onClick={() => resolveQcMergeChoice("cancel")}
+              >
+                {labels.qcMergeCancel}
+              </button>
+              <button
+                type="button"
+                className="order-2 rounded-md border border-indigo-300 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-950 hover:bg-indigo-100"
+                onClick={() => resolveQcMergeChoice("zones_only")}
+              >
+                {labels.qcMergeZonesOnly}
+              </button>
+              <button
+                type="button"
+                className="order-1 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 sm:order-3"
+                onClick={() => resolveQcMergeChoice("merge_all")}
+              >
+                {labels.qcMergeMergeAll}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
