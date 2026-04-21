@@ -38,20 +38,24 @@ export async function loadPhotoRowsForReport(
       ? String(links.inspection_id)
       : null;
 
-  if (links.photo_id) {
+  /**
+   * `reports.photo_id` pointe souvent vers la dernière photo uploadée : on l’utilise
+   * seulement pour retrouver `inspection_id`, puis on charge **toutes** les photos
+   * du lot — sinon le QC / la couverture ne voient qu’une seule ligne (ex. panneau
+   * électrique absent si ce n’était pas la dernière image).
+   */
+  if (!inspectionId && links.photo_id) {
     const { data: row, error } = await supabase
       .from("photos")
-      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .select("inspection_id")
       .eq("id", links.photo_id)
       .maybeSingle();
-    if (!error && row) {
-      const r = row as ReportPhotoRow;
-      const iid = r.inspection_id != null ? String(r.inspection_id) : inspectionId;
-      return { rows: [r], source: "reports.photo_id", inspectionId: iid };
+    if (!error && row?.inspection_id != null && String(row.inspection_id) !== "") {
+      inspectionId = String(row.inspection_id);
     }
   }
 
-  if (links.job_id) {
+  if (!inspectionId && links.job_id) {
     const { data: job, error: jobErr } = await supabase
       .from("jobs")
       .select("photo_id, inspection_id")
@@ -59,19 +63,21 @@ export async function loadPhotoRowsForReport(
       .maybeSingle();
 
     if (!jobErr && job) {
-      if (!inspectionId && job.inspection_id) {
+      if (job.inspection_id != null && String(job.inspection_id) !== "") {
         inspectionId = String(job.inspection_id);
       }
-      if (job.photo_id) {
+      if (
+        !inspectionId &&
+        job.photo_id != null &&
+        String(job.photo_id) !== ""
+      ) {
         const { data: row, error } = await supabase
           .from("photos")
-          .select("id, analysis, inspection_id, photo_number, storage_path")
-          .eq("id", job.photo_id)
+          .select("inspection_id")
+          .eq("id", String(job.photo_id))
           .maybeSingle();
-        if (!error && row) {
-          const r = row as ReportPhotoRow;
-          const iid = r.inspection_id != null ? String(r.inspection_id) : inspectionId;
-          return { rows: [r], source: "jobs.photo_id", inspectionId: iid };
+        if (!error && row?.inspection_id != null && String(row.inspection_id) !== "") {
+          inspectionId = String(row.inspection_id);
         }
       }
     }
@@ -91,6 +97,46 @@ export async function loadPhotoRowsForReport(
         inspectionId,
         source: "photos.by_inspection_id",
       };
+    }
+  }
+
+  /* Dernier recours : une seule photo liée au rapport, sans inspection résolvable */
+  if (links.photo_id) {
+    const { data: row, error } = await supabase
+      .from("photos")
+      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .eq("id", links.photo_id)
+      .maybeSingle();
+    if (!error && row) {
+      const r = row as ReportPhotoRow;
+      return {
+        rows: [r],
+        inspectionId: r.inspection_id != null ? String(r.inspection_id) : null,
+        source: "reports.photo_id_only",
+      };
+    }
+  }
+
+  if (links.job_id) {
+    const { data: job, error: jobErr } = await supabase
+      .from("jobs")
+      .select("photo_id")
+      .eq("id", links.job_id)
+      .maybeSingle();
+    if (!jobErr && job?.photo_id != null && String(job.photo_id) !== "") {
+      const { data: row, error } = await supabase
+        .from("photos")
+        .select("id, analysis, inspection_id, photo_number, storage_path")
+        .eq("id", String(job.photo_id))
+        .maybeSingle();
+      if (!error && row) {
+        const r = row as ReportPhotoRow;
+        return {
+          rows: [r],
+          inspectionId: r.inspection_id != null ? String(r.inspection_id) : null,
+          source: "jobs.photo_id_only",
+        };
+      }
     }
   }
 

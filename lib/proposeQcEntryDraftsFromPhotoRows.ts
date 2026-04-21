@@ -94,7 +94,17 @@ export function proposeQcEntryDraftsFromPhotoRows(
     scored.sort((a, b) => b.weight - a.weight);
     const pick = scored[0]!;
     const zone = pick.zone as ZoneCode;
-    const note = noteFromAnalysis(pick.analysis, language);
+    let note = noteFromAnalysis(pick.analysis, language);
+    if (!note.trim() && zone) {
+      note =
+        zone === "installation_electrique"
+          ? language === "en"
+            ? "Electrical / service panel area — complete wording after on-site verification."
+            : "Zone installation électrique / panneau — complétez le libellé après vérification terrain."
+          : language === "en"
+            ? `Photo evidence (${zone.replace(/_/g, " ")}) — add detail after site review.`
+            : `Constat issu d’une photo (${zone.replace(/_/g, " ")}) — précisez après vérification terrain.`;
+    }
     if (!note.trim()) continue;
 
     out.push({

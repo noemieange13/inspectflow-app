@@ -836,7 +836,7 @@ export default function ZeroDraftReportComposer({
         "That is where the requérant, clients and address are recorded together with the declaration — needed before a proper PDF.",
       step2Title: "Step 2 — Photos & findings (mostly pick lists)",
       step2Hint:
-        "Upload photos, wait a few seconds for analysis, then use QC to suggest zones and draft finding rows. Technical sections write themselves from your picks.",
+        "Upload photos, wait a few seconds for server vision on each image, then tap “Generate now” in the blue box below — that step fills zones and draft findings (nothing auto-fills until you run it).",
       step3Title: "Step 3 — Optional notes, client letter, preview & PDF",
       step3Hint:
         "Field note and client summary can stay automatic. Save the draft to the server, then generate when cover checks pass.",
@@ -848,10 +848,12 @@ export default function ZeroDraftReportComposer({
       qcMergeMergeAll: "Merge draft findings anyway",
       qcMergeZonesOnly: "Update photo zones only",
       qcMergeCancel: "Cancel",
-      applyPhotoQcDraft: "Zones + QC draft findings (1 click)",
-      applyPhotoQcDraftRun: "Apply now",
+      applyPhotoQcDraft: "Auto-generate from photos",
+      applyPhotoQcDraftRun: "Generate now",
       applyPhotoQcDraftHint:
-        "Uses analyses already stored for this report’s photos. Only updates photos still on “Other”; manually chosen zones are kept. If you edited the title, client summary, field note, or findings, a short choice appears: merge draft findings, zones only, or cancel. Re-fetch runs automatically after bulk upload while vision finishes.",
+        "Uses every stored photo analysis for this inspection (wait a few seconds after each upload). Updates “Other” zones, proposes missing QC findings (including electrical when the model sees a panel). If you edited title / client text / findings, a dialog offers merge vs zones-only. Needs OPENAI_API_KEY on the server.",
+      photoAfterUploadReminder:
+        "Photos alone do not fill the report: after import, wait for analysis, then click “Generate now” in the blue box below.",
       saveDraftButton: "Save draft to server (no PDF)",
       saveDraftHint:
         "Persists structured findings, client summary, inspector note, and photo coverage. Use this to validate zero-touch edits before generating the PDF.",
@@ -943,7 +945,7 @@ export default function ZeroDraftReportComposer({
         "C’est là qu’on enregistre requérant, clients et identité du bien avec la déclaration du vendeur — nécessaire avant un PDF conforme.",
       step2Title: "Étape 2 — Photos et constats (surtout des listes)",
       step2Hint:
-        "Téléversez les photos, attendez quelques secondes l’analyse, puis utilisez QC pour proposer les zones et des lignes de constats. Les sections techniques se rédigent à partir de vos choix.",
+        "Téléversez les photos, attendez quelques secondes l’analyse serveur sur chaque image, puis cliquez sur « Lancer maintenant » dans l’encadré bleu ci-dessous — c’est cette action qui remplit les zones et les brouillons (rien ne se remplit tout seul avant cette étape).",
       step3Title: "Étape 3 — Notes (optionnel), texte client, aperçu et PDF",
       step3Hint:
         "La note terrain et le compte rendu client peuvent rester sur le texte automatique. Enregistrez le brouillon, puis générez le PDF quand la couverture est complète.",
@@ -955,10 +957,12 @@ export default function ZeroDraftReportComposer({
       qcMergeMergeAll: "Fusionner les brouillons quand même",
       qcMergeZonesOnly: "Mettre à jour les zones photo seulement",
       qcMergeCancel: "Annuler",
-      applyPhotoQcDraft: "Zones + brouillons QC (1 clic)",
-      applyPhotoQcDraftRun: "Appliquer",
+      applyPhotoQcDraft: "Auto-générer le contenu à partir des photos",
+      applyPhotoQcDraftRun: "Lancer maintenant",
       applyPhotoQcDraftHint:
-        "S’appuie sur les analyses déjà enregistrées pour les photos du rapport. Met à jour seulement les photos encore sur « Autre » ; les zones choisies manuellement sont conservées. Si le titre, le compte rendu client, la note ou les constats ont été modifiés à la main, une fenêtre propose : fusionner les brouillons, zones seulement, ou annuler. Rechargement auto après lot pour laisser finir l’analyse vision.",
+        "Utilise toutes les analyses enregistrées pour les photos de cette inspection (attendre quelques secondes après chaque import). Met à jour les zones « Autre », propose les constats manquants de la grille QC (dont électrique / panneau si l’analyse le permet). Si le titre, le texte client ou les constats ont été modifiés, une fenêtre propose fusion ou zones seulement. Sur Vercel : OPENAI_API_KEY requise côté serveur.",
+      photoAfterUploadReminder:
+        "Les photos seules ne remplissent pas le rapport : après import, attendez l’analyse puis cliquez sur « Lancer maintenant » ci-dessous.",
       saveDraftButton: "Enregistrer le brouillon (serveur, sans PDF)",
       saveDraftHint:
         "Enregistre en base les constats, le compte rendu client, la note terrain et la couverture photo. À utiliser pour valider le parcours zéro rédaction avant de générer le PDF.",
@@ -2253,6 +2257,14 @@ export default function ZeroDraftReportComposer({
               }
               onPhotoUploaded={() => router.refresh()}
             />
+            {validPhotoCount > 0 && viewerToken?.trim() ? (
+              <p
+                className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/95 px-3 py-2 text-xs font-medium leading-snug text-emerald-950"
+                role="note"
+              >
+                {labels.photoAfterUploadReminder}
+              </p>
+            ) : null}
             {viewerToken?.trim() ? (
               <div className="mt-3 rounded-lg border border-indigo-200/80 bg-indigo-50/70 px-3 py-2.5 text-xs text-indigo-950">
                 <p className="font-semibold text-sm text-indigo-950">{labels.applyPhotoQcDraft}</p>
