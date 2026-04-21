@@ -17,6 +17,7 @@ Guide unique pour mettre **InspectFlow** en ligne avec le pipeline PDF **`report
 | `DASHBOARD_USER` / `DASHBOARD_PASS` | si `/dashboard` | Basic Auth (middleware) |
 | `RESEND_API_KEY` / `RESEND_FROM` | non | Email « première vue » |
 | `WEBHOOK_REPORT_OPENED` / `WEBHOOK_SECRET` | non | Webhook optionnel |
+| `OPENAI_API_KEY` | **recommandé** | Assistant couverture (`/api/inspection-assist`), synthèse condition, extraction DV, analyse photos, etc. Sans elle, ces actions répondent **503** avec un message explicite. |
 
 Modèle local : **`.env.example`** à la racine du repo.
 

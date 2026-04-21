@@ -323,15 +323,37 @@ export default function InspectionCoverForm({
     });
   }, []);
 
-  const tryCompassFacade = useCallback(() => {
+  const tryCompassFacade = useCallback(async () => {
     if (typeof window === "undefined" || !window.DeviceOrientationEvent) {
       setIaMessage(
-        "Boussole indisponible : choisissez Nord / Sud / Est / Ouest ci-dessous.",
+        "Boussole indisponible sur ce navigateur — choisissez Nord / Sud / Est / Ouest ci-dessous.",
       );
       return;
     }
+
+    // iOS 13+ (Safari) : sans cette permission, aucun événement `deviceorientation` n’est émis.
+    const OrientationCtor = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<"granted" | "denied" | "default">;
+    };
+    if (typeof OrientationCtor.requestPermission === "function") {
+      try {
+        const perm = await OrientationCtor.requestPermission();
+        if (perm !== "granted") {
+          setIaMessage(
+            "Accès à la boussole refusé — indiquez l’orientation à la main (Nord / Sud / Est / Ouest).",
+          );
+          return;
+        }
+      } catch {
+        setIaMessage(
+          "Impossible d’activer la boussole — choisissez l’orientation manuellement.",
+        );
+        return;
+      }
+    }
+
     setCompassSampling(true);
-    setIaMessage("Inclinez l’appareil ; échantillon du cap en cours…");
+    setIaMessage("Tenez le téléphone à plat et tournez-vous ; lecture du cap…");
     let settled = false;
     const done = (dir: FacadeOrientation) => {
       if (settled) return;
@@ -361,7 +383,7 @@ export default function InspectionCoverForm({
         window.removeEventListener("deviceorientation", onOrient);
         setCompassSampling(false);
         setIaMessage(
-          "Cap non reçu — utilisez le choix manuel Nord / Sud / Est / Ouest.",
+          "Cap non reçu (souvent sur ordinateur de bureau ou capteur inactif) — utilisez le choix manuel Nord / Sud / Est / Ouest.",
         );
       }
     }, 3500);
