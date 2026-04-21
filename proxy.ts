@@ -26,9 +26,11 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  // geolocation=(self) : nécessaire pour « météo via position » sur la couverture (Open-Meteo).
+  // geolocation=() bloquait tout appel à navigator.geolocation (violation navigateur + bouton météo inutilisable).
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=()",
+    "camera=(), microphone=(), geolocation=(self)",
   );
   return response;
 }

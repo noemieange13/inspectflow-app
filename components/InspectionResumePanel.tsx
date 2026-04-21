@@ -226,7 +226,7 @@ export default function InspectionResumePanel({
       <input
         ref={dvRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif"
+        accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0] ?? null;
@@ -312,7 +312,7 @@ export default function InspectionResumePanel({
           className="rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white disabled:opacity-50"
           onClick={() => dvRef.current?.click()}
         >
-          {dvLoading ? "DV…" : "📄 Importer DV (photo)"}
+          {dvLoading ? "DV…" : "Importer DV (photo ou PDF)"}
         </button>
         <button
           type="button"

@@ -6,7 +6,7 @@ Ce document sert de garde-fou produit: simplifier l'UX sans perdre les exigences
 
 - **Tous les champs visibles requis dans le formulaire**: `InspectionCoverForm` expose les sections couverture, propriete, inspecteur, description, condition, orientation, conformite.
 - **Champs obligatoires**: `requerants` et `propriete.adresse` valides avant sauvegarde serveur.
-- **DV (declaration vendeur) photo -> auto-remplissage**: extraction via API DV; edition manuelle toujours possible.
+- **DV (declaration vendeur) photo ou PDF -> auto-remplissage**: extraction via API `/api/cover-dv-extract` (vision image + Responses `input_file` pour PDF); edition manuelle toujours possible.
 - **Client (nom, telephone, courriel)**: champs presents dans la section propriete, non bloquants si vides.
 - **Meteo intelligente**: remplissage via geolocalisation + OpenMeteo, editable.
 - **Date/heure intelligente**: auto-remplie au chargement, editable apres inspection.

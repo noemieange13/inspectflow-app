@@ -1,16 +1,32 @@
-import { extractSellerDeclarationCoverFromImage } from "@/lib/extractSellerDeclarationCoverAi";
+import {
+  extractSellerDeclarationCoverFromImage,
+  extractSellerDeclarationCoverFromPdf,
+} from "@/lib/extractSellerDeclarationCoverAi";
 
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_BYTES_IMAGE = 8 * 1024 * 1024;
+const MAX_BYTES_PDF = 12 * 1024 * 1024;
 
-const ALLOWED = new Set([
+const IMAGE_MIMES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
   "image/gif",
 ]);
 
+function isLikelyPdf(buf: Buffer, fileName: string, declaredMime: string): boolean {
+  const mime = declaredMime.toLowerCase();
+  if (mime === "application/pdf") return buf.subarray(0, 4).toString("latin1") === "%PDF";
+  const head = buf.subarray(0, 5).toString("latin1");
+  if (head.startsWith("%PDF")) return true;
+  return fileName.toLowerCase().endsWith(".pdf");
+}
+
+function isAllowedImageMime(mime: string): boolean {
+  return IMAGE_MIMES.has(mime.toLowerCase());
+}
+
 /**
- * POST multipart/form-data : champ `file` = image de déclaration du vendeur.
+ * POST multipart/form-data : champ `file` = image ou PDF de déclaration du vendeur.
  * Retourne les champs texte à fusionner dans cover_v1 (requérant + propriété).
  */
 export async function POST(req: Request) {
@@ -26,17 +42,34 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "Champ « file » manquant." }, { status: 400 });
   }
 
-  const mime = (file.type || "image/jpeg").toLowerCase();
-  if (!ALLOWED.has(mime)) {
+  const mimeRaw = (file.type || "").toLowerCase();
+  const buf = Buffer.from(await file.arrayBuffer());
+  const name = file.name || "upload";
+
+  const asPdf = isLikelyPdf(buf, name, mimeRaw);
+  const asImage = !asPdf && isAllowedImageMime(mimeRaw || "image/jpeg");
+
+  if (!asPdf && !asImage) {
     return Response.json(
-      { ok: false, error: "Format d’image non pris en charge (JPEG, PNG, WebP, GIF)." },
+      {
+        ok: false,
+        error:
+          "Format non pris en charge. Envoyez une image (JPEG, PNG, WebP, GIF) ou un PDF.",
+      },
       { status: 400 },
     );
   }
 
-  if (file.size > MAX_BYTES) {
+  if (asPdf && buf.length > MAX_BYTES_PDF) {
     return Response.json(
-      { ok: false, error: `Image trop volumineuse (max ${MAX_BYTES / 1024 / 1024} Mo).` },
+      { ok: false, error: `PDF trop volumineux (max ${MAX_BYTES_PDF / 1024 / 1024} Mo).` },
+      { status: 400 },
+    );
+  }
+
+  if (asImage && buf.length > MAX_BYTES_IMAGE) {
+    return Response.json(
+      { ok: false, error: `Image trop volumineuse (max ${MAX_BYTES_IMAGE / 1024 / 1024} Mo).` },
       { status: 400 },
     );
   }
@@ -51,13 +84,14 @@ export async function POST(req: Request) {
     );
   }
 
-  const buf = Buffer.from(await file.arrayBuffer());
   const b64 = buf.toString("base64");
 
-  const result = await extractSellerDeclarationCoverFromImage({
-    imageBase64: b64,
-    mimeType: mime,
-  });
+  const result = asPdf
+    ? await extractSellerDeclarationCoverFromPdf({ pdfBase64: b64 })
+    : await extractSellerDeclarationCoverFromImage({
+        imageBase64: b64,
+        mimeType: mimeRaw || "image/jpeg",
+      });
 
   if (!result.ok) {
     return Response.json(
@@ -65,8 +99,10 @@ export async function POST(req: Request) {
         ok: false,
         error:
           result.reason === "timeout"
-            ? "Délai dépassé. Réessaie avec une image plus petite."
-            : "Impossible d’extraire le texte (image floue ou document non reconnu). Réessaie ou saisis à la main.",
+            ? "Délai dépassé. Réessaie avec un fichier plus petit."
+            : asPdf
+              ? "Impossible d’extraire le texte du PDF (illisible ou modèle indisponible). Réessaie ou saisis à la main."
+              : "Impossible d’extraire le texte (image floue ou document non reconnu). Réessaie ou saisis à la main.",
       },
       { status: 502 },
     );

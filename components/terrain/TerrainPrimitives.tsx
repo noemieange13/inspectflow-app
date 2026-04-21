@@ -73,7 +73,7 @@ export function TerrainSmartEntryHero({
     >
       <h2 className="text-base font-semibold text-slate-900">Création du rapport</h2>
       <p className="mt-1 text-sm text-slate-600">
-        Scannez la déclaration du vendeur pour préremplir les champs, ou saisissez à la main.
+        Importez la déclaration du vendeur (photo ou PDF) pour préremplir les champs, ou saisissez à la main.
       </p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
         <label
@@ -83,7 +83,7 @@ export function TerrainSmartEntryHero({
         >
           <input
             type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
+            accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
             className="hidden"
             disabled={dvLoading}
             onChange={(e) => {
@@ -92,7 +92,7 @@ export function TerrainSmartEntryHero({
               void onDvFile(f);
             }}
           />
-          {dvLoading ? "Analyse DV…" : "Scanner DV (recommandé)"}
+          {dvLoading ? "Analyse DV…" : "Importer DV — photo ou PDF"}
         </label>
         <button
           type="button"

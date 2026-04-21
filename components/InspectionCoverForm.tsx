@@ -487,7 +487,7 @@ export default function InspectionCoverForm({
         },
       }));
       setIaMessage(
-        "Champs requérant / propriété mis à jour à partir de la photo. Vérifie et corrige si besoin.",
+        "Champs requérant / propriété mis à jour à partir du document DV. Vérifie et corrige si besoin.",
       );
     } catch (err) {
       setIaMessage(
@@ -1233,7 +1233,7 @@ export default function InspectionCoverForm({
           Propriété inspectée <span className="text-red-600">*</span>
         </SectionTitle>
         <p className="text-sm text-slate-600">
-          Saisie libre possible. Le scan DV remplit les champs ci-dessous ; tout reste éditable.
+          Saisie libre possible. Le scan DV (photo ou PDF) remplit les champs ci-dessous ; tout reste éditable.
         </p>
         {data.ia_hints?.dv_photo_imported ? (
           <div className="rounded-lg border border-sky-100 bg-sky-50/50 px-3 py-2 text-sm text-sky-900">
@@ -1247,7 +1247,7 @@ export default function InspectionCoverForm({
           >
             <input
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
+              accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
               className="hidden"
               disabled={dvLoading}
               onChange={(e) => {
@@ -1256,7 +1256,7 @@ export default function InspectionCoverForm({
                 void onDvPhoto(f);
               }}
             />
-            <span>{dvLoading ? "Analyse de l’image…" : "Ré-importer DV / scan"}</span>
+            <span>{dvLoading ? "Analyse du document…" : "Ré-importer DV (photo ou PDF)"}</span>
           </label>
         </div>
         <div
