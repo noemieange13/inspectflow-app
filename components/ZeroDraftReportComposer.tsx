@@ -187,6 +187,7 @@ export default function ZeroDraftReportComposer({
   viewerToken,
   initialData,
 }: Props) {
+  const SIMPLE_MODE = true;
   const storageKey = `zero-draft:${reportId}`;
   const hasExistingReport = !!(initialData?.payload && !initialData.notFound && !initialData.accessDenied);
   const existingPayload = hasExistingReport ? initialData!.payload! : null;
@@ -228,6 +229,9 @@ export default function ZeroDraftReportComposer({
   const [retryAvailable, setRetryAvailable] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [showEditor, setShowEditor] = useState(!hasExistingReport || existingSections.length === 0);
+  const [simpleFlowMode, setSimpleFlowMode] = useState<"entry" | "live" | "upload">(
+    !hasExistingReport || existingSections.length === 0 ? "live" : "entry",
+  );
   const [photos, setPhotos] = useState<
     {
       id: string;
@@ -767,6 +771,25 @@ export default function ZeroDraftReportComposer({
       block: "start",
     });
   }, []);
+
+  const openEditorAndJumpToPhotos = useCallback(() => {
+    setShowEditor(true);
+    setSimpleFlowMode("live");
+    window.setTimeout(() => {
+      scrollToPhotosZone();
+      setPhotoZoneOnboardingGlow(true);
+    }, 90);
+  }, [scrollToPhotosZone]);
+
+  const openUploadFlow = useCallback(() => {
+    setShowEditor(true);
+    setSimpleFlowMode("upload");
+    window.setTimeout(() => {
+      scrollToPhotosZone();
+      photoInputRef.current?.click();
+      setPhotoZoneOnboardingGlow(true);
+    }, 120);
+  }, [scrollToPhotosZone]);
 
   const copilotFieldsRef = useRef({
     title: "",
@@ -2531,6 +2554,89 @@ export default function ZeroDraftReportComposer({
           </div>
         ) : null}
 
+        {SIMPLE_MODE ? (
+          <div className="rounded-xl border border-blue-200 bg-blue-50/90 p-4 shadow-sm">
+            <p className="text-sm font-semibold text-blue-950">
+              {language === "en" ? "Choose how to continue" : "Choisissez comment continuer"}
+            </p>
+            <p className="mt-1 text-xs text-blue-900/90">
+              {language === "en"
+                ? "Simple flow: one clear action at a time."
+                : "Mode simple: une action claire à la fois."}
+            </p>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSimpleFlowMode("live");
+                  setShowEditor(true);
+                }}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-slate-50"
+              >
+                <p className="text-sm font-semibold text-slate-900">📷 {language === "en" ? "On site" : "Sur place"}</p>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  {language === "en" ? "Add photos and findings" : "Ajouter photos et constats"}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={openUploadFlow}
+                className="rounded-xl border border-blue-300 bg-white px-4 py-3 text-left shadow-sm transition hover:bg-blue-50"
+              >
+                <p className="text-sm font-semibold text-slate-900">📂 {language === "en" ? "Import photos" : "Importer photos"}</p>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  {language === "en"
+                    ? "Upload all photos, then review auto findings"
+                    : "Importer toutes les photos, puis revoir les constats auto"}
+                </p>
+              </button>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSimpleFlowMode("live");
+                  setShowEditor(true);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                {labels.editReport}
+              </button>
+              <button
+                type="button"
+                onClick={openEditorAndJumpToPhotos}
+                className="rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800"
+              >
+                {language === "en" ? "Go to photos" : "Aller aux photos"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="sticky top-2 z-20 rounded-xl border border-blue-200 bg-blue-50/90 p-3 shadow-sm">
+            <p className="text-xs text-blue-900">
+              {language === "en"
+                ? "Quick actions: edit findings and add photos without scrolling to the end."
+                : "Actions rapides : modifier les constats et ajouter des photos sans descendre en bas de page."}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowEditor(true)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                {labels.editReport}
+              </button>
+              <button
+                type="button"
+                onClick={openEditorAndJumpToPhotos}
+                className="rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800"
+              >
+                {language === "en" ? "Add / manage photos" : "Ajouter / gérer les photos"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {existingClientSection ? (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/80 p-5 shadow-sm">
             <h3 className="text-base font-semibold text-slate-900">{labels.clientSection}</h3>
@@ -2578,7 +2684,7 @@ export default function ZeroDraftReportComposer({
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className={`mx-auto max-w-5xl space-y-6 ${showEditor && SIMPLE_MODE ? "pb-24" : ""}`}>
       {hasExistingReport && existingSections.length > 0 ? (
         <button
           type="button"
@@ -2623,15 +2729,102 @@ export default function ZeroDraftReportComposer({
         </div>
       ) : null}
 
+      {showEditor && SIMPLE_MODE ? (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50/80 p-4 shadow-sm">
+          <p className="text-sm font-semibold text-indigo-950">
+            {language === "en" ? "Inspection mission — 3 quick steps" : "Mission inspection — 3 étapes rapides"}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-800">1. {language === "en" ? "Photos" : "Photos"}</span>
+            <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-800">2. {language === "en" ? "Findings" : "Constats"}</span>
+            <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-800">3. PDF</span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={openEditorAndJumpToPhotos}
+              className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800"
+            >
+              {language === "en" ? "Step 1: Add photos" : "Étape 1 : Ajouter photos"}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                document.getElementById("report-entries-zone")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                })
+              }
+              className="rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-semibold text-indigo-900 hover:bg-indigo-100"
+            >
+              {language === "en" ? "Step 2: Add finding" : "Étape 2 : Ajouter constat"}
+            </button>
+            <button
+              type="button"
+              onClick={goToGenerateForOnboarding}
+              className="rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-semibold text-indigo-900 hover:bg-indigo-100"
+            >
+              {language === "en" ? "Step 3: Generate PDF" : "Étape 3 : Générer PDF"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-xl font-semibold text-slate-900">{labels.title}</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          {labels.subtitle}
-        </p>
-        <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-          {labels.complianceBilingual}
-        </p>
-        <p className="mt-1 text-xs text-slate-500">Environnement actif: {hostInfo || "n/a"}</p>
+        {SIMPLE_MODE ? (
+          <>
+            <p className="mt-1 text-sm text-slate-600">
+              {language === "en"
+                ? "Simple mission: photos, findings, PDF."
+                : "Mission simple: photos, constats, PDF."}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {viewerToken ? (
+                <Link
+                  href={`/rapport/couverture?report=${encodeURIComponent(reportId)}&token=${encodeURIComponent(viewerToken)}`}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                >
+                  {language === "en" ? "Open cover form" : "Ouvrir couverture"}
+                </Link>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+                onClick={openEditorAndJumpToPhotos}
+              >
+                {language === "en" ? "Open photo step" : "Ouvrir étape photos"}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                onClick={() =>
+                  document.getElementById("report-entries-zone")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  })
+                }
+              >
+                {language === "en" ? "Open findings step" : "Ouvrir étape constats"}
+              </button>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">
+              {language === "en"
+                ? "All AI fields remain editable for inspector validation."
+                : "Tous les champs remplis par IA restent modifiables par l’inspecteur."}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="mt-1 text-sm text-slate-600">
+              {labels.subtitle}
+            </p>
+            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+              {labels.complianceBilingual}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">Environnement actif: {hostInfo || "n/a"}</p>
+          </>
+        )}
         {viewerToken ? (
           <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/80 p-3">
             <p className="text-xs font-semibold text-emerald-900">
@@ -2670,6 +2863,7 @@ export default function ZeroDraftReportComposer({
             {labels.missingToken}
           </p>
         )}
+        {!SIMPLE_MODE ? (
         <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50/90 px-3 py-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
             {labels.journeyCaption}
@@ -2749,6 +2943,7 @@ export default function ZeroDraftReportComposer({
           </ol>
           <p className="mt-2 text-[11px] leading-snug text-slate-600">{labels.journeyHint}</p>
         </div>
+        ) : null}
 
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs font-medium text-slate-600">{labels.quality}</span>
@@ -2762,7 +2957,7 @@ export default function ZeroDraftReportComposer({
         </div>
       </div>
 
-      {showEditor && !composerCoachDismissed ? (
+      {showEditor && !composerCoachDismissed && !SIMPLE_MODE ? (
         <div className="rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 to-white px-4 py-3.5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <p className="text-sm font-semibold text-sky-950">{labels.coachTitle}</p>
@@ -2804,6 +2999,7 @@ export default function ZeroDraftReportComposer({
         </div>
       ) : null}
 
+      {!SIMPLE_MODE ? (
       <FirstReportGuidedOnboarding
         reportId={reportId}
         language={language}
@@ -2814,7 +3010,9 @@ export default function ZeroDraftReportComposer({
         onGoToPhotos={goToPhotosForOnboarding}
         onGoToGenerate={goToGenerateForOnboarding}
       />
+      ) : null}
 
+      {!SIMPLE_MODE ? (
       <ReportMissionSummary
         language={language}
         entries={entries}
@@ -2824,7 +3022,9 @@ export default function ZeroDraftReportComposer({
         terrainPreferences={terrainPrefs}
         buyerProfile={buyerProfilePick}
       />
+      ) : null}
 
+      {!SIMPLE_MODE ? (
       <div className="grid gap-3 md:grid-cols-2">
         <ReportViewModeToggle
           mode={viewMode}
@@ -2845,6 +3045,7 @@ export default function ZeroDraftReportComposer({
           }}
         />
       </div>
+      ) : null}
 
       {reportAlmostComplete ? (
         <div
@@ -3571,6 +3772,39 @@ export default function ZeroDraftReportComposer({
           ) : null}
         </InspectorStepBlock>
       </div>
+
+      {showEditor && SIMPLE_MODE ? (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur-sm">
+          <div className="mx-auto grid max-w-5xl grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={openEditorAndJumpToPhotos}
+              className="min-h-12 rounded-xl border border-slate-300 bg-white px-2 py-2 text-[11px] font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              📷 {language === "en" ? "Photos" : "Photos"}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                document.getElementById("report-entries-zone")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                })
+              }
+              className="min-h-12 rounded-xl border border-slate-300 bg-white px-2 py-2 text-[11px] font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+            >
+              ➕ {language === "en" ? "Findings" : "Constats"}
+            </button>
+            <button
+              type="button"
+              onClick={goToGenerateForOnboarding}
+              className="min-h-12 rounded-xl bg-slate-900 px-2 py-2 text-[11px] font-semibold text-white shadow-sm hover:bg-slate-800"
+            >
+              🧾 PDF
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {qcMergePending ? (
         <div

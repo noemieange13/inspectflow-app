@@ -1,5 +1,25 @@
 import { inspectionAssistAi, sanitizeContext } from "@/lib/inspectionAssistAi";
 
+function buildInspectionAssistFallback(
+  label: string,
+  context?: Record<string, string>,
+): string {
+  const target = label.toLowerCase();
+  const hasAddress = Boolean(context?.adresse?.trim());
+  const hasCondition = Boolean(context?.condition_generale?.trim());
+  if (target.includes("condition")) {
+    return hasCondition
+      ? "Mode secours (sans IA cloud) : améliorez d’abord la clarté des faits observables (où, quoi, impact), puis terminez par une phrase de prudence sur la portée de l’inspection visuelle."
+      : "Mode secours (sans IA cloud) : rédigez 3 à 5 phrases factuelles sur l’état général, en couvrant structure, enveloppe, humidité et sécurité visible; évitez tout diagnostic destructif ou non vérifié.";
+  }
+  if (target.includes("description")) {
+    return hasAddress
+      ? "Mode secours (sans IA cloud) : décrivez le bâtiment avec des éléments vérifiables (type, année approximative, enveloppe, toiture, fondation, structure, chauffage), sans conclusions techniques non confirmées."
+      : "Mode secours (sans IA cloud) : commencez par type de propriété + année, puis façade/côtés/arrière, toiture, fondation, structure et chauffage en style neutre professionnel.";
+  }
+  return "Mode secours (sans IA cloud) : utilisez des phrases courtes, factuelles et vérifiables; précisez la zone concernée, l’observation et l’impact potentiel, puis proposez une validation ciblée si nécessaire.";
+}
+
 /**
  * Aide rédigée pour la page couverture (OpenAI côté serveur).
  * Pas d’upload d’images ni d’OCR ici — le modèle reçoit seulement le libellé d’action et un contexte texte optionnel.
@@ -31,14 +51,10 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
-    return Response.json(
-      {
-        ok: false,
-        message:
-          "Assistant indisponible : variable d’environnement OPENAI_API_KEY manquante côté serveur.",
-      },
-      { status: 503 },
-    );
+    return Response.json({
+      ok: true,
+      message: buildInspectionAssistFallback(label, context),
+    });
   }
 
   const result = await inspectionAssistAi({ label, context });

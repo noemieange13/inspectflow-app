@@ -38,6 +38,7 @@ export default function ReportPageReadiness({
   couvertureBaseHref,
   reportSelfHref,
   viewerAccessToken,
+  simpleMode = false,
 }: {
   reportId: string;
   coverRaw: unknown;
@@ -49,6 +50,8 @@ export default function ReportPageReadiness({
   reportSelfHref: string;
   /** Jeton viewer — requis pour enregistrer une reco. IA via Copilot. */
   viewerAccessToken?: string;
+  /** Mode simplifié: masque les panneaux avancés (agent + QC détaillé). */
+  simpleMode?: boolean;
 }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -355,7 +358,7 @@ export default function ReportPageReadiness({
         readinessRingPulse ? "ring-2 ring-emerald-400/70 ring-offset-2 ring-offset-slate-50" : ""
       }`}
     >
-      <InspectionAgentBar reportId={reportId} />
+      {!simpleMode ? <InspectionAgentBar reportId={reportId} /> : null}
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
         État avant export PDF
       </p>
@@ -383,7 +386,8 @@ export default function ReportPageReadiness({
           </span>
         </li>
       </ul>
-      {coverParsed &&
+      {!simpleMode &&
+      coverParsed &&
       getComplianceExportMode(coverParsed) === "QC_2027" &&
       result.qcCertification ? (
         <QcCertificationStatusPanel
@@ -409,11 +413,11 @@ export default function ReportPageReadiness({
       ) : null}
       <ReportReadinessCard
         result={result}
-        compact
+        compact={simpleMode ? false : true}
         ackAt={ackAt}
         couvertureBaseHref={couvertureBaseHref}
         reportSelfHref={reportSelfHref}
-        guidedMode
+        guidedMode={!simpleMode}
         initialGuidedStepZero={initialGuidedStepZero}
         onGuidedStepCommit={onGuidedStepCommit}
       />

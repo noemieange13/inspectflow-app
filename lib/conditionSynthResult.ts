@@ -3,7 +3,8 @@ import type { AiFailureReason } from "@/lib/aiResult";
 export type ConditionSynthSource =
   | "analysis_text"
   | "vision_images"
-  | "analysis_text_fallback";
+  | "analysis_text_fallback"
+  | "local_fallback";
 
 export type ConditionSynthResult =
   | {
