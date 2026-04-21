@@ -58,16 +58,38 @@ export async function POST(req: Request) {
     }
 
     const { rows } = await loadPhotoRowsForReport(supabase, reportId, 320);
+    const { data: selectionRows, error: selectionErr } = await supabase
+      .from("report_photo_selections")
+      .select("photo_id, tier")
+      .eq("report_id", reportId);
+    const selectionByPhotoId = new Map<string, "critical" | "support">();
+    if (!selectionErr && Array.isArray(selectionRows)) {
+      for (const row of selectionRows) {
+        const photoId = (row as { photo_id?: unknown }).photo_id;
+        const tier = (row as { tier?: unknown }).tier;
+        if (typeof photoId !== "string") continue;
+        if (tier === "critical" || tier === "support") {
+          selectionByPhotoId.set(photoId, tier);
+        } else {
+          selectionByPhotoId.set(photoId, "support");
+        }
+      }
+    }
 
     const photos = rows.map((r) => {
       const inferred = inferLinkedZoneFromPhotoAnalysis(r.analysis);
       const linked_zone: ZoneCode = inferred ?? "autre";
       const url = getUserUploadPublicUrl(supabase, r.storage_path);
+      const tier = selectionByPhotoId.get(r.id) ?? "excluded";
       return {
         id: r.id,
         photo_number: r.photo_number ?? null,
         url,
         linked_zone,
+        /** Pour sélection « meilleures prises » côté client (peut être volumineux sur gros lots). */
+        analysis: r.analysis ?? null,
+        selected_for_report: tier !== "excluded",
+        report_tier: tier,
       };
     });
 

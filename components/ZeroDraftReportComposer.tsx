@@ -40,7 +40,18 @@ import {
   ensureSessionStart,
   noteFirstPdfBlocked,
 } from "@/lib/reportFunnelTiming";
-import { pickTopPhotoIndices, scorePhotoHeuristic } from "@/lib/photoScoring";
+import { scorePhotoHeuristic } from "@/lib/photoScoring";
+import {
+  REPORT_PHOTO_MAX_TOTAL,
+  selectPhotosForReportWithReasons,
+  type ReportPhotoTier,
+} from "@/lib/reportPhotoSelection";
+import {
+  buildReportPhotoSelectionV1,
+  parseReportPhotoSelectionIds,
+  parseReportPhotoSelectionLocked,
+  parseReportPhotoSelectionTiers,
+} from "@/lib/reportPhotoSelectionPayload";
 import { computeTerrainGuideStep } from "@/lib/terrainFieldGuide";
 import {
   DEFAULT_USER_AGENT_PROFILE,
@@ -60,7 +71,6 @@ const MAX_BULK_HARD = 320;
 /** Paquets séquentiels (~40–60 recommandé ; ici 50). */
 const PHOTO_CHUNK = 50;
 const UPLOAD_CONCURRENCY = 4;
-const AUTO_SELECT_TOP_N = 12;
 
 type Props = {
   reportId: string;
@@ -227,12 +237,22 @@ export default function ZeroDraftReportComposer({
       error?: string;
       ai_score?: number;
       selected_for_report?: boolean;
+      report_tier?: ReportPhotoTier;
       /** ID `photos.id` côté Supabase (pour inférer zones depuis `analysis`). */
       serverPhotoId?: string | null;
       /** Zone bâtiment pour couverture photo QC (agrégée dans `photos_coverage_v1`). */
       linked_zone?: ZoneCode;
+      /** Analyse vision serveur — sert à choisir les meilleures prises par constat. */
+      analysis?: unknown;
     }[]
   >([]);
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+  const initialDataRef = useRef(initialData);
+  initialDataRef.current = initialData;
+  const savingDraftRef = useRef(false);
+  const autoSavingAfterQcRef = useRef(false);
+  const manualSaveDebounceTimerRef = useRef<number | null>(null);
   const [photoQcDraftBusy, setPhotoQcDraftBusy] = useState(false);
   type QcMergePendingState = {
     photoZones: Record<string, string>;
@@ -243,8 +263,22 @@ export default function ZeroDraftReportComposer({
   const [qcMergePending, setQcMergePending] = useState<QcMergePendingState | null>(null);
   /** Incrémenté pour relancer `/api/report-photos-for-editor` après analyse vision. */
   const [photoAnalysisRefreshEpoch, setPhotoAnalysisRefreshEpoch] = useState(0);
+  /** Verrouille la sélection « dans le rapport » : plus de recalcul auto (constats / analyses). */
+  const [photoSelectionLocked, setPhotoSelectionLocked] = useState(() => {
+    const pay = initialData?.payload;
+    if (!pay || typeof pay !== "object") return false;
+    return parseReportPhotoSelectionLocked(
+      (pay as Record<string, unknown>).report_photo_selection_v1,
+    );
+  });
+  /** Raisons courtes (sélection auto) par clé `photoRowKey` — vide si chargement depuis payload serveur. */
+  const [photoSelectionReasonsByKey, setPhotoSelectionReasonsByKey] = useState<
+    Record<string, { fr: string; en: string }>
+  >({});
   const lastPhotoEditorFetchKeyRef = useRef<string | null>(null);
   const analysisRefreshTimersRef = useRef<number[]>([]);
+  /** Évite deux appels QC concurrents (clic + auto). */
+  const photoQcDraftLockRef = useRef(false);
   const draftBaselineRef = useRef<DraftBaselineSnapshot | null>(null);
   const draftBaselineCapturedRef = useRef(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -255,10 +289,19 @@ export default function ZeroDraftReportComposer({
   const terrainPresetZoneRef = useRef<ZoneCode | null>(null);
   const cloudProfileSaveTimerRef = useRef<number | null>(null);
   const [clientOverride, setClientOverride] = useState<string | null>(null);
+  /** Si true, les fusions QC ne réécrasent pas le compte rendu client (texte saisi ou chargé comme personnalisé). */
+  const [clientSectionUserLocked, setClientSectionUserLocked] = useState(false);
+  const clientSectionLockedRef = useRef(false);
+  const clientPayloadHydratedForReportIdRef = useRef<string | null>(null);
   const [polishClient, setPolishClient] = useState(false);
   const [viewMode, setViewMode] = useState<ReportViewMode>("inspector");
   const [userProfile, setUserProfile] = useState<UserAgentProfile>(DEFAULT_USER_AGENT_PROFILE);
   const [photoZoneOnboardingGlow, setPhotoZoneOnboardingGlow] = useState(false);
+  /** Incrémenté après une fusion QC utile pour déclencher une sauvegarde serveur silencieuse. */
+  const [qcAutoSaveNonce, setQcAutoSaveNonce] = useState(0);
+  const [autoSavingAfterQc, setAutoSavingAfterQc] = useState(false);
+  const [qcAutoSaveHint, setQcAutoSaveHint] = useState<string | null>(null);
+  const [composerCoachDismissed, setComposerCoachDismissed] = useState(false);
 
   const generated = useMemo(
     () => buildStructuredReport(entries, language, jurisdiction),
@@ -270,12 +313,34 @@ export default function ZeroDraftReportComposer({
   );
   const clientSectionValue = clientOverride !== null ? clientOverride : autoClientDraft;
 
+  useEffect(() => {
+    clientSectionLockedRef.current = clientSectionUserLocked;
+  }, [clientSectionUserLocked]);
+
+  useEffect(() => {
+    savingDraftRef.current = savingDraft;
+  }, [savingDraft]);
+
+  useEffect(() => {
+    autoSavingAfterQcRef.current = autoSavingAfterQc;
+  }, [autoSavingAfterQc]);
+
   const router = useRouter();
   const supabaseAccessToken = useSupabaseAccessToken();
 
   useEffect(() => {
     setViewMode(loadReportViewMode());
     setUserProfile(loadUserAgentProfile());
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined" && localStorage.getItem("inspectflow:report-composer-coach-dismissed") === "1") {
+        setComposerCoachDismissed(true);
+      }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const scheduleCloudProfileSync = useCallback(
@@ -362,22 +427,170 @@ export default function ZeroDraftReportComposer({
     const acc: Partial<Record<string, number>> = {};
     for (const p of photos) {
       if (!p.url || p.error) continue;
+      if (p.report_tier === "excluded") continue;
+      if (!p.report_tier && p.selected_for_report === false) continue;
       const z = (p.linked_zone ?? "autre") as string;
       acc[z] = (acc[z] ?? 0) + 1;
     }
     return acc;
   }, [photos]);
 
+  const reportPhotoSelectionForPayload = useMemo(() => {
+    const selected = photos.filter(
+      (p) =>
+        p.serverPhotoId?.trim() &&
+        (p.report_tier ? p.report_tier !== "excluded" : p.selected_for_report === true),
+    );
+    const ids = selected.map((p) => p.serverPhotoId!.trim());
+    const tiersByPhotoId: Record<string, "critical" | "support"> = {};
+    for (const p of selected) {
+      const sid = p.serverPhotoId?.trim();
+      if (!sid) continue;
+      const tier = p.report_tier === "critical" ? "critical" : "support";
+      tiersByPhotoId[sid] = tier;
+    }
+    return ids.length > 0
+      ? buildReportPhotoSelectionV1(ids, {
+          locked: photoSelectionLocked,
+          tiersByPhotoId,
+        })
+      : undefined;
+  }, [photos, photoSelectionLocked]);
+
+  const selectionIdsFromServerPayload = useMemo(() => {
+    if (!initialData?.payload || typeof initialData.payload !== "object") return null;
+    return parseReportPhotoSelectionIds(
+      (initialData.payload as Record<string, unknown>).report_photo_selection_v1,
+    );
+  }, [initialData]);
+
+  const selectionTiersFromServerPayload = useMemo(() => {
+    if (!initialData?.payload || typeof initialData.payload !== "object") return {};
+    return parseReportPhotoSelectionTiers(
+      (initialData.payload as Record<string, unknown>).report_photo_selection_v1,
+    );
+  }, [initialData]);
+
+  /** Au moins un constat au-delà du gabarit par défaut seul (sinon l’aperçu / client restent « vides »). */
+  const hasMeaningfulFindings = useMemo(() => {
+    if (entries.length > 1) return true;
+    if (entries.length !== 1) return false;
+    const e = entries[0]!;
+    if (e.zone !== "salon" || e.issue !== "water_infiltration" || e.severity !== "medium") return true;
+    return Boolean((e.note ?? "").trim());
+  }, [entries]);
+
   const validPhotoCount = useMemo(
     () => photos.filter((p) => p.url && !p.error).length,
     [photos],
   );
+
+  /** Recalcul sélection « dans le rapport » seulement quand constats, analyses ou rafraîchissement changent (pas à chaque clic manuel sur une photo). */
+  const photosSelectionSignature = useMemo(
+    () =>
+      `${photos.length}:` +
+      photos
+        .map((p) => {
+          const k = (p.serverPhotoId?.trim() || p.id).trim();
+          const an = p.analysis != null ? 1 : 0;
+          const z = (p.linked_zone ?? "autre") as string;
+          return `${k}:${an}:${z}`;
+        })
+        .sort()
+        .join("|"),
+    [photos],
+  );
+
+  useEffect(() => {
+    if (!showEditor) return;
+    const list = photosRef.current;
+    if (list.length === 0) return;
+    const serverIdSet = new Set(
+      list.map((p) => p.serverPhotoId?.trim()).filter((x): x is string => Boolean(x && x.length > 0)),
+    );
+    const persistedFromPayload =
+      photoAnalysisRefreshEpoch === 0 && selectionIdsFromServerPayload?.length
+        ? selectionIdsFromServerPayload.filter((id) => serverIdSet.has(id))
+        : [];
+    const persistedFromRows =
+      photoAnalysisRefreshEpoch === 0
+        ? list
+            .filter(
+              (p) =>
+                p.serverPhotoId?.trim() &&
+                p.report_tier != null &&
+                p.report_tier !== "excluded",
+            )
+            .map((p) => p.serverPhotoId!.trim())
+        : [];
+    const persisted = persistedFromPayload.length > 0 ? persistedFromPayload : persistedFromRows;
+    const persistOnly = photoSelectionLocked;
+    if (persistOnly && persisted.length === 0) return;
+    let sel: Set<string>;
+    let tierByKey: Record<string, Exclude<ReportPhotoTier, "excluded">> = {};
+    if (persisted.length > 0) {
+      setPhotoSelectionReasonsByKey({});
+      sel = new Set(persisted);
+      tierByKey = persisted.reduce<Record<string, Exclude<ReportPhotoTier, "excluded">>>((acc, id) => {
+        const rowTier = list.find((p) => p.serverPhotoId?.trim() === id)?.report_tier;
+        const payloadTier = selectionTiersFromServerPayload[id];
+        acc[id] = rowTier === "critical" || payloadTier === "critical" ? "critical" : "support";
+        return acc;
+      }, {});
+    } else {
+      const { ids, reasonsByKey, tiersByKey } = selectPhotosForReportWithReasons({
+        entries,
+        photos: list,
+        maxTotal: REPORT_PHOTO_MAX_TOTAL,
+      });
+      setPhotoSelectionReasonsByKey(reasonsByKey);
+      sel = ids;
+      tierByKey = tiersByKey;
+    }
+    setPhotos((prev) => {
+      let changed = false;
+      const next = prev.map((p) => {
+        const key = (p.serverPhotoId?.trim() || p.id).trim();
+        const on = sel.has(key);
+        const nextTier: ReportPhotoTier = on ? (tierByKey[key] ?? "support") : "excluded";
+        if (Boolean(p.selected_for_report) === on && (p.report_tier ?? "excluded") === nextTier) return p;
+        changed = true;
+        return { ...p, selected_for_report: on, report_tier: nextTier };
+      });
+      return changed ? next : prev;
+    });
+  }, [
+    entries,
+    photoAnalysisRefreshEpoch,
+    showEditor,
+    photosSelectionSignature,
+    selectionIdsFromServerPayload,
+    selectionTiersFromServerPayload,
+    photoSelectionLocked,
+  ]);
 
   useEffect(() => {
     lastPhotoEditorFetchKeyRef.current = null;
     setPhotoAnalysisRefreshEpoch(0);
     draftBaselineCapturedRef.current = false;
     draftBaselineRef.current = null;
+    clientPayloadHydratedForReportIdRef.current = null;
+    setQcAutoSaveNonce(0);
+    setQcAutoSaveHint(null);
+    setAutoSavingAfterQc(false);
+    setPhotoSelectionReasonsByKey({});
+    const pay = initialDataRef.current?.payload;
+    if (pay && typeof pay === "object") {
+      setPhotoSelectionLocked(
+        parseReportPhotoSelectionLocked((pay as Record<string, unknown>).report_photo_selection_v1),
+      );
+    } else {
+      setPhotoSelectionLocked(false);
+    }
+    if (manualSaveDebounceTimerRef.current != null) {
+      window.clearTimeout(manualSaveDebounceTimerRef.current);
+      manualSaveDebounceTimerRef.current = null;
+    }
   }, [reportId]);
 
   useEffect(() => {
@@ -421,6 +634,9 @@ export default function ZeroDraftReportComposer({
             photo_number: number | null;
             url: string | null;
             linked_zone?: string;
+            analysis?: unknown;
+            selected_for_report?: boolean;
+            report_tier?: "critical" | "support" | "excluded";
           }>;
         };
         if (cancelled || !res.ok || body.success !== true || !Array.isArray(body.photos)) return;
@@ -446,9 +662,39 @@ export default function ZeroDraftReportComposer({
               const nextUrl = p.url ?? serverUrl;
               const nextZone =
                 (p.linked_zone ?? "autre") === "autre" && linked !== "autre" ? linked : (p.linked_zone ?? linked);
-              merged[idx] = { ...p, url: nextUrl, linked_zone: nextZone };
+              const serverTier =
+                ph.report_tier === "critical" || ph.report_tier === "support"
+                  ? ph.report_tier
+                  : ph.report_tier === "excluded"
+                    ? "excluded"
+                    : undefined;
+              merged[idx] = {
+                ...p,
+                url: nextUrl,
+                linked_zone: nextZone,
+                analysis: ph.analysis !== undefined && ph.analysis !== null ? ph.analysis : p.analysis,
+                ...(serverTier
+                  ? {
+                      report_tier: serverTier,
+                      selected_for_report: serverTier !== "excluded",
+                    }
+                  : ph.selected_for_report !== undefined
+                    ? {
+                        selected_for_report: ph.selected_for_report,
+                        report_tier: ph.selected_for_report ? (p.report_tier ?? "support") : "excluded",
+                      }
+                    : {}),
+              };
               continue;
             }
+            const serverTier =
+              ph.report_tier === "critical" || ph.report_tier === "support"
+                ? ph.report_tier
+                : ph.report_tier === "excluded"
+                  ? "excluded"
+                  : ph.selected_for_report
+                    ? "support"
+                    : "excluded";
             merged.push({
               id: `srv-${ph.id}`,
               name: num != null ? `Photo ${num}` : `Photo ${ph.id.slice(0, 8)}…`,
@@ -456,7 +702,9 @@ export default function ZeroDraftReportComposer({
               uploading: false,
               serverPhotoId: ph.id,
               linked_zone: linked,
-              selected_for_report: false,
+              selected_for_report: serverTier !== "excluded",
+              report_tier: serverTier,
+              ...(ph.analysis !== undefined && ph.analysis !== null ? { analysis: ph.analysis } : {}),
             });
           }
           return merged;
@@ -701,6 +949,9 @@ export default function ZeroDraftReportComposer({
         updated_at: new Date().toISOString(),
         by_zone: photosCoverageByZone,
       },
+      ...(reportPhotoSelectionForPayload
+        ? { report_photo_selection_v1: reportPhotoSelectionForPayload }
+        : {}),
     };
   }, [
     hasExistingReport,
@@ -716,6 +967,7 @@ export default function ZeroDraftReportComposer({
     jurisdiction,
     entries,
     photosCoverageByZone,
+    reportPhotoSelectionForPayload,
   ]);
 
   /** Export PDF réservé au gate `ready` (blocages ou avertissements non accusés). */
@@ -745,6 +997,28 @@ export default function ZeroDraftReportComposer({
     entries.length >= 3 &&
     validPhotoCount >= 1 &&
     title.trim().length > 2;
+
+  type JourneyStepState = "ok" | "pending" | "blocked" | "idle";
+  const journeyCoverState: JourneyStepState = !viewerToken?.trim()
+    ? "idle"
+    : !hasExistingReport
+      ? "pending"
+      : coverReadiness.gate === "blocked"
+        ? "blocked"
+        : coverReadiness.gate === "ready"
+          ? "ok"
+          : "pending";
+  const journeyPhotosState: JourneyStepState = validPhotoCount > 0 ? "ok" : "pending";
+  const journeyContentState: JourneyStepState = hasMeaningfulFindings ? "ok" : "pending";
+  const journeyDotClass = (s: JourneyStepState) =>
+    s === "ok"
+      ? "bg-emerald-500"
+      : s === "blocked"
+        ? "bg-rose-500"
+        : s === "idle"
+          ? "bg-slate-300"
+          : "bg-amber-400";
+
   const riskBadgeClass = generated.risk_level === "high"
     ? "bg-red-100 text-red-700 border-red-200"
     : generated.risk_level === "medium"
@@ -756,7 +1030,7 @@ export default function ZeroDraftReportComposer({
         ? {
       title: "Almost no writing — three steps",
       subtitle:
-        "Cover & seller declaration, then photos that draft your findings, then client text and PDF. Menus do most of the work.",
+        "Cover once, add photos — zones, QC rows, client summary and preview update as analyses land — then review and export the PDF.",
       reportTitle: "Report title",
       inspectorNote: "Field note (optional)",
       language: "Language",
@@ -792,8 +1066,33 @@ export default function ZeroDraftReportComposer({
       refreshPdf: "Refresh PDF access",
       clientSection: "Client summary (plain language)",
       clientSectionHint:
-        "Auto draft from your findings; edit freely. Included in the PDF before technical sections.",
+        "Stays in sync with findings until you edit this box; then use “Regenerate draft” to follow the list again.",
+      clientSectionLockedHint:
+        "You edited the client summary — it will not auto-rewrite when new findings arrive. Use “Regenerate draft from findings” to sync again.",
       regenerateClient: "Regenerate draft from findings",
+      journeyCaption: "Your path",
+      journeyCover: "Cover",
+      journeyPhotos: "Photos",
+      journeyContent: "Summary & preview",
+      journeyDone: "Done",
+      journeyTodo: "Next",
+      journeyBlocked: "Action needed",
+      journeyOpenCover: "Open cover",
+      journeyScrollPreview: "Open summary step",
+      journeyNeedsToken: "Token",
+      journeyJumpPhotos: "Jump to photos",
+      journeyHint:
+        "Follow the row left to right; the app fills most fields after photos. You stay in control before PDF.",
+      stickyProgressLabel: "Draft progress",
+      stickyPreviewFill: "Preview fill",
+      stickyAutoSaving: "Saving to server…",
+      coachTitle: "How this editor works",
+      coachBullet1:
+        "After photos import, zones and QC rows update automatically; the client summary follows unless you edit it.",
+      coachBullet2:
+        "Photo updates and your edits auto-save to the server in the background (no PDF) so you rarely lose work.",
+      coachBullet3: "Finish the cover checklist before generating the PDF — the bar above shows what is left.",
+      coachDismiss: "Got it, hide this",
       polishClientLabel: "Polish wording with AI (OpenAI, optional)",
       reportGeneratedOk: "Report generated successfully. The PDF is ready.",
       polishSkippedTooLong:
@@ -836,7 +1135,7 @@ export default function ZeroDraftReportComposer({
         "That is where the requérant, clients and address are recorded together with the declaration — needed before a proper PDF.",
       step2Title: "Step 2 — Photos & findings (mostly pick lists)",
       step2Hint:
-        "Upload photos, wait a few seconds for server vision on each image, then tap “Generate now” in the blue box below — that step fills zones and draft findings (nothing auto-fills until you run it).",
+        "Upload photos — after a short server vision delay, “Other” photo zones and draft QC findings (including electrical when visible) are applied automatically. You can still tap “Generate now” in the blue box to refresh immediately.",
       step3Title: "Step 3 — Optional notes, client letter, preview & PDF",
       step3Hint:
         "Field note and client summary can stay automatic. Save the draft to the server, then generate when cover checks pass.",
@@ -851,9 +1150,10 @@ export default function ZeroDraftReportComposer({
       applyPhotoQcDraft: "Auto-generate from photos",
       applyPhotoQcDraftRun: "Generate now",
       applyPhotoQcDraftHint:
-        "Uses every stored photo analysis for this inspection (wait a few seconds after each upload). Updates “Other” zones, proposes missing QC findings (including electrical when the model sees a panel). If you edited title / client text / findings, a dialog offers merge vs zones-only. Needs OPENAI_API_KEY on the server.",
+        "Uses every stored photo analysis for this inspection. After each upload the page re-fetches analyses a few times and applies zones + draft findings automatically (with a short delay). This button forces an immediate pass. If you edited title / client text / findings, auto-apply still merges drafts; you can also choose merge vs zones-only from the dialog when you run manually. Needs OPENAI_API_KEY on the server.",
       photoAfterUploadReminder:
-        "Photos alone do not fill the report: after import, wait for analysis, then click “Generate now” in the blue box below.",
+        "Zones and draft findings update automatically a few seconds after import once vision has run — use “Generate now” below if you want to refresh without waiting.",
+      photoSmartSelectionHint: `Up to ${REPORT_PHOTO_MAX_TOTAL} photos are marked “In report”: the app keeps the best shots per finding (zone + analysis text). Toggle any thumbnail to override.`,
       saveDraftButton: "Save draft to server (no PDF)",
       saveDraftHint:
         "Persists structured findings, client summary, inspector note, and photo coverage. Use this to validate zero-touch edits before generating the PDF.",
@@ -865,7 +1165,7 @@ export default function ZeroDraftReportComposer({
     : {
       title: "Presque sans rédaction — trois étapes",
       subtitle:
-        "Couverture et DV, puis photos qui remplissent les constats, puis texte client et PDF. Les listes remplacent presque la frappe.",
+        "Couverture une fois, puis photos : zones, grille QC, compte rendu client et aperçu se mettent à jour avec les analyses — il reste à relire et exporter le PDF.",
       reportTitle: "Titre du rapport",
       inspectorNote: "Note terrain (optionnelle)",
       language: "Langue",
@@ -901,8 +1201,33 @@ export default function ZeroDraftReportComposer({
       refreshPdf: "Rafraîchir l'accès au PDF",
       clientSection: "Compte rendu client (langage accessible)",
       clientSectionHint:
-        "Brouillon auto à partir des constats ; modifiable. Inclus dans le PDF avant le volet technique.",
+        "Reste aligné sur les constats tant que vous ne modifiez pas ce champ ; sinon utilisez « Régénérer » pour suivre à nouveau la liste.",
+      clientSectionLockedHint:
+        "Vous avez modifié le compte rendu client — il ne se réécrit plus tout seul quand de nouveaux constats arrivent. Utilisez « Régénérer le brouillon à partir des constats » pour resynchroniser.",
       regenerateClient: "Régénérer le brouillon à partir des constats",
+      journeyCaption: "Parcours",
+      journeyCover: "Couverture",
+      journeyPhotos: "Photos",
+      journeyContent: "Texte & aperçu",
+      journeyDone: "OK",
+      journeyTodo: "À faire",
+      journeyBlocked: "À compléter",
+      journeyOpenCover: "Ouvrir la couverture",
+      journeyScrollPreview: "Aller au texte & aperçu",
+      journeyNeedsToken: "Lien",
+      journeyJumpPhotos: "Aller aux photos",
+      journeyHint:
+        "Suivez la ligne de gauche à droite ; l’application remplit la majeure partie après les photos. Vous gardez le contrôle avant le PDF.",
+      stickyProgressLabel: "Avancement du brouillon",
+      stickyPreviewFill: "Aperçu",
+      stickyAutoSaving: "Enregistrement serveur…",
+      coachTitle: "Comment fonctionne cette page",
+      coachBullet1:
+        "Après l’import des photos, les zones et la grille QC se mettent à jour automatiquement ; le compte rendu client suit sauf si vous le modifiez.",
+      coachBullet2:
+        "Les mises à jour photo et vos modifications sont enregistrées automatiquement sur le serveur en arrière-plan (sans PDF), pour limiter les pertes.",
+      coachBullet3: "Complétez la couverture avant le PDF — la barre ci-dessus indique ce qu’il reste.",
+      coachDismiss: "Compris, masquer",
       polishClientLabel: "Peaufiner la rédaction avec l'IA (OpenAI, optionnel)",
       reportGeneratedOk: "Rapport généré avec succès. Le PDF est prêt.",
       polishSkippedTooLong:
@@ -945,7 +1270,7 @@ export default function ZeroDraftReportComposer({
         "C’est là qu’on enregistre requérant, clients et identité du bien avec la déclaration du vendeur — nécessaire avant un PDF conforme.",
       step2Title: "Étape 2 — Photos et constats (surtout des listes)",
       step2Hint:
-        "Téléversez les photos, attendez quelques secondes l’analyse serveur sur chaque image, puis cliquez sur « Lancer maintenant » dans l’encadré bleu ci-dessous — c’est cette action qui remplit les zones et les brouillons (rien ne se remplit tout seul avant cette étape).",
+        "Téléversez les photos — après un court délai d’analyse serveur, les zones « Autre » et les brouillons de constats QC (dont électrique si visible) s’appliquent automatiquement. Vous pouvez quand même cliquer sur « Lancer maintenant » dans l’encadré bleu pour forcer un passage immédiat.",
       step3Title: "Étape 3 — Notes (optionnel), texte client, aperçu et PDF",
       step3Hint:
         "La note terrain et le compte rendu client peuvent rester sur le texte automatique. Enregistrez le brouillon, puis générez le PDF quand la couverture est complète.",
@@ -960,9 +1285,10 @@ export default function ZeroDraftReportComposer({
       applyPhotoQcDraft: "Auto-générer le contenu à partir des photos",
       applyPhotoQcDraftRun: "Lancer maintenant",
       applyPhotoQcDraftHint:
-        "Utilise toutes les analyses enregistrées pour les photos de cette inspection (attendre quelques secondes après chaque import). Met à jour les zones « Autre », propose les constats manquants de la grille QC (dont électrique / panneau si l’analyse le permet). Si le titre, le texte client ou les constats ont été modifiés, une fenêtre propose fusion ou zones seulement. Sur Vercel : OPENAI_API_KEY requise côté serveur.",
+        "Utilise toutes les analyses enregistrées pour les photos de cette inspection. Après chaque import, la page relit les analyses plusieurs fois et applique zones + brouillons automatiquement (court délai). Ce bouton force un passage immédiat. Si le titre, le texte client ou les constats ont été modifiés, l’application auto fusionne quand même les brouillons ; en lancement manuel, une fenêtre peut encore proposer fusion ou zones seulement. Sur Vercel : OPENAI_API_KEY requise côté serveur.",
       photoAfterUploadReminder:
-        "Les photos seules ne remplissent pas le rapport : après import, attendez l’analyse puis cliquez sur « Lancer maintenant » ci-dessous.",
+        "Les zones et brouillons se mettent à jour automatiquement quelques secondes après l’import une fois l’analyse vision prête — utilisez « Lancer maintenant » ci-dessous pour rafraîchir sans attendre.",
+      photoSmartSelectionHint: `Jusqu’à ${REPORT_PHOTO_MAX_TOTAL} photos sont marquées « Dans le rapport » : l’app garde les meilleures prises par constat (zone + texte d’analyse). Vous pouvez corriger chaque vignette.`,
       saveDraftButton: "Enregistrer le brouillon (serveur, sans PDF)",
       saveDraftHint:
         "Enregistre en base les constats, le compte rendu client, la note terrain et la couverture photo. À utiliser pour valider le parcours zéro rédaction avant de générer le PDF.",
@@ -974,16 +1300,27 @@ export default function ZeroDraftReportComposer({
     [language],
   );
 
+  /** Une fois par rapport : si le client en base = brouillon auto des constats, rester en mode auto (sinon les photos ne « mettent pas à jour » le texte client). */
   useEffect(() => {
-    if (
-      hasExistingReport &&
-      existingPayload &&
-      typeof existingPayload.client_section === "string" &&
-      existingPayload.client_section.trim()
-    ) {
-      setClientOverride(existingPayload.client_section.trim());
+    if (!hasExistingReport || !existingPayload) return;
+    if (clientPayloadHydratedForReportIdRef.current === reportId) return;
+    clientPayloadHydratedForReportIdRef.current = reportId;
+    const raw = existingPayload.client_section;
+    const trimmed = typeof raw === "string" ? raw.trim() : "";
+    if (!trimmed) {
+      setClientOverride(null);
+      setClientSectionUserLocked(false);
+      return;
     }
-  }, [hasExistingReport, existingPayload]);
+    const auto = buildClientFacingSection(entries, language, jurisdiction, inspectorNote || undefined);
+    if (trimmed === auto.trim()) {
+      setClientOverride(null);
+      setClientSectionUserLocked(false);
+    } else {
+      setClientOverride(trimmed);
+      setClientSectionUserLocked(true);
+    }
+  }, [reportId, hasExistingReport, existingPayload, entries, language, jurisdiction, inspectorNote]);
 
   /** SSR ne signe plus l’URL Storage ; on récupère le PDF après hydratation (évite chargement infini). */
   useEffect(() => {
@@ -1037,6 +1374,7 @@ export default function ZeroDraftReportComposer({
         }
         if (typeof parsed.clientOverride === "string") {
           setClientOverride(parsed.clientOverride);
+          setClientSectionUserLocked(true);
         }
         if (Array.isArray(parsed.entries) && parsed.entries.length > 0) {
           setEntries(parsed.entries);
@@ -1179,6 +1517,20 @@ export default function ZeroDraftReportComposer({
     [reportId, language],
   );
 
+  const schedulePhotoAnalysisRefresh = useCallback(() => {
+    for (const tid of analysisRefreshTimersRef.current) {
+      window.clearTimeout(tid);
+    }
+    analysisRefreshTimersRef.current = [];
+    for (const delay of [2500, 7000, 15_000]) {
+      analysisRefreshTimersRef.current.push(
+        window.setTimeout(() => {
+          setPhotoAnalysisRefreshEpoch((n) => n + 1);
+        }, delay),
+      );
+    }
+  }, []);
+
   const handlePhotoUpload = useCallback(
     async (files: FileList | File[]) => {
       const arr = Array.from(files).filter((f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(f.name));
@@ -1203,6 +1555,7 @@ export default function ZeroDraftReportComposer({
         name: f.name,
         url: null as string | null,
         uploading: true,
+        report_tier: "excluded" as ReportPhotoTier,
       }));
       setPhotos((prev) => [...prev, ...additions]);
 
@@ -1226,14 +1579,8 @@ export default function ZeroDraftReportComposer({
 
       setPhotos((prev) => {
         const batchIds = new Set(additions.map((a) => a.id));
-        const batchPhotos = prev.filter((p) => batchIds.has(p.id));
-        const scores = batchPhotos.map((p) => p.ai_score ?? 0);
-        const topIdx = pickTopPhotoIndices(scores, Math.min(AUTO_SELECT_TOP_N, scores.length));
-        const topIds = new Set([...topIdx].map((idx) => batchPhotos[idx]?.id).filter(Boolean) as string[]);
         return prev.map((p) =>
-          batchIds.has(p.id)
-            ? { ...p, selected_for_report: topIds.has(p.id) }
-            : p,
+          batchIds.has(p.id) ? { ...p, selected_for_report: false, report_tier: "excluded" } : p,
         );
       });
       setUploadingPhoto(false);
@@ -1257,20 +1604,10 @@ export default function ZeroDraftReportComposer({
       }
       const successCount = outcomes.filter(Boolean).length;
       if (successCount > 0) {
-        for (const tid of analysisRefreshTimersRef.current) {
-          window.clearTimeout(tid);
-        }
-        analysisRefreshTimersRef.current = [];
-        for (const delay of [2500, 7000, 15_000]) {
-          analysisRefreshTimersRef.current.push(
-            window.setTimeout(() => {
-              setPhotoAnalysisRefreshEpoch((n) => n + 1);
-            }, delay),
-          );
-        }
+        schedulePhotoAnalysisRefresh();
       }
     },
-    [reportId, language, uploadOnePhoto],
+    [reportId, language, uploadOnePhoto, schedulePhotoAnalysisRefresh],
   );
 
   const finalizeQcPhotoDraftApply = useCallback(
@@ -1284,7 +1621,7 @@ export default function ZeroDraftReportComposer({
       titleSnapshot: string;
       inspectorSnapshot: string;
       clientSnapshot: string;
-      merge_choice?: "merge_all" | "zones_only";
+      merge_choice?: "merge_all" | "zones_only" | "auto_full";
     }) => {
       const {
         photoZones,
@@ -1312,6 +1649,7 @@ export default function ZeroDraftReportComposer({
       );
 
       let mergedEntries = entriesSnapshot;
+      let mergedNewFindings = false;
       if (!skipEntryMerge && proposed.length > 0) {
         const prev = entriesSnapshot;
         const isPristineDefault =
@@ -1323,7 +1661,15 @@ export default function ZeroDraftReportComposer({
         mergedEntries = isPristineDefault
           ? proposed.map((e) => ({ ...e }))
           : [...prev, ...proposed];
+        mergedNewFindings = true;
         setEntries(mergedEntries);
+      }
+
+      let syncedClientFromFindings = false;
+      if (mergedNewFindings && !clientSectionLockedRef.current) {
+        setClientOverride(null);
+        setClientSectionUserLocked(false);
+        syncedClientFromFindings = true;
       }
 
       draftBaselineRef.current = {
@@ -1343,6 +1689,7 @@ export default function ZeroDraftReportComposer({
         photo_count: photoCount,
         skipped_findings_manual_edit: skippedFindingsManual,
         ...(merge_choice ? { merge_choice } : {}),
+        ...(merge_choice === "auto_full" ? { auto: true } : {}),
       });
 
       if (skipEntryMerge && proposed.length > 0) {
@@ -1358,14 +1705,47 @@ export default function ZeroDraftReportComposer({
             : "Rien de nouveau à appliquer — les zones et la grille QC correspondent peut-être déjà aux analyses.",
         );
       } else {
+        const autoPre =
+          merge_choice === "auto_full"
+            ? language === "en"
+              ? "Auto-update from photos — "
+              : "Mise à jour automatique depuis les photos — "
+            : "";
+        const clientTail =
+          syncedClientFromFindings
+            ? language === "en"
+              ? " Client letter draft refreshed from the new findings."
+              : " Compte rendu client régénéré à partir des constats."
+            : "";
         setStatus(
-          language === "en"
-            ? `Applied ${zonePatchCount} photo zone(s) and ${proposedApplied} draft finding(s). Review before generating the PDF.`
-            : `${zonePatchCount} zone(s) photo et ${proposedApplied} brouillon(s) de constat appliqués. Relire avant de générer le PDF.`,
+          autoPre +
+            (language === "en"
+              ? `Applied ${zonePatchCount} photo zone(s) and ${proposedApplied} draft finding(s). Review before generating the PDF.`
+              : `${zonePatchCount} zone(s) photo et ${proposedApplied} brouillon(s) de constat appliqués. Relire avant de générer le PDF.`) +
+            clientTail,
         );
       }
+
+      const shouldScrollPreview = zonePatchCount > 0 || mergedNewFindings;
+      if (shouldScrollPreview) {
+        window.setTimeout(() => {
+          document.getElementById("inspectflow-step-3")?.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+          });
+        }, 450);
+      }
+
+      const shouldRequestQcAutosave =
+        Boolean(viewerToken?.trim()) &&
+        photoCount > 0 &&
+        !(zonePatchCount === 0 && proposed.length === 0) &&
+        !(skipEntryMerge && proposed.length > 0 && zonePatchCount === 0);
+      if (shouldRequestQcAutosave) {
+        setQcAutoSaveNonce((n) => n + 1);
+      }
     },
-    [reportId, labels, language],
+    [reportId, labels, language, viewerToken],
   );
 
   const resolveQcMergeChoice = useCallback(
@@ -1410,15 +1790,19 @@ export default function ZeroDraftReportComposer({
     return () => window.removeEventListener("keydown", onKey);
   }, [qcMergePending]);
 
-  const applyPhotoQcDraftFromServer = useCallback(async () => {
+  const applyPhotoQcDraftFromServer = useCallback(async (opts?: { auto?: boolean }) => {
     if (!viewerToken?.trim()) {
-      setError(
-        language === "en"
-          ? "Open this page with the full report link (includes ?token=…) to run this action."
-          : "Ouvrez cette page avec le lien complet du rapport (?token=…) pour lancer cette action.",
-      );
+      if (!opts?.auto) {
+        setError(
+          language === "en"
+            ? "Open this page with the full report link (includes ?token=…) to run this action."
+            : "Ouvrez cette page avec le lien complet du rapport (?token=…) pour lancer cette action.",
+        );
+      }
       return;
     }
+    if (photoQcDraftLockRef.current) return;
+    photoQcDraftLockRef.current = true;
     setPhotoQcDraftBusy(true);
     setError(null);
     try {
@@ -1449,11 +1833,13 @@ export default function ZeroDraftReportComposer({
       const proposed = Array.isArray(body.proposed_entries) ? body.proposed_entries : [];
       const photoCount = typeof body.photo_count === "number" ? body.photo_count : 0;
       if (photoCount === 0) {
-        setStatus(
-          language === "en"
-            ? "No usable photo analyses yet — upload photos and wait a few seconds, then retry."
-            : "Pas d’analyses photo exploitables pour l’instant — téléversez des photos, attendez quelques secondes, puis réessayez.",
-        );
+        if (!opts?.auto) {
+          setStatus(
+            language === "en"
+              ? "No usable photo analyses yet — upload photos and wait a few seconds, then retry."
+              : "Pas d’analyses photo exploitables pour l’instant — téléversez des photos, attendez quelques secondes, puis réessayez.",
+          );
+        }
         emitProductEvent("photos_qc_draft_apply", { report_id: reportId, ok: true, empty: true });
         return;
       }
@@ -1475,7 +1861,22 @@ export default function ZeroDraftReportComposer({
       }).length;
 
       if (manualEdit && proposed.length > 0) {
-        setQcMergePending({ photoZones, proposed, zonePatchCount, photoCount });
+        if (opts?.auto) {
+          finalizeQcPhotoDraftApply({
+            photoZones,
+            proposed,
+            skipEntryMerge: false,
+            zonePatchCount,
+            photoCount,
+            entriesSnapshot: entries,
+            titleSnapshot: title,
+            inspectorSnapshot: inspectorNote,
+            clientSnapshot: clientSectionValue,
+            merge_choice: "auto_full",
+          });
+        } else {
+          setQcMergePending({ photoZones, proposed, zonePatchCount, photoCount });
+        }
         return;
       }
 
@@ -1489,12 +1890,14 @@ export default function ZeroDraftReportComposer({
         titleSnapshot: title,
         inspectorSnapshot: inspectorNote,
         clientSnapshot: clientSectionValue,
+        ...(opts?.auto ? { merge_choice: "auto_full" as const } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       emitProductEvent("photos_qc_draft_apply", { report_id: reportId, ok: false, error: msg });
     } finally {
+      photoQcDraftLockRef.current = false;
       setPhotoQcDraftBusy(false);
     }
   }, [
@@ -1509,6 +1912,19 @@ export default function ZeroDraftReportComposer({
     finalizeQcPhotoDraftApply,
   ]);
 
+  const applyPhotoQcDraftRef = useRef(applyPhotoQcDraftFromServer);
+  applyPhotoQcDraftRef.current = applyPhotoQcDraftFromServer;
+
+  useEffect(() => {
+    if (!viewerToken?.trim() || !showEditor) return;
+    if (photoAnalysisRefreshEpoch === 0) return;
+    if (qcMergePending) return;
+    const t = window.setTimeout(() => {
+      void applyPhotoQcDraftRef.current({ auto: true });
+    }, 2800);
+    return () => window.clearTimeout(t);
+  }, [photoAnalysisRefreshEpoch, viewerToken, showEditor, qcMergePending]);
+
   const buildReportContentBody = useMemo(
     () => ({
       report_id: reportId,
@@ -1521,6 +1937,9 @@ export default function ZeroDraftReportComposer({
       language,
       jurisdiction,
       photos_coverage: photosCoverageByZone,
+      ...(reportPhotoSelectionForPayload
+        ? { report_photo_selection_v1: reportPhotoSelectionForPayload }
+        : {}),
     }),
     [
       reportId,
@@ -1533,6 +1952,7 @@ export default function ZeroDraftReportComposer({
       language,
       jurisdiction,
       photosCoverageByZone,
+      reportPhotoSelectionForPayload,
     ],
   );
 
@@ -1632,6 +2052,180 @@ export default function ZeroDraftReportComposer({
     entries,
   ]);
 
+  useEffect(() => {
+    if (qcAutoSaveNonce === 0) return;
+    if (!viewerToken?.trim()) return;
+    if (entries.length === 0) return;
+    let cancelled = false;
+    setAutoSavingAfterQc(true);
+    setQcAutoSaveHint(null);
+    void (async () => {
+      try {
+        const body = { ...buildReportContentBody, polish_client: false };
+        const saveRes = await withTimeout(
+          fetch("/api/report-content", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+          180_000,
+          "report-content",
+        );
+        const saveBody = await readResponseJson<{
+          success?: boolean;
+          error?: string;
+          code?: string;
+        }>(saveRes);
+        if (cancelled) return;
+        if (!saveRes.ok || !saveBody?.success) {
+          if (saveBody?.code === "report_locked") {
+            setQcAutoSaveHint(
+              language === "en"
+                ? "Auto-save skipped — report is locked. Use Save draft or unlock in admin."
+                : "Sauvegarde auto impossible — rapport verrouillé. Enregistrez à la main ou déverrouillez en admin.",
+            );
+          } else {
+            setQcAutoSaveHint(
+              language === "en"
+                ? "Auto-save failed — use “Save draft to server (no PDF)” below."
+                : "Échec de la sauvegarde auto — utilisez « Enregistrer le brouillon (serveur, sans PDF) » ci-dessous.",
+            );
+          }
+          return;
+        }
+        emitProductEvent("report_draft_saved", { report_id: reportId, trigger: "qc_photo_apply" });
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {
+          /* ignore */
+        }
+        draftBaselineRef.current = {
+          title: title.trim(),
+          inspectorNote,
+          clientFacingSnapshot: clientSectionValue,
+          entriesJson: serializeEntriesForBaseline(entries),
+        };
+        draftBaselineCapturedRef.current = true;
+        router.refresh();
+        const okHint =
+          language === "en"
+            ? "Also saved to the server (you can keep working)."
+            : "Également enregistré sur le serveur — vous pouvez continuer sereinement.";
+        setQcAutoSaveHint(okHint);
+        window.setTimeout(() => {
+          setQcAutoSaveHint((cur) => (cur === okHint ? null : cur));
+        }, 10_000);
+      } catch {
+        if (!cancelled) {
+          setQcAutoSaveHint(
+            language === "en"
+              ? "Auto-save failed — check the connection and use Save draft."
+              : "Sauvegarde auto échouée — vérifiez la connexion puis « Enregistrer le brouillon ».",
+          );
+        }
+      } finally {
+        if (!cancelled) setAutoSavingAfterQc(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    qcAutoSaveNonce,
+    viewerToken,
+    entries.length,
+    entries,
+    buildReportContentBody,
+    language,
+    router,
+    storageKey,
+    title,
+    inspectorNote,
+    clientSectionValue,
+    reportId,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!showEditor || !viewerToken?.trim() || entries.length === 0) return;
+    if (!draftBaselineCapturedRef.current) return;
+    const baseline = draftBaselineRef.current;
+    if (!baseline) return;
+    const dirty =
+      title.trim() !== baseline.title ||
+      inspectorNote !== baseline.inspectorNote ||
+      clientSectionValue !== baseline.clientFacingSnapshot ||
+      serializeEntriesForBaseline(entries) !== baseline.entriesJson;
+    if (!dirty) return;
+    if (manualSaveDebounceTimerRef.current != null) {
+      window.clearTimeout(manualSaveDebounceTimerRef.current);
+    }
+    manualSaveDebounceTimerRef.current = window.setTimeout(() => {
+      manualSaveDebounceTimerRef.current = null;
+      if (savingDraftRef.current || autoSavingAfterQcRef.current) return;
+      const rt = viewerToken?.trim();
+      if (!rt) return;
+      void (async () => {
+        try {
+          const body = { ...buildReportContentBody, polish_client: false };
+          const saveRes = await withTimeout(
+            fetch("/api/report-content", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            }),
+            180_000,
+            "report-content",
+          );
+          const saveBody = await readResponseJson<{ success?: boolean; code?: string }>(saveRes);
+          if (!saveRes.ok || !saveBody?.success) return;
+          emitProductEvent("report_draft_saved", { report_id: reportId, trigger: "idle_debounce" });
+          try {
+            localStorage.removeItem(storageKey);
+          } catch {
+            /* ignore */
+          }
+          draftBaselineRef.current = {
+            title: title.trim(),
+            inspectorNote,
+            clientFacingSnapshot: clientSectionValue,
+            entriesJson: serializeEntriesForBaseline(entries),
+          };
+          draftBaselineCapturedRef.current = true;
+          router.refresh();
+          const idleHint =
+            language === "en"
+              ? "Draft synced to the server while you edit."
+              : "Brouillon synchronisé sur le serveur pendant vos modifications.";
+          setQcAutoSaveHint(idleHint);
+          window.setTimeout(() => {
+            setQcAutoSaveHint((cur) => (cur === idleHint ? null : cur));
+          }, 8000);
+        } catch {
+          /* ignore */
+        }
+      })();
+    }, 5200);
+    return () => {
+      if (manualSaveDebounceTimerRef.current != null) {
+        window.clearTimeout(manualSaveDebounceTimerRef.current);
+        manualSaveDebounceTimerRef.current = null;
+      }
+    };
+  }, [
+    showEditor,
+    viewerToken,
+    entries,
+    title,
+    inspectorNote,
+    clientSectionValue,
+    buildReportContentBody,
+    language,
+    router,
+    storageKey,
+    reportId,
+  ]);
+
   const requestPdfGeneration = useCallback(async () => {
     let pdfRes: Response;
     try {
@@ -1715,6 +2309,7 @@ export default function ZeroDraftReportComposer({
     setTitle(language === "en" ? "Automated inspection report" : "Rapport d'inspection automatisé");
     setInspectorNote("");
     setClientOverride(null);
+    setClientSectionUserLocked(false);
     setPolishClient(false);
     setEntries([defaultEntry()]);
     setError(null);
@@ -1994,6 +2589,40 @@ export default function ZeroDraftReportComposer({
         </button>
       ) : null}
 
+      {showEditor ? (
+        <div
+          className="sticky top-0 z-30 -mx-4 border-b border-slate-200/90 bg-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 md:mx-0 md:rounded-lg md:border md:px-3"
+          role="region"
+          aria-label={labels.stickyProgressLabel}
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <span className="font-semibold tracking-tight text-slate-700">{labels.stickyProgressLabel}</span>
+            <div className="flex items-center gap-1.5" title={`${labels.journeyCover} · ${labels.journeyPhotos} · ${labels.journeyContent}`}>
+              <span className={`inline-block h-2.5 w-2.5 rounded-full ${journeyDotClass(journeyCoverState)}`} />
+              <span className={`inline-block h-2.5 w-2.5 rounded-full ${journeyDotClass(journeyPhotosState)}`} />
+              <span className={`inline-block h-2.5 w-2.5 rounded-full ${journeyDotClass(journeyContentState)}`} />
+            </div>
+            <div className="flex min-w-[120px] max-w-[200px] flex-1 items-center gap-2">
+              <span className="shrink-0 text-[10px] font-medium uppercase text-slate-500">
+                {labels.stickyPreviewFill}
+              </span>
+              <div className="h-1.5 flex-1 rounded-full bg-slate-200">
+                <div
+                  className="h-1.5 rounded-full bg-slate-800 transition-all duration-500"
+                  style={{ width: `${previewCompletion}%` }}
+                />
+              </div>
+              <span className="shrink-0 font-mono text-[11px] font-semibold text-slate-700">{previewCompletion}%</span>
+            </div>
+            {autoSavingAfterQc ? (
+              <span className="text-[11px] font-medium text-sky-800">{labels.stickyAutoSaving}</span>
+            ) : qcAutoSaveHint ? (
+              <span className="max-w-[min(100%,28rem)] text-[11px] font-medium text-emerald-800">{qcAutoSaveHint}</span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-xl font-semibold text-slate-900">{labels.title}</h2>
         <p className="mt-1 text-sm text-slate-600">
@@ -2041,6 +2670,86 @@ export default function ZeroDraftReportComposer({
             {labels.missingToken}
           </p>
         )}
+        <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50/90 px-3 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            {labels.journeyCaption}
+          </p>
+          <ol className="mt-2 flex flex-wrap items-stretch gap-2">
+            {(
+              [
+                {
+                  key: "cover",
+                  label: labels.journeyCover,
+                  state: journeyCoverState,
+                  action:
+                    viewerToken?.trim() ? (
+                      <Link
+                        href={`/rapport/couverture?report=${encodeURIComponent(reportId)}&token=${encodeURIComponent(viewerToken)}`}
+                        className="mt-1 inline-flex text-[11px] font-medium text-sky-800 underline-offset-2 hover:underline"
+                      >
+                        {labels.journeyOpenCover}
+                      </Link>
+                    ) : null,
+                },
+                {
+                  key: "photos",
+                  label: labels.journeyPhotos,
+                  state: journeyPhotosState,
+                  action: (
+                    <button
+                      type="button"
+                      className="mt-1 inline-flex text-left text-[11px] font-medium text-sky-800 underline-offset-2 hover:underline"
+                      onClick={goToPhotosForOnboarding}
+                    >
+                      {labels.journeyJumpPhotos}
+                    </button>
+                  ),
+                },
+                {
+                  key: "content",
+                  label: labels.journeyContent,
+                  state: journeyContentState,
+                  action: (
+                    <button
+                      type="button"
+                      className="mt-1 inline-flex text-left text-[11px] font-medium text-sky-800 underline-offset-2 hover:underline"
+                      onClick={goToGenerateForOnboarding}
+                    >
+                      {labels.journeyScrollPreview}
+                    </button>
+                  ),
+                },
+              ] as const
+            ).map((step) => {
+              const badge =
+                step.state === "ok"
+                  ? { bg: "bg-emerald-100", text: "text-emerald-900", cap: labels.journeyDone }
+                  : step.state === "blocked"
+                    ? { bg: "bg-rose-100", text: "text-rose-900", cap: labels.journeyBlocked }
+                    : step.state === "idle"
+                      ? { bg: "bg-slate-100", text: "text-slate-600", cap: labels.journeyNeedsToken }
+                      : { bg: "bg-amber-50", text: "text-amber-950", cap: labels.journeyTodo };
+              return (
+                <li
+                  key={step.key}
+                  className="flex min-w-[140px] flex-1 flex-col rounded-md border border-slate-200/80 bg-white px-2.5 py-2 shadow-sm"
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-semibold text-slate-900">{step.label}</span>
+                    <span
+                      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${badge.bg} ${badge.text}`}
+                    >
+                      {badge.cap}
+                    </span>
+                  </div>
+                  {step.action}
+                </li>
+              );
+            })}
+          </ol>
+          <p className="mt-2 text-[11px] leading-snug text-slate-600">{labels.journeyHint}</p>
+        </div>
+
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs font-medium text-slate-600">{labels.quality}</span>
           <div className="h-2 flex-1 rounded-full bg-slate-200">
@@ -2052,6 +2761,48 @@ export default function ZeroDraftReportComposer({
           <span className="text-xs font-semibold text-slate-700">{completion}%</span>
         </div>
       </div>
+
+      {showEditor && !composerCoachDismissed ? (
+        <div className="rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 to-white px-4 py-3.5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <p className="text-sm font-semibold text-sky-950">{labels.coachTitle}</p>
+            <button
+              type="button"
+              className="shrink-0 rounded-md border border-sky-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-sky-900 hover:bg-sky-100"
+              onClick={() => {
+                try {
+                  localStorage.setItem("inspectflow:report-composer-coach-dismissed", "1");
+                } catch {
+                  /* ignore */
+                }
+                setComposerCoachDismissed(true);
+              }}
+            >
+              {labels.coachDismiss}
+            </button>
+          </div>
+          <ul className="mt-2 space-y-1.5 text-xs leading-snug text-sky-950/95">
+            <li className="flex gap-2">
+              <span className="font-bold text-sky-700" aria-hidden>
+                1.
+              </span>
+              <span>{labels.coachBullet1}</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="font-bold text-sky-700" aria-hidden>
+                2.
+              </span>
+              <span>{labels.coachBullet2}</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="font-bold text-sky-700" aria-hidden>
+                3.
+              </span>
+              <span>{labels.coachBullet3}</span>
+            </li>
+          </ul>
+        </div>
+      ) : null}
 
       <FirstReportGuidedOnboarding
         reportId={reportId}
@@ -2255,7 +3006,10 @@ export default function ZeroDraftReportComposer({
                     : terrainStepLive.title_fr
                   : undefined
               }
-              onPhotoUploaded={() => router.refresh()}
+              onPhotoUploaded={() => {
+                router.refresh();
+                schedulePhotoAnalysisRefresh();
+              }}
             />
             {validPhotoCount > 0 && viewerToken?.trim() ? (
               <p
@@ -2264,6 +3018,35 @@ export default function ZeroDraftReportComposer({
               >
                 {labels.photoAfterUploadReminder}
               </p>
+            ) : null}
+            {validPhotoCount > 0 && viewerToken?.trim() ? (
+              <p
+                className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-snug text-slate-800"
+                role="note"
+              >
+                {labels.photoSmartSelectionHint}
+              </p>
+            ) : null}
+            {validPhotoCount > 0 && viewerToken?.trim() ? (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-md border border-amber-200/90 bg-amber-50/80 px-3 py-2 text-xs leading-snug text-amber-950">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-amber-400 text-amber-700 focus:ring-amber-600"
+                  checked={photoSelectionLocked}
+                  onChange={(e) => setPhotoSelectionLocked(e.target.checked)}
+                  disabled={loading || uploadingPhoto}
+                />
+                <span>
+                  <span className="font-semibold">
+                    {language === "en" ? "Lock photo selection" : "Verrouiller la sélection des photos"}
+                  </span>
+                  <span className="mt-0.5 block text-amber-900/90">
+                    {language === "en"
+                      ? "Turns off automatic picks when findings or analyses change. You can still include or exclude each photo manually."
+                      : "Désactive les choix automatiques quand les constats ou les analyses changent. Vous pouvez toujours inclure ou retirer chaque photo à la main."}
+                  </span>
+                </span>
+              </label>
             ) : null}
             {viewerToken?.trim() ? (
               <div className="mt-3 rounded-lg border border-indigo-200/80 bg-indigo-50/70 px-3 py-2.5 text-xs text-indigo-950">
@@ -2360,7 +3143,14 @@ export default function ZeroDraftReportComposer({
             </div>
             {photos.length > 0 ? (
               <div className="mt-3 grid grid-cols-3 gap-2">
-                {photos.map((photo) => (
+                {photos.map((photo) => {
+                  const photoRowKeyForReason = (photo.serverPhotoId?.trim() || photo.id).trim();
+                  const photoSelectionReason = photoSelectionReasonsByKey[photoRowKeyForReason];
+                  const selectedForReport =
+                    photo.report_tier != null ? photo.report_tier !== "excluded" : Boolean(photo.selected_for_report);
+                  const currentTier: Exclude<ReportPhotoTier, "excluded"> =
+                    photo.report_tier === "critical" ? "critical" : "support";
+                  return (
                   <div key={photo.id} className="rounded-md border border-slate-200 p-1.5 text-center">
                     {photo.url ? (
                       // URLs Storage publiques — évite next/image (domaines / tailles variables en session).
@@ -2404,7 +3194,7 @@ export default function ZeroDraftReportComposer({
                     {photo.ai_score != null && !photo.error ? (
                       <p className="text-[10px] font-medium text-violet-800">
                         IA {(photo.ai_score * 100).toFixed(0)}%
-                        {photo.selected_for_report ? (
+                        {selectedForReport ? (
                           <span className="ml-1 rounded bg-violet-100 px-1 font-semibold text-violet-900">
                             {language === "en" ? "AI selected" : "IA sélectionnée"}
                           </span>
@@ -2419,13 +3209,17 @@ export default function ZeroDraftReportComposer({
                           setPhotos((prev) =>
                             prev.map((p) =>
                               p.id === photo.id
-                                ? { ...p, selected_for_report: !p.selected_for_report }
+                                ? {
+                                    ...p,
+                                    selected_for_report: !selectedForReport,
+                                    report_tier: !selectedForReport ? "support" : "excluded",
+                                  }
                                 : p,
                             ),
                           )
                         }
                       >
-                        {photo.selected_for_report
+                        {selectedForReport
                           ? language === "en"
                             ? "Deselect for summary"
                             : "Retirer de la sélection"
@@ -2434,11 +3228,45 @@ export default function ZeroDraftReportComposer({
                             : "Inclure sélection"}
                       </button>
                     ) : null}
+                    {photo.url && !photo.uploading && selectedForReport ? (
+                      <label className="mt-1 block text-left">
+                        <span className="sr-only">
+                          {language === "en" ? "Photo tier" : "Niveau de photo"}
+                        </span>
+                        <select
+                          className="w-full rounded border border-amber-200 bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-950"
+                          value={currentTier}
+                          onChange={(e) => {
+                            const t = e.target.value === "critical" ? "critical" : "support";
+                            setPhotos((prev) =>
+                              prev.map((p) =>
+                                p.id === photo.id
+                                  ? { ...p, report_tier: t, selected_for_report: true }
+                                  : p,
+                              ),
+                            );
+                          }}
+                        >
+                          <option value="critical">
+                            {language === "en" ? "Critical evidence" : "Critique (preuve)"}
+                          </option>
+                          <option value="support">
+                            {language === "en" ? "Support context" : "Support (contexte)"}
+                          </option>
+                        </select>
+                      </label>
+                    ) : null}
+                    {selectedForReport && photoSelectionReason ? (
+                      <p className="mt-1 text-left text-[9px] leading-snug text-slate-600">
+                        {language === "en" ? photoSelectionReason.en : photoSelectionReason.fr}
+                      </p>
+                    ) : null}
                     {photo.error ? (
                       <p className="text-xs text-red-500">{photo.error}</p>
                     ) : null}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </div>
@@ -2561,16 +3389,27 @@ export default function ZeroDraftReportComposer({
                 type="button"
                 className="shrink-0 rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
                 disabled={loading}
-                onClick={() => setClientOverride(null)}
+                onClick={() => {
+                  setClientOverride(null);
+                  setClientSectionUserLocked(false);
+                }}
               >
                 {labels.regenerateClient}
               </button>
             </div>
             <p className="mt-1 text-xs text-slate-600">{labels.clientSectionHint}</p>
+            {clientSectionUserLocked ? (
+              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50/90 px-2.5 py-2 text-[11px] leading-snug text-amber-950">
+                {labels.clientSectionLockedHint}
+              </p>
+            ) : null}
             <textarea
               className="mt-2 min-h-36 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
               value={clientSectionValue}
-              onChange={(e) => setClientOverride(e.target.value)}
+              onChange={(e) => {
+                setClientOverride(e.target.value);
+                setClientSectionUserLocked(true);
+              }}
               disabled={loading}
             />
             <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-700">

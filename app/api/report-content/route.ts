@@ -25,6 +25,12 @@ import {
 } from "@/lib/refineClientSectionAi";
 import { runDefectClassificationPipeline } from "@/lib/runDefectClassificationPipeline";
 import { insertReportVersion } from "@/lib/reportVersions";
+import {
+  buildReportPhotoSelectionV1,
+  parseReportPhotoSelectionIds,
+  parseReportPhotoSelectionLocked,
+  parseReportPhotoSelectionTiers,
+} from "@/lib/reportPhotoSelectionPayload";
 
 function mapAiFailureToPolishOutcome(
   reason: AiFailureReason,
@@ -113,6 +119,65 @@ function normalizeEntries(rawEntries: unknown): ReportEntryInput[] {
       severity: isSeverity(row.severity) ? row.severity : "medium",
       note: typeof row.note === "string" ? row.note.trim() : undefined,
     }));
+}
+
+type ReportPhotoSelectionDbInput = {
+  selectedPhotoIds: string[];
+  tiersByPhotoId: Record<string, "critical" | "support">;
+};
+
+async function persistReportPhotoSelectionDb(
+  supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
+  reportId: string,
+  sel: ReportPhotoSelectionDbInput,
+): Promise<void> {
+  const ids = [...new Set(sel.selectedPhotoIds.map((x) => x.trim()).filter((x) => x.length > 0))];
+  if (ids.length === 0) {
+    const { error } = await supabase
+      .from("report_photo_selections")
+      .delete()
+      .eq("report_id", reportId);
+    if (error && error.code !== "42P01") throw error;
+    return;
+  }
+
+  const rows = ids.map((photoId) => ({
+    report_id: reportId,
+    photo_id: photoId,
+    tier: sel.tiersByPhotoId[photoId] === "critical" ? "critical" : "support",
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error: upsertErr } = await supabase
+    .from("report_photo_selections")
+    .upsert(rows, { onConflict: "report_id,photo_id" });
+  if (upsertErr) {
+    if (upsertErr.code === "42P01") return;
+    throw upsertErr;
+  }
+
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("report_photo_selections")
+    .select("photo_id")
+    .eq("report_id", reportId);
+  if (existingErr) {
+    if (existingErr.code === "42P01") return;
+    throw existingErr;
+  }
+  const keep = new Set(ids);
+  const staleIds = (existingRows ?? [])
+    .map((r) => (r as { photo_id?: unknown }).photo_id)
+    .filter((x): x is string => typeof x === "string" && !keep.has(x));
+  if (staleIds.length > 0) {
+    const { error: deleteErr } = await supabase
+      .from("report_photo_selections")
+      .delete()
+      .eq("report_id", reportId)
+      .in("photo_id", staleIds);
+    if (deleteErr && deleteErr.code !== "42P01") {
+      throw deleteErr;
+    }
+  }
 }
 
 export async function POST(req: Request) {
@@ -352,6 +417,28 @@ export async function POST(req: Request) {
           },
         };
 
+        let dbSelectionInput: ReportPhotoSelectionDbInput | null = null;
+        if (
+          typeof body === "object" &&
+          body !== null &&
+          "report_photo_selection_v1" in body
+        ) {
+          const rawSel = (body as { report_photo_selection_v1: unknown }).report_photo_selection_v1;
+          const ids = parseReportPhotoSelectionIds(rawSel);
+          const locked = parseReportPhotoSelectionLocked(rawSel);
+          const tiersByPhotoId = parseReportPhotoSelectionTiers(rawSel);
+          if (ids !== null) {
+            dbSelectionInput = { selectedPhotoIds: ids, tiersByPhotoId };
+            nextPayloadRaw.report_photo_selection_v1 = buildReportPhotoSelectionV1(ids, {
+              locked,
+              tiersByPhotoId,
+            });
+          } else {
+            dbSelectionInput = { selectedPhotoIds: [], tiersByPhotoId: {} };
+            delete nextPayloadRaw.report_photo_selection_v1;
+          }
+        }
+
         const nextPayload = appendAuditTrail(nextPayloadRaw, {
           field_path: "payload.report_content",
           old_preview: "[previous]",
@@ -422,6 +509,18 @@ export async function POST(req: Request) {
             );
           }
           return Response.json({ success: false, error: updateError.message }, { status: 500 });
+        }
+
+        if (dbSelectionInput) {
+          try {
+            await persistReportPhotoSelectionDb(supabase, reportId, dbSelectionInput);
+          } catch (selErr) {
+            const msg = selErr instanceof Error ? selErr.message : String(selErr);
+            return Response.json(
+              { success: false, error: `Photo selection DB persistence failed: ${msg}` },
+              { status: 500 },
+            );
+          }
         }
 
         let defectClassification: { itemsInserted: number; logged: boolean } | undefined;
