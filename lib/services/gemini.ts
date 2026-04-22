@@ -1,102 +1,105 @@
-/**
- * Analyse d’images via Gemini (serveur uniquement — importer depuis des Route Handlers).
- * Chaque entrée peut être : base64 brut, data URL `data:image/...;base64,...`, ou URL `https://...` publique.
- */
+import { NextRequest, NextResponse } from "next/server";
 
-const GEMINI_GENERATE_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent";
+export const maxDuration = 120;
 
-function base64FromDataUrl(input: string): { mime: string; data: string } | null {
-  const m = /^data:([^;]+);base64,(.+)$/i.exec(input.trim());
-  if (!m) return null;
-  return { mime: m[1] || "image/jpeg", data: m[2].replace(/\s/g, "") };
-}
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { images } = body;
 
-async function inlinePartFromImageInput(image: string): Promise<{
-  inline_data: { mime_type: string; data: string };
-}> {
-  const trimmed = image.trim();
-  if (!trimmed) {
-    throw new Error("Image vide.");
-  }
-
-  const dataUrl = base64FromDataUrl(trimmed);
-  if (dataUrl) {
-    return { inline_data: { mime_type: dataUrl.mime, data: dataUrl.data } };
-  }
-
-  if (/^https:\/\//i.test(trimmed)) {
-    const res = await fetch(trimmed, { method: "GET" });
-    if (!res.ok) {
-      throw new Error(`Téléchargement image HTTP ${res.status}`);
+    // 🔒 Validation
+    if (!process.env.GEMINI_API_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "CONFIG_MISSING", hint: "Clé Gemini manquante" },
+        { status: 503 }
+      );
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    const ct = res.headers.get("content-type")?.split(";")[0]?.trim();
-    const mime =
-      ct && ct.startsWith("image/")
-        ? ct
-        : trimmed.toLowerCase().endsWith(".png")
-          ? "image/png"
-          : "image/jpeg";
-    return { inline_data: { mime_type: mime, data: buf.toString("base64") } };
-  }
 
-  return {
-    inline_data: {
-      mime_type: "image/jpeg",
-      data: trimmed.replace(/\s/g, ""),
-    },
-  };
-}
+    if (!Array.isArray(images)) {
+      return NextResponse.json(
+        { ok: false, error: "INVALID_INPUT" },
+        { status: 400 }
+      );
+    }
 
-export async function analyzeImagesWithGemini(images: string[]): Promise<string> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    throw new Error("GEMINI_API_KEY manquante côté serveur.");
-  }
+    // 🧠 Prompt structuré
+    const prompt = `
+Tu es un inspecteur en bâtiment professionnel.
 
-  const imageParts = await Promise.all(images.map((img) => inlinePartFromImageInput(img)));
-
-  const res = await fetch(`${GEMINI_GENERATE_URL}?key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            {
-              text: `Analyse ces images d’inspection et retourne STRICTEMENT un JSON:
+Analyse les images et retourne STRICTEMENT un JSON valide avec :
 
 {
-  "conditionGenerale": "",
-  "sections": [
+  "summary": "Résumé clair de la situation",
+  "severity": "low | medium | high",
+  "issues": [
     {
-      "titre": "",
-      "items": [
-        {
-          "description": "",
-          "severite": "high|medium|low"
-        }
-      ]
+      "title": "Problème détecté",
+      "severity": "low | medium | high",
+      "description": "Description du problème"
     }
   ]
-}`,
-            },
-            ...imageParts,
-          ],
+}
+
+Sois précis, professionnel et concis.
+`;
+
+    // 🔥 Construction Gemini (sans image pour l’instant)
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      ],
-    }),
-  });
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+              ],
+            },
+          ],
+        }),
+      }
+    );
 
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error("[gemini]", res.status, errText.slice(0, 2000));
-    throw new Error("Gemini error");
+    const data = await geminiRes.json();
+
+    // 🧠 Extraction du texte Gemini
+    const text =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    // 🧹 Nettoyage JSON (important)
+    const cleanText = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    let parsed;
+
+    try {
+      parsed = JSON.parse(cleanText);
+    } catch (e) {
+      return NextResponse.json({
+        ok: false,
+        error: "PARSE_ERROR",
+        raw: text,
+      });
+    }
+
+    // ✅ Réponse finale propre
+    return NextResponse.json({
+      ok: true,
+      result: parsed,
+    });
+
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "SERVER_ERROR",
+      },
+      { status: 500 }
+    );
   }
-
-  const data = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
