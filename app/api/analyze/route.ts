@@ -1,47 +1,57 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
+import type { InspectionResult } from "@/lib/types/inspection";
+import { runAnalysis } from "@/lib/services/orchestrator";
+import { malformedJsonResult, serverErrorResult } from "@/lib/services/pipeline";
+
+export const maxDuration = 120;
+
+/** Santé pour scripts (`GET /api/analyze`). L’analyse réelle : `POST`. */
+export async function GET() {
+  const body: InspectionResult = {
+    ok: true,
+    summary: "Route /api/analyze joignable. Utiliser POST avec { type?, images } pour l’analyse.",
+    severity: "low",
+    issues: [],
+    nextStep: "POST JSON { type: \"inspection\" (défaut), images: string[] }",
+    urgency: "low",
+  };
+  return NextResponse.json(body);
+}
+
+/**
+ * POST JSON `{ type?: "inspection" | "roof", images: string[] }` — data URL image, base64, ou https.
+ * Réponse : toujours un `InspectionResult` complet.
+ */
 export async function POST(req: NextRequest) {
+  let body: unknown;
   try {
-    const { images } = await req.json();
+    body = await req.json();
+  } catch {
+    return NextResponse.json(malformedJsonResult(), { status: 400 });
+  }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return NextResponse.json(
-        { ok: false, error: "CONFIG_MISSING" },
-        { status: 503 }
-      );
-    }
+  try {
+    const o = body as Record<string, unknown>;
+    const typeRaw = o.type;
+    const type = typeRaw === "roof" ? "roof" : "inspection";
+    const imagesRaw = o.images;
+    const images = Array.isArray(imagesRaw)
+      ? imagesRaw.map((x) => (typeof x === "string" ? x : ""))
+      : [];
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: "Analyse cette inspection de bâtiment et donne un résumé clair avec problèmes et gravité.",
-                },
-              ],
-            },
-          ],
-        }),
-      }
-    );
+    const result = await runAnalysis({ type, images });
 
-    const data = await geminiRes.json();
+    const status =
+      result.ok === false && result.error === "CONFIG_MISSING"
+        ? 503
+        : result.ok === false &&
+            (result.error === "INVALID_IMAGE_FORMAT" || result.error === "BAD_JSON")
+          ? 400
+          : 200;
 
-    return NextResponse.json({
-      ok: true,
-      gemini: data,
-    });
-  } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: "SERVER_ERROR" },
-      { status: 500 }
-    );
+    return NextResponse.json(result, { status });
+  } catch {
+    return NextResponse.json(serverErrorResult(), { status: 500 });
   }
 }
