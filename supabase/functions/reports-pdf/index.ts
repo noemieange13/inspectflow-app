@@ -18,9 +18,11 @@ const JSON_HDR = {
 
 const SIGNED_URL_TTL_SEC = 60;
 const MIN_HTML_CHARS = 20;
-const PDF_FETCH_TIMEOUT_MS = 20_000;
+/** html2pdf.app peut dépasser 20s sur HTML long ou charge API élevée. */
+const PDF_FETCH_TIMEOUT_MS = 60_000;
 const AI_TIMEOUT_MS = 12_000;
 const AI_MAX_PHOTOS = 8;
+const AI_PHOTO_FETCH_CAP = 300;
 const AI_MAX_SNIPPETS = 24;
 
 type ReportPhotoLinks = {
@@ -235,6 +237,9 @@ function buildAiSectionHtml(
   }</p>${critical}${recommendations}${bilingualAiFoot}</section>`;
 }
 
+/** Aligné sur `lib/pdfAiNarrativeAnchor.ts` — insertion du bloc IA dans le sommaire QC si présent. */
+const PDF_AI_NARRATIVE_ANCHOR = "<!-- inspectflow-ai-narrative-anchor -->";
+
 function mergeAiSectionIntoHtml(
   currentHtml: string | null,
   narrative: AiNarrative,
@@ -247,6 +252,9 @@ function mergeAiSectionIntoHtml(
       currentHtml.includes("<h2>Minimal AI report</h2>")
     ) {
       return currentHtml;
+    }
+    if (currentHtml.includes(PDF_AI_NARRATIVE_ANCHOR)) {
+      return currentHtml.replace(PDF_AI_NARRATIVE_ANCHOR, aiSection);
     }
     if (currentHtml.includes("</body>")) {
       return currentHtml.replace("</body>", `${aiSection}</body>`);
@@ -292,12 +300,54 @@ async function createSignedUrlOrThrow(
   return url;
 }
 
+function parsePayloadPhotoSelectionIds(
+  payload: Record<string, unknown> | null | undefined,
+): Set<string> | null {
+  if (!payload) return null;
+  const raw = payload.report_photo_selection_v1;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const ids = o.selected_photo_ids;
+  if (!Array.isArray(ids)) return null;
+  const out = ids
+    .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    .map((x) => x.trim());
+  return out.length > 0 ? new Set(out) : null;
+}
+
+async function fetchDbPhotoSelectionIds(
+  supabase: SupabaseClient,
+  reportId: string,
+): Promise<Set<string> | null> {
+  const { data, error } = await supabase
+    .from("report_photo_selections")
+    .select("photo_id")
+    .eq("report_id", reportId);
+  if (error) {
+    if (error.code === "42P01") return null;
+    logStructured("warn", "ai_photo_selection_db_read_failed", {
+      report_id: reportId,
+      err: error.message,
+    });
+    return null;
+  }
+  const ids = (data ?? [])
+    .map((r) => (r as { photo_id?: unknown }).photo_id)
+    .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    .map((x) => x.trim());
+  return ids.length > 0 ? new Set(ids) : null;
+}
+
 async function fetchPhotoAnalysesForReport(
   supabase: SupabaseClient,
   reportId: string,
+  payload?: Record<string, unknown> | null,
 ): Promise<{ rows: PhotoAnalysisRow[]; source: string }> {
   let links: ReportPhotoLinks | null = null;
   let inspectionId: string | null = null;
+  const wantedDb = await fetchDbPhotoSelectionIds(supabase, reportId);
+  const wantedPayload = parsePayloadPhotoSelectionIds(payload ?? undefined);
+  const wanted = wantedDb && wantedDb.size > 0 ? wantedDb : wantedPayload;
 
   const { data: reportLinks, error: linkErr } = await supabase
     .from("reports")
@@ -315,7 +365,7 @@ async function fetchPhotoAnalysesForReport(
     inspectionId = links?.inspection_id ?? null;
   }
 
-  if (links?.photo_id) {
+  if (links?.photo_id && (!wanted || wanted.size === 0)) {
     const { data: row, error } = await supabase
       .from("photos")
       .select("id, analysis, inspection_id, photo_number, storage_path")
@@ -333,7 +383,7 @@ async function fetchPhotoAnalysesForReport(
     }
   }
 
-  if (links?.job_id) {
+  if (links?.job_id && (!wanted || wanted.size === 0)) {
     const { data: job, error: jobErr } = await supabase
       .from("jobs")
       .select("photo_id, inspection_id")
@@ -377,18 +427,49 @@ async function fetchPhotoAnalysesForReport(
       .select("id, analysis, inspection_id, photo_number, storage_path")
       .eq("inspection_id", inspectionId)
       .order("photo_number", { ascending: true })
-      .limit(AI_MAX_PHOTOS);
+      .limit(AI_PHOTO_FETCH_CAP);
 
     if (!error && Array.isArray(data) && data.length > 0) {
+      let rows = data as PhotoAnalysisRow[];
+      if (wanted && wanted.size > 0) {
+        const filtered = rows.filter((r) => wanted.has(String(r.id)));
+        if (filtered.length > 0) rows = filtered;
+      }
       return {
-        rows: data as PhotoAnalysisRow[],
-        source: "photos.by_inspection_id",
+        rows,
+        source: wantedDb && wantedDb.size > 0
+          ? "photos.by_inspection_id+db_selection"
+          : wantedPayload && wantedPayload.size > 0
+            ? "photos.by_inspection_id+payload_selection"
+            : "photos.by_inspection_id",
       };
     }
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_inspection_failed", {
         report_id: reportId,
         inspection_id: inspectionId,
+        err: error.message,
+      });
+    }
+  }
+
+  if (wanted && wanted.size > 0) {
+    const ids = [...wanted];
+    const { data, error } = await supabase
+      .from("photos")
+      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .in("id", ids)
+      .order("photo_number", { ascending: true })
+      .limit(AI_PHOTO_FETCH_CAP);
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return {
+        rows: data as PhotoAnalysisRow[],
+        source: wantedDb && wantedDb.size > 0 ? "photos.by_db_selection_ids" : "photos.by_payload_selection_ids",
+      };
+    }
+    if (error) {
+      logStructured("warn", "ai_photo_lookup_by_selection_ids_failed", {
+        report_id: reportId,
         err: error.message,
       });
     }
@@ -600,6 +681,8 @@ Deno.serve(async (req) => {
 
     const body = (await req.json().catch(() => ({}))) as {
       report_id?: unknown;
+      /** Fourni par Next (`ensureReportPayloadHtml`) : HTML canonique ; force la régénération même si `pdf_path` est déjà défini. */
+      html_for_pdf?: unknown;
     };
     reportId =
       typeof body.report_id === "string" && body.report_id.trim()
@@ -610,7 +693,17 @@ Deno.serve(async (req) => {
       return json({ success: false, error: "Invalid report_id" }, 400);
     }
 
-    logStructured("info", "report_id_ok", { report_id: reportId });
+    const htmlForPdfFromClient =
+      typeof body.html_for_pdf === "string" &&
+      body.html_for_pdf.trim().length >= MIN_HTML_CHARS
+        ? body.html_for_pdf.trim()
+        : null;
+    const forceRegenerate = htmlForPdfFromClient != null;
+
+    logStructured("info", "report_id_ok", {
+      report_id: reportId,
+      html_source: forceRegenerate ? "client_body" : "db_payload",
+    });
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -639,7 +732,7 @@ Deno.serve(async (req) => {
 
     const canonicalPath = `${report.user_id}/${report.id}.pdf`;
 
-    if (report.pdf_path) {
+    if (report.pdf_path && !forceRegenerate) {
       const storageKey = report.pdf_path;
       logStructured("info", "cache_hit_pre_lock", { storageKey });
 
@@ -691,7 +784,7 @@ Deno.serve(async (req) => {
       .eq("id", reportId)
       .single();
 
-    if (fresh?.pdf_path) {
+    if (fresh?.pdf_path && !forceRegenerate) {
       logStructured("info", "cache_hit_post_lock", {
         storageKey: fresh.pdf_path,
       });
@@ -727,10 +820,27 @@ Deno.serve(async (req) => {
     );
     const currentHtml = typeof payload.html === "string" ? payload.html : null;
 
-    let htmlForPdf = currentHtml;
+    let htmlForPdf = htmlForPdfFromClient ?? currentHtml;
+
+    if (
+      htmlForPdfFromClient &&
+      htmlForPdfFromClient !== currentHtml
+    ) {
+      payload.html = htmlForPdfFromClient;
+      const { error: syncErr } = await supabase
+        .from("reports")
+        .update({ payload })
+        .eq("id", report.id);
+      if (syncErr) {
+        logStructured("warn", "payload_html_sync_failed", {
+          report_id: reportId,
+          err: syncErr.message,
+        });
+      }
+    }
     let aiNarrative: AiNarrative | null = null;
     try {
-      const photoAnalyses = await fetchPhotoAnalysesForReport(supabase, reportId);
+      const photoAnalyses = await fetchPhotoAnalysesForReport(supabase, reportId, payload);
       if (photoAnalyses.rows.length > 0) {
         const bestPhotos = selectBestPhotos(photoAnalyses.rows);
         logStructured("info", "photo_selection", {
@@ -744,7 +854,7 @@ Deno.serve(async (req) => {
           jurisdiction,
         );
         if (aiNarrative) {
-          htmlForPdf = mergeAiSectionIntoHtml(currentHtml, aiNarrative, language);
+          htmlForPdf = mergeAiSectionIntoHtml(htmlForPdf, aiNarrative, language);
           payload.ai_minimal = {
             mode: aiNarrative.mode,
             language,

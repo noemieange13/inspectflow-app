@@ -10,6 +10,14 @@ export type PhotoVisionAnalysis = {
   suggested_inspector_note: string;
   severity_hint: "low" | "medium" | "high" | "unknown";
   language: "fr" | "en";
+<<<<<<< HEAD
+=======
+  /**
+   * Zone bâtiment la plus plausible pour cette image (grille Zero Draft / QC).
+   * Optionnel : l’inférence locale par mots-clés fonctionne aussi sans ce champ.
+   */
+  suggested_building_zone?: string;
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 };
 
 export async function analyzeInspectionPhotoVision(input: {
@@ -32,14 +40,24 @@ export async function analyzeInspectionPhotoVision(input: {
       ? [
           "Analyze this building inspection photo.",
           "Return a JSON object with exactly these keys:",
+<<<<<<< HEAD
           '{"summary":"string (max 400 chars)","observations":["string"],"defects_or_risks":["string"],"suggested_inspector_note":"string (professional French/English field note style)","severity_hint":"low|medium|high|unknown","language":"en"}',
+=======
+          '{"summary":"string (max 400 chars)","observations":["string"],"defects_or_risks":["string"],"suggested_inspector_note":"string (professional French/English field note style)","severity_hint":"low|medium|high|unknown","language":"en","suggested_building_zone":"toiture|facade|salon|cuisine|salle_de_bain|sous_sol|installation_electrique|fondation|garage|exterieur|plomberie|grenier|autre"}',
+          "suggested_building_zone: single value for the main building area shown (e.g. electrical panel -> installation_electrique).",
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           "observations: 2-6 short bullet points visible in the image.",
           "defects_or_risks: potential issues visible (empty array if none).",
         ].join("\n")
       : [
           "Analyse cette photo d'inspection batiment.",
           "Retourne un objet JSON avec exactement ces cles:",
+<<<<<<< HEAD
           '{"summary":"string (max 400 caracteres)","observations":["string"],"defects_or_risks":["string"],"suggested_inspector_note":"string (style note terrain professionnelle)","severity_hint":"low|medium|high|unknown","language":"fr"}',
+=======
+          '{"summary":"string (max 400 caracteres)","observations":["string"],"defects_or_risks":["string"],"suggested_inspector_note":"string (style note terrain professionnelle)","severity_hint":"low|medium|high|unknown","language":"fr","suggested_building_zone":"toiture|facade|salon|cuisine|salle_de_bain|sous_sol|installation_electrique|fondation|garage|exterieur|plomberie|grenier|autre"}',
+          "suggested_building_zone: une seule valeur, la zone la plus representative du sujet principal de la photo (ex. panneau electrique -> installation_electrique).",
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           "observations: 2 a 6 points courts visibles sur l'image.",
           "defects_or_risks: risques ou defauts potentiels visibles (tableau vide si aucun).",
         ].join("\n");
@@ -80,6 +98,28 @@ export async function analyzeInspectionPhotoVision(input: {
 
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
+<<<<<<< HEAD
+=======
+    const zoneRaw =
+      typeof parsed.suggested_building_zone === "string"
+        ? parsed.suggested_building_zone.trim()
+        : "";
+    const allowedZones = new Set([
+      "toiture",
+      "facade",
+      "salon",
+      "cuisine",
+      "salle_de_bain",
+      "sous_sol",
+      "installation_electrique",
+      "fondation",
+      "garage",
+      "exterieur",
+      "plomberie",
+      "grenier",
+      "autre",
+    ]);
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     return {
       summary: typeof parsed.summary === "string" ? parsed.summary : "",
       observations: Array.isArray(parsed.observations)
@@ -99,6 +139,10 @@ export async function analyzeInspectionPhotoVision(input: {
           ? parsed.severity_hint
           : "unknown",
       language: input.language,
+<<<<<<< HEAD
+=======
+      ...(zoneRaw && allowedZones.has(zoneRaw) ? { suggested_building_zone: zoneRaw } : {}),
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     };
   } catch {
     return null;

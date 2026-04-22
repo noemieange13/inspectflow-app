@@ -99,6 +99,29 @@ export const SEVERITIES: Array<{ value: Severity; label: string }> = [
   { value: "high", label: "Elevee" },
 ];
 
+/** Reprend les constats structurés depuis `reports.payload.entries` (rapport existant). */
+export function parseStructuredEntriesFromPayload(raw: unknown): ReportEntryInput[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ReportEntryInput[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    const zoneRaw = typeof o.zone === "string" ? o.zone : "";
+    if (!ZONES.some((z) => z.value === zoneRaw)) continue;
+    const zone = zoneRaw as ZoneCode;
+    const issueRaw = typeof o.issue === "string" ? o.issue : "";
+    const issue: IssueCode = ISSUES.some((i) => i.value === issueRaw)
+      ? (issueRaw as IssueCode)
+      : "other";
+    const sev = o.severity;
+    const severity: Severity =
+      sev === "low" || sev === "medium" || sev === "high" ? sev : "medium";
+    const note = typeof o.note === "string" ? o.note : "";
+    out.push({ zone, issue, severity, note });
+  }
+  return out;
+}
+
 const ZONE_MAP: Record<ZoneCode, ZoneTemplate> = Object.fromEntries(
   ZONES.map((z) => [z.value, { label: z.label }]),
 ) as Record<ZoneCode, ZoneTemplate>;

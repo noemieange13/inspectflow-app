@@ -5,6 +5,11 @@
  *
  * Usage : depuis la racine du projet
  *   npm run smoke:e2e
+<<<<<<< HEAD
+=======
+ *
+ * Options : SMOKE_SKIP_TRIGGER, SMOKE_SKIP_REPORT_COVER (1 = ne pas appeler report-cover).
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -222,6 +227,50 @@ const htmlPayload =
   "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Smoke</title></head><body>" +
   "<p>Smoke test HTML content for PDF pipeline verification.</p></body></html>";
 
+<<<<<<< HEAD
+=======
+/** Couverture minimale pour valider POST /api/report-cover + fusion PDF (cover + html custom). */
+function smokeCoverV1() {
+  const now = new Date();
+  return {
+    schema_version: 1,
+    requerants: "SMOKE E2E",
+    conditions_meteo: "N/A",
+    date_heure_affichage: now.toLocaleString("fr-CA"),
+    date_heure_iso: now.toISOString(),
+    duree_inspection: "",
+    inspecteur_nom: "Smoke",
+    inspecteur_numero_certification: "",
+    compagnie: "",
+    intervenants_sur_place: "",
+    propriete: {
+      adresse: "123 rue Smoke",
+      type_propriete: "",
+      annee_construction: "",
+      client_nom: "",
+      client_telephone: "",
+      client_courriel: "",
+    },
+    description_sommaire: {
+      mode: "manuel",
+      type_maison: "",
+      construit_en: "",
+      facade: "",
+      cotes: "",
+      arriere: "",
+      toiture: "",
+      type_fondation: "",
+      type_structure: "",
+      chauffage: "",
+    },
+    condition_generale: "",
+    orientation_facade: "",
+    conformite_juridiction: "ca_qc",
+    notes_conformite: "Note smoke — à valider juridiquement.",
+  };
+}
+
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 let userId;
 let inspectionId;
 try {
@@ -292,6 +341,55 @@ if (process.env.SMOKE_SKIP_TRIGGER === "1") {
   process.exit(0);
 }
 
+<<<<<<< HEAD
+=======
+const accessToken =
+  typeof j1?.access_token === "string" ? j1.access_token.trim() : "";
+if (process.env.SMOKE_SKIP_REPORT_COVER === "1") {
+  console.log("SMOKE_SKIP_REPORT_COVER=1 — pas d’appel /api/report-cover.");
+} else if (accessToken) {
+  let rCover;
+  let tCover;
+  try {
+    rCover = await fetchApi("/api/report-cover", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        report_id: reportId,
+        access_token: accessToken,
+        cover_v1: smokeCoverV1(),
+        inspector_profile_v1: {
+          nom: "Smoke",
+          numero_certification: "",
+          compagnie: "",
+          logo_data_url: null,
+        },
+      }),
+    });
+    tCover = await rCover.text();
+  } catch (err) {
+    console.error("Échec réseau vers /api/report-cover :", err?.cause ?? err);
+    process.exit(1);
+  }
+  let jCover;
+  try {
+    jCover = JSON.parse(tCover);
+  } catch {
+    jCover = null;
+  }
+  console.log("report-cover HTTP", rCover.status);
+  if (!rCover.ok) {
+    console.error("report-cover body:", tCover);
+    process.exit(1);
+  }
+  console.log("OK report-cover", jCover?.cover_saved_at ?? "");
+} else {
+  console.log(
+    "SKIP report-cover (pas d’access_token dans la réponse create-report).",
+  );
+}
+
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 let r2;
 let t2;
 try {

@@ -17,6 +17,10 @@ Guide unique pour mettre **InspectFlow** en ligne avec le pipeline PDF **`report
 | `DASHBOARD_USER` / `DASHBOARD_PASS` | si `/dashboard` | Basic Auth (middleware) |
 | `RESEND_API_KEY` / `RESEND_FROM` | non | Email « première vue » |
 | `WEBHOOK_REPORT_OPENED` / `WEBHOOK_SECRET` | non | Webhook optionnel |
+| `OPENAI_API_KEY` | **recommandé** | Assistant couverture (`/api/inspection-assist`), synthèse condition, extraction DV (image + PDF), analyse photos, etc. Sans elle, ces actions répondent **503** avec un message explicite. |
+| `COVER_DV_PDF_MODEL` | non | Modèle pour l’extraction DV depuis un **fichier PDF** (`/v1/responses`, `input_file`). Défaut : **`gpt-4o`**. |
+| `COVER_VISION_MODEL` | non | Modèle pour l’extraction DV depuis une **image** (`/v1/chat/completions` + vision). Défaut : `gpt-4o-mini` (ou `REPORTS_AI_MODEL`). |
+| `OPENAI_ORGANIZATION` | non | Si OpenAI renvoie **401** sur `/v1/responses` alors que la clé semble bonne : ajouter l’ID d’organisation (`org_…`) depuis le dashboard OpenAI. |
 
 Modèle local : **`.env.example`** à la racine du repo.
 

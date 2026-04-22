@@ -29,6 +29,10 @@ Access codes.txt
 
 # debug
 .cursor/debug.log
+.cursor/*.log
+
+# supabase CLI local temp
+supabase/.temp/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

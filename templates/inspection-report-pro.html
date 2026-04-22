@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rapport d'inspection</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #1d4ed8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+      margin: 0;
+      padding: 40px 48px;
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    h1 { font-size: 26px; font-weight: 700; margin: 0 0 8px; color: var(--ink); }
+    h2 {
+      font-size: 17px;
+      font-weight: 600;
+      margin: 0 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid var(--accent);
+      color: var(--ink);
+    }
+    .section { margin-bottom: 28px; page-break-inside: avoid; }
+    .cover {
+      text-align: center;
+      margin: 80px 0 48px;
+      padding: 32px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fafafa;
+    }
+    .logo { max-width: 160px; max-height: 80px; object-fit: contain; margin-bottom: 16px; }
+    .subtitle { color: var(--muted); font-size: 15px; margin: 4px 0; }
+    .grid { display: flex; gap: 24px; flex-wrap: wrap; }
+    .box { flex: 1; min-width: 220px; }
+    .photo {
+      width: 100%;
+      max-height: 320px;
+      object-fit: contain;
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+    @media print {
+      body { padding: 24px 32px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- COVER — remplacer les {{placeholders}} côté serveur (Mustache non requis : substitution TS) -->
+<div class="cover">
+  <img src="{{logo_url}}" alt="" class="logo" />
+  <h1>Rapport d'inspection</h1>
+  <p class="subtitle">{{inspector_name}}</p>
+  <p class="subtitle"># {{license}}</p>
+  <p class="muted">{{company_line}}</p>
+</div>
+
+<div class="section">
+  <h2>Informations générales</h2>
+  <div class="grid">
+    <div class="box">
+      <strong>Propriété :</strong> {{address}}<br />
+      <strong>Client :</strong> {{client_name}}<br />
+      <strong>Téléphone :</strong> {{client_phone}}<br />
+      <strong>Courriel :</strong> {{client_email}}<br />
+    </div>
+    <div class="box">
+      <strong>Date :</strong> {{date}}<br />
+      <strong>Météo :</strong> {{weather}}<br />
+      <strong>Durée :</strong> {{duration}}<br />
+      <strong>Requérant(s) :</strong> {{requerants}}<br />
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Sommaire du bâtiment</h2>
+  <p>{{building_summary}}</p>
+</div>
+
+<!-- Répéter un bloc par système / section métier -->
+<!--
+<div class="section">
+  <h2>Nom système</h2>
+  <p>Description / observations</p>
+  <img src="https://..." class="photo" alt="" />
+</div>
+-->
+
+<div class="section">
+  <h2>Condition générale</h2>
+  <p>{{global_condition}}</p>
+</div>
+
+<div class="section">
+  <h2>Clauses réglementaires</h2>
+  <p>{{legal_clauses}}</p>
+</div>
+
+</body>
+</html>

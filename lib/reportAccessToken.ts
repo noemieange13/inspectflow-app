@@ -11,3 +11,23 @@ export function defaultReportTokenExpiresAt(
 ): Date {
   return new Date(Date.now() + msFromNow);
 }
+
+/** Comparaison jeton URL / corps vs valeur DB (casse, espaces, encodage partiel). */
+export function normalizeReportAccessTokenInput(raw: string): string {
+  const t = raw.trim();
+  try {
+    return decodeURIComponent(t).trim().toLowerCase();
+  } catch {
+    return t.toLowerCase();
+  }
+}
+
+export function reportAccessTokensMatch(
+  clientRaw: string,
+  dbStored: string,
+): boolean {
+  return (
+    normalizeReportAccessTokenInput(clientRaw) ===
+    normalizeReportAccessTokenInput(dbStored)
+  );
+}

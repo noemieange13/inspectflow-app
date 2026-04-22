@@ -1,17 +1,35 @@
 "use client";
 
+<<<<<<< HEAD
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+=======
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  buildComplianceBlockV1,
+  COMPLIANCE_JURISDICTIONS,
+  COMPLIANCE_LABELS,
+  COMPLIANCE_TEMPLATE_VERSION,
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   defaultComplianceNote,
   defaultCoverPayloadV1,
   formatFrDateTime,
   loadInspectorProfile,
+<<<<<<< HEAD
   saveInspectorProfile,
+=======
+  parseCoverV1FromUnknown,
+  saveInspectorProfile,
+  type ComplianceJurisdiction,
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   type FacadeOrientation,
   type InspectionCoverPayloadV1,
   type InspectorProfileV1,
 } from "@/lib/inspectionCoverPayload";
+<<<<<<< HEAD
 import { fetchWeatherOpenMeteo, geolocationPosition } from "@/lib/weatherOpenMeteo";
 
 const DRAFT_KEY = "inspectflow:cover_form_draft_v1";
@@ -19,6 +37,113 @@ const DRAFT_KEY = "inspectflow:cover_form_draft_v1";
 const inputClass =
   "mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 const labelClass = "block text-sm font-medium text-slate-700";
+=======
+import { effectiveDescriptionNarrative } from "@/lib/coverResumeFormat";
+import { evaluateCoverReadiness } from "@/lib/reportReadiness";
+import type { ReadinessIssue } from "@/lib/reportReadiness";
+import { emitProductEvent } from "@/lib/productTelemetry";
+import {
+  LIMITATION_CHECKLIST_DEFS,
+  type LimitationChecklistId,
+  suggestLimitationsFromCover,
+} from "@/lib/limitations";
+import SimpleInspectionWrapper from "@/components/SimpleInspectionWrapper";
+import ReportVersionTimeline from "@/components/ReportVersionTimeline";
+import {
+  TerrainDescriptionModePills,
+  TerrainSmartEntryHero,
+  TerrainWeatherGpsBadge,
+  terrainAutoFieldClass,
+} from "@/components/terrain/TerrainPrimitives";
+import {
+  fetchWeatherOpenMeteo,
+  geocodeAddressOpenMeteo,
+  geolocationPosition,
+} from "@/lib/weatherOpenMeteo";
+import { getDisplaySummary } from "@/lib/inspectionDisplay";
+import { coerceInspectionResult } from "@/lib/inspectionResultCoerce";
+import type { InspectionResult } from "@/lib/types/inspection";
+
+export type InspectionCoverFormProps = {
+  reportId?: string;
+  viewerToken?: string;
+  /** Indique si un PDF est déjà associé (affichage rassurant sur le résumé). */
+  reportHasPdf?: boolean;
+  initialCoverFromReport?: InspectionCoverPayloadV1 | null;
+  initialInspectorProfileFromReport?: InspectorProfileV1 | null;
+};
+
+const DRAFT_KEY = "inspectflow:cover_form_draft_v1";
+
+/** Contexte texte envoyé à `/api/inspection-assist` (pas d’images). */
+function compactCoverContext(d: InspectionCoverPayloadV1): Record<string, string> {
+  const out: Record<string, string> = {};
+  const t = (s: string) => s.trim();
+  if (t(d.requerants)) out.requerants = t(d.requerants);
+  if (t(d.propriete.adresse)) out.adresse = t(d.propriete.adresse);
+  if (t(d.propriete.type_propriete)) out.type_propriete = t(d.propriete.type_propriete);
+  if (t(d.propriete.annee_construction)) out.annee_construction = t(d.propriete.annee_construction);
+  if (t(d.propriete.client_nom)) out.client_nom = t(d.propriete.client_nom);
+  if (t(d.propriete.client_telephone)) out.client_telephone = t(d.propriete.client_telephone);
+  if (t(d.propriete.client_courriel)) out.client_courriel = t(d.propriete.client_courriel);
+  if (t(d.intervenants_sur_place)) out.intervenants = t(d.intervenants_sur_place);
+  const ds = d.description_sommaire;
+  for (const key of [
+    "type_maison",
+    "construit_en",
+    "facade",
+    "cotes",
+    "arriere",
+    "toiture",
+    "type_fondation",
+    "type_structure",
+    "chauffage",
+  ] as const) {
+    const v = t(ds[key]);
+    if (v) out[`description_${key}`] = v;
+  }
+  if (t(d.condition_generale)) {
+    out.condition_generale = t(d.condition_generale).slice(0, 2000);
+  }
+  if (d.orientation_facade) out.orientation_facade = d.orientation_facade;
+  if (t(d.conditions_meteo)) out.meteo = t(d.conditions_meteo);
+  if (t(d.duree_inspection)) out.duree_inspection = t(d.duree_inspection);
+  out.mode_description = ds.mode;
+  return out;
+}
+
+const inputClass =
+  "mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
+const labelClass = "block text-sm font-medium text-slate-700";
+const COVER_SIMPLE_UX = true;
+const actionPrimaryClass =
+  "inline-flex min-h-12 items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-60";
+const actionSecondaryClass =
+  "inline-flex min-h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-60";
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Lecture fichier impossible."));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Lecture fichier impossible."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function buildTerrainDescriptionFromResult(r: InspectionResult): string {
+  if (!r.ok) return "";
+  const issueLines = r.issues.map(
+    (i) =>
+      `• [${i.severity}] ${i.type}: ${i.description} — ${i.recommendation}`,
+  );
+  return [r.summary, r.nextStep ? `\nProchaine étape : ${r.nextStep}` : "", issueLines.length ? `\n${issueLines.join("\n")}` : ""]
+    .join("")
+    .trim();
+}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -28,12 +153,28 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
+<<<<<<< HEAD
 export default function InspectionCoverForm() {
   const [data, setData] = useState<InspectionCoverPayloadV1>(defaultCoverPayloadV1);
+=======
+export default function InspectionCoverForm({
+  reportId,
+  viewerToken,
+  reportHasPdf,
+  initialCoverFromReport,
+  initialInspectorProfileFromReport,
+}: InspectionCoverFormProps = {}) {
+  const [data, setData] = useState<InspectionCoverPayloadV1>(() => ({
+    ...defaultCoverPayloadV1(),
+    date_heure_affichage: "",
+    date_heure_iso: null,
+  }));
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const [profile, setProfile] = useState<InspectorProfileV1 | null>(null);
   const [iaMessage, setIaMessage] = useState<string | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [errors, setErrors] = useState<{ requerants?: string; adresse?: string }>({});
+<<<<<<< HEAD
 
   useEffect(() => {
     const p = loadInspectorProfile();
@@ -59,6 +200,122 @@ export default function InspectionCoverForm() {
     }
   }, []);
 
+=======
+  const [remoteSaving, setRemoteSaving] = useState(false);
+  const [dvLoading, setDvLoading] = useState(false);
+  const [descriptionExtracting, setDescriptionExtracting] = useState(false);
+  /** Réponse structurée `/api/analyze` (affichage terrain immédiat). */
+  const [terrainInspectionResult, setTerrainInspectionResult] = useState<InspectionResult | null>(
+    null,
+  );
+  /** Incrémenté à chaque sélection sur l’input « photos description » (lanceur 1 bouton). */
+  const [descriptionFilesTick, setDescriptionFilesTick] = useState(0);
+  const [conditionSynthesizing, setConditionSynthesizing] = useState(false);
+  const [notesSubmitting, setNotesSubmitting] = useState(false);
+  const [aiImproveLoading, setAiImproveLoading] = useState<null | "description" | "condition">(null);
+  const [terrainNoteText, setTerrainNoteText] = useState("");
+  const [weatherFilledByGps, setWeatherFilledByGps] = useState(false);
+  const [compassSampling, setCompassSampling] = useState(false);
+  const [draftSaveHint, setDraftSaveHint] = useState<string | null>(null);
+  const [profileSaveHint, setProfileSaveHint] = useState<string | null>(null);
+  /** `resume` = écran unique « document » ; `outils` = imports DV / photos / notes (ex-formulaire). */
+  const [workspace, setWorkspace] = useState<"resume" | "outils">("resume");
+  const didAutoDateRef = useRef(false);
+  const descriptionFileInputRef = useRef<HTMLInputElement>(null);
+  const sellerDvFileInputRef = useRef<HTMLInputElement>(null);
+  const notesPhotoRef = useRef<HTMLInputElement>(null);
+  const notesAudioRef = useRef<HTMLInputElement>(null);
+
+  const linkedToReport = !!(reportId && viewerToken);
+
+  useEffect(() => {
+    let next = defaultCoverPayloadV1();
+
+    if (initialCoverFromReport) {
+      next = {
+        ...next,
+        ...initialCoverFromReport,
+        propriete: {
+          ...next.propriete,
+          ...initialCoverFromReport.propriete,
+        },
+        description_sommaire: {
+          ...next.description_sommaire,
+          ...initialCoverFromReport.description_sommaire,
+        },
+      };
+    } else {
+      try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as InspectionCoverPayloadV1;
+          if (parsed?.schema_version === 1) {
+            next = {
+              ...next,
+              ...parsed,
+              propriete: { ...next.propriete, ...parsed.propriete },
+              description_sommaire: {
+                ...next.description_sommaire,
+                ...parsed.description_sommaire,
+              },
+            };
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const prof = initialInspectorProfileFromReport ?? loadInspectorProfile();
+    if (prof) {
+      setProfile(prof);
+      next = {
+        ...next,
+        inspecteur_nom: prof.nom || next.inspecteur_nom,
+        inspecteur_numero_certification:
+          prof.numero_certification || next.inspecteur_numero_certification,
+        compagnie: prof.compagnie || next.compagnie,
+      };
+    }
+
+    const normalized = parseCoverV1FromUnknown(next);
+    if (normalized) {
+      next = normalized;
+    }
+
+    setData(next);
+  }, [initialCoverFromReport, initialInspectorProfileFromReport]);
+
+  useEffect(() => {
+    if (didAutoDateRef.current) return;
+    didAutoDateRef.current = true;
+    setData((prev) => {
+      if (prev.date_heure_affichage.trim()) return prev;
+      const now = new Date();
+      return {
+        ...prev,
+        date_heure_affichage: formatFrDateTime(now),
+        date_heure_iso: now.toISOString(),
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (linkedToReport) return;
+    const t = window.setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
+        setDraftSaveHint(
+          `Brouillon auto-enregistré — ${new Date().toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`,
+        );
+      } catch {
+        setDraftSaveHint(null);
+      }
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [data, linkedToReport]);
+
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const update = useCallback(<K extends keyof InspectionCoverPayloadV1>(
     key: K,
     value: InspectionCoverPayloadV1[K],
@@ -105,16 +362,47 @@ export default function InspectionCoverForm() {
         pos.coords.longitude,
       );
       update("conditions_meteo", w.line_fr);
+<<<<<<< HEAD
     } catch (e) {
       setIaMessage(
         e instanceof Error
           ? e.message
+=======
+      setWeatherFilledByGps(true);
+    } catch (e) {
+      const address = data.propriete.adresse.trim();
+      if (address) {
+        try {
+          const geo = await geocodeAddressOpenMeteo(address);
+          const w = await fetchWeatherOpenMeteo(geo.latitude, geo.longitude);
+          update("conditions_meteo", w.line_fr);
+          setWeatherFilledByGps(false);
+          setIaMessage(
+            `Position bloquée, météo remplie via l’adresse (« ${geo.label} »).`,
+          );
+          return;
+        } catch (fallbackErr) {
+          const reason = fallbackErr instanceof Error ? fallbackErr.message : "échec du fallback adresse";
+          setIaMessage(
+            `Impossible de récupérer la météo (position + adresse). Détail: ${reason}.`,
+          );
+          return;
+        }
+      }
+      setIaMessage(
+        e instanceof Error
+          ? `${e.message} Ajoutez une adresse de propriété puis relancez « Remplir via position / adresse ».`
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           : "Impossible de récupérer la météo (permission lieu refusée ou réseau).",
       );
     } finally {
       setWeatherLoading(false);
     }
+<<<<<<< HEAD
   }, [update]);
+=======
+  }, [data.propriete.adresse, update]);
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
   const persistProfile = useCallback(() => {
     const p: InspectorProfileV1 = {
@@ -123,8 +411,23 @@ export default function InspectionCoverForm() {
       compagnie: data.compagnie.trim(),
       logo_data_url: profile?.logo_data_url ?? null,
     };
+<<<<<<< HEAD
     saveInspectorProfile(p);
     setProfile(p);
+=======
+    if (!saveInspectorProfile(p)) {
+      setProfileSaveHint(null);
+      setIaMessage(
+        "Impossible d’enregistrer le profil dans ce navigateur (stockage plein, mode privé ou données bloquées). Réessayez après avoir réduit la taille du logo ou vidé un peu l’espace local.",
+      );
+      return;
+    }
+    setProfile(p);
+    setProfileSaveHint(`Profil navigateur mis à jour — ${new Date().toLocaleTimeString("fr-CA")}`);
+    setIaMessage(
+      "Profil inspecteur enregistré dans ce navigateur — nom, certification, compagnie et logo (si présent). Pensez à « Enregistrer sur le rapport » pour le PDF.",
+    );
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   }, [data.inspecteur_nom, data.inspecteur_numero_certification, data.compagnie, profile?.logo_data_url]);
 
   const onLogo = useCallback((file: File | null) => {
@@ -145,6 +448,7 @@ export default function InspectionCoverForm() {
         compagnie: data.compagnie.trim() || prev?.compagnie || "",
         logo_data_url: url,
       }));
+<<<<<<< HEAD
       setIaMessage("Logo enregistré localement (aperçu page couverture — export PDF à brancher).");
     };
     reader.readAsDataURL(file);
@@ -156,6 +460,360 @@ export default function InspectionCoverForm() {
     );
   }, []);
 
+=======
+      setIaMessage(
+        linkedToReport
+          ? "Logo mis à jour — cliquez « Enregistrer sur le rapport » pour l’inclure au payload et au PDF."
+          : "Logo enregistré dans le profil navigateur. Ouvrez la couverture depuis un rapport (lien avec jeton) et enregistrez-y pour que le logo parte dans le HTML/PDF.",
+      );
+    };
+    reader.readAsDataURL(file);
+  }, [data.inspecteur_nom, data.inspecteur_numero_certification, data.compagnie, linkedToReport]);
+
+  const scrollToManualFields = useCallback(() => {
+    document.getElementById("terrain-propriete-fields")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, []);
+
+  const tryCompassFacade = useCallback(async () => {
+    if (typeof window === "undefined" || !window.DeviceOrientationEvent) {
+      setIaMessage(
+        "Boussole indisponible sur ce navigateur — choisissez Nord / Sud / Est / Ouest ci-dessous.",
+      );
+      return;
+    }
+
+    // iOS 13+ (Safari) : sans cette permission, aucun événement `deviceorientation` n’est émis.
+    const OrientationCtor = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<"granted" | "denied" | "default">;
+    };
+    if (typeof OrientationCtor.requestPermission === "function") {
+      try {
+        const perm = await OrientationCtor.requestPermission();
+        if (perm !== "granted") {
+          setIaMessage(
+            "Accès à la boussole refusé — indiquez l’orientation à la main (Nord / Sud / Est / Ouest).",
+          );
+          return;
+        }
+      } catch {
+        setIaMessage(
+          "Impossible d’activer la boussole — choisissez l’orientation manuellement.",
+        );
+        return;
+      }
+    }
+
+    setCompassSampling(true);
+    setIaMessage("Tenez le téléphone à plat et tournez-vous ; lecture du cap…");
+    let settled = false;
+    const done = (dir: FacadeOrientation) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("deviceorientation", onOrient);
+      update("orientation_facade", dir);
+      setCompassSampling(false);
+      setIaMessage(
+        `Orientation façade estimée : ${String(dir)} — vérifiez sur le terrain.`,
+      );
+    };
+    const onOrient = (e: DeviceOrientationEvent) => {
+      const a = e.alpha;
+      if (a == null || Number.isNaN(a)) return;
+      const x = ((a % 360) + 360) % 360;
+      let dir: FacadeOrientation = "";
+      if (x >= 315 || x < 45) dir = "nord";
+      else if (x >= 45 && x < 135) dir = "est";
+      else if (x >= 135 && x < 225) dir = "sud";
+      else dir = "ouest";
+      done(dir);
+    };
+    window.addEventListener("deviceorientation", onOrient);
+    window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        window.removeEventListener("deviceorientation", onOrient);
+        setCompassSampling(false);
+        setIaMessage(
+          "Cap non reçu (souvent sur ordinateur de bureau ou capteur inactif) — utilisez le choix manuel Nord / Sud / Est / Ouest.",
+        );
+      }
+    }, 3500);
+  }, [update]);
+
+  const onDvPhoto = useCallback(async (file: File | null) => {
+    if (!file) return;
+    setDvLoading(true);
+    setIaMessage(null);
+    try {
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await fetch("/api/cover-dv-extract", {
+        method: "POST",
+        body: fd,
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        extracted?: {
+          requerants?: string;
+          adresse?: string;
+          type_propriete?: string;
+          annee_construction?: string;
+          client_nom?: string;
+          client_telephone?: string;
+          client_courriel?: string;
+        };
+        error?: string;
+        hint?: string;
+        code?: string;
+        openAi?: { status: number; body: string };
+      };
+      if (!res.ok || !j.ok || !j.extracted) {
+        const parts = [j.error, j.hint].filter(Boolean);
+        if (j.openAi?.body) {
+          parts.push(`OpenAI (${j.openAi.status}): ${j.openAi.body.slice(0, 280)}`);
+        }
+        throw new Error(parts.length ? parts.join(" — ") : `Erreur ${res.status}`);
+      }
+      const e = j.extracted;
+      setData((prev) => ({
+        ...prev,
+        requerants: e.requerants?.trim() ? e.requerants.trim() : prev.requerants,
+        propriete: {
+          ...prev.propriete,
+          adresse: e.adresse?.trim() ? e.adresse.trim() : prev.propriete.adresse,
+          type_propriete: e.type_propriete?.trim()
+            ? e.type_propriete.trim()
+            : prev.propriete.type_propriete,
+          annee_construction: e.annee_construction?.trim()
+            ? e.annee_construction.trim()
+            : prev.propriete.annee_construction,
+          client_nom: e.client_nom?.trim() ? e.client_nom.trim() : prev.propriete.client_nom,
+          client_telephone: e.client_telephone?.trim()
+            ? e.client_telephone.trim()
+            : prev.propriete.client_telephone,
+          client_courriel: e.client_courriel?.trim()
+            ? e.client_courriel.trim()
+            : prev.propriete.client_courriel,
+        },
+        ia_hints: {
+          ...prev.ia_hints,
+          dv_photo_imported: true,
+        },
+      }));
+      setIaMessage(
+        "Champs requérant / propriété mis à jour à partir du document DV. Vérifie et corrige si besoin.",
+      );
+    } catch (err) {
+      setIaMessage(
+        err instanceof Error ? err.message : "Échec de l’extraction DV.",
+      );
+    } finally {
+      setDvLoading(false);
+    }
+  }, []);
+
+  const runDescriptionFromPhotos = useCallback(async () => {
+    const input = descriptionFileInputRef.current;
+    const list = input?.files;
+    if (!list?.length) {
+      setIaMessage("Sélectionne d’abord une ou plusieurs photos du bâtiment.");
+      return;
+    }
+    setDescriptionExtracting(true);
+    setIaMessage(null);
+    setTerrainInspectionResult(null);
+    try {
+      const files = Array.from(list);
+      const images = await Promise.all(files.map((f) => readFileAsDataUrl(f)));
+
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "inspection",
+          images,
+        }),
+      });
+
+      const parsed = coerceInspectionResult(await res.json());
+      if (!parsed) {
+        setTerrainInspectionResult(null);
+        setIaMessage("Réponse d’analyse invalide. Réessaie.");
+        return;
+      }
+
+      setTerrainInspectionResult(parsed);
+
+      const display = getDisplaySummary(parsed);
+      if (parsed.ok) {
+        const textBlock = buildTerrainDescriptionFromResult(parsed);
+        setData((prev) => ({
+          ...prev,
+          description_sommaire: {
+            ...prev.description_sommaire,
+            mode: "photos_ia" as const,
+          },
+          generated_description_text: textBlock || prev.generated_description_text,
+          condition_generale:
+            parsed.summary.trim() && !prev.condition_generale.trim()
+              ? parsed.summary.trim()
+              : prev.condition_generale,
+          ia_hints: {
+            ...prev.ia_hints,
+            photos_description_imported: true,
+          },
+        }));
+        setIaMessage(
+          `${display.title ? `${display.title} ` : ""}(gravité : ${display.severity}).`,
+        );
+      } else {
+        setIaMessage(
+          [parsed.error, parsed.hint].filter(Boolean).join(" — ") ||
+            "Analyse indisponible.",
+        );
+      }
+    } catch (err) {
+      setTerrainInspectionResult(null);
+      setIaMessage(
+        err instanceof Error ? err.message : "Échec de l’analyse des photos.",
+      );
+    } finally {
+      setDescriptionExtracting(false);
+    }
+  }, []);
+
+  const runConditionFromReportPhotos = useCallback(async () => {
+    if (!reportId || !viewerToken) return;
+    setConditionSynthesizing(true);
+    setIaMessage(null);
+    try {
+      const res = await fetch("/api/cover-condition-synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_id: reportId,
+          access_token: viewerToken,
+        }),
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        condition_generale?: string;
+        error?: string;
+        synth_source?: string;
+        snapshot_photo_count?: number;
+        persisted?: boolean;
+        persist_error?: string;
+      };
+      if (!res.ok || !j.ok || !j.condition_generale) {
+        throw new Error(j.error ?? `Erreur ${res.status}`);
+      }
+      setData((prev) => ({
+        ...prev,
+        condition_generale: j.condition_generale ?? prev.condition_generale,
+        ia_hints: {
+          ...prev.ia_hints,
+          photos_condition_imported: true,
+        },
+      }));
+      const src =
+        j.synth_source === "vision_images"
+          ? "lecture directe des images"
+          : j.synth_source === "analysis_text"
+            ? "analyses textuelles des photos"
+            : j.synth_source === "analysis_text_fallback"
+              ? "analyses textuelles (secours)"
+              : "jeu mixte";
+      const persist =
+        j.persisted === false
+          ? ` Enregistrement serveur impossible : ${j.persist_error ?? "voir logs"}. Le texte est appliqué localement.`
+          : " Contenu aussi enregistré sur le rapport (version audit).";
+      setIaMessage(
+        `Condition générale (${src}) à partir de ${j.snapshot_photo_count ?? "?"} photo(s) figée(s).${persist}`,
+      );
+    } catch (e) {
+      setIaMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConditionSynthesizing(false);
+    }
+  }, [reportId, viewerToken]);
+
+  const submitTerrainNotes = useCallback(async () => {
+    if (!reportId || !viewerToken) return;
+    const photoInput = notesPhotoRef.current;
+    const audioInput = notesAudioRef.current;
+    const hasPhoto =
+      photoInput?.files && photoInput.files.length > 0 && photoInput.files[0]!.size > 0;
+    const hasAudio =
+      audioInput?.files && audioInput.files.length > 0 && audioInput.files[0]!.size > 0;
+    if (!terrainNoteText.trim() && !hasPhoto && !hasAudio) {
+      setIaMessage("Ajoute du texte, une photo de notes manuscrites ou un mémo vocal.");
+      return;
+    }
+    setNotesSubmitting(true);
+    setIaMessage(null);
+    try {
+      const fd = new FormData();
+      fd.set("report_id", reportId);
+      fd.set("access_token", viewerToken);
+      fd.set("language", "fr");
+      if (terrainNoteText.trim()) {
+        fd.set("note_text", terrainNoteText.trim());
+      }
+      if (hasPhoto && photoInput?.files?.[0]) {
+        fd.set("note_photo", photoInput.files[0]);
+      }
+      if (hasAudio && audioInput?.files?.[0]) {
+        fd.set("note_audio", audioInput.files[0]);
+      }
+      const res = await fetch("/api/process-notes", { method: "POST", body: fd });
+      const j = (await res.json()) as {
+        success?: boolean;
+        notes_count?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(
+          typeof j.error === "string" ? j.error : `Erreur ${res.status}`,
+        );
+      }
+      setIaMessage(
+        typeof j.notes_count === "number"
+          ? `Notes traitées et ajoutées au rapport (${j.notes_count} lot(s)).`
+          : "Notes traitées et ajoutées au rapport.",
+      );
+      setTerrainNoteText("");
+      if (photoInput) photoInput.value = "";
+      if (audioInput) audioInput.value = "";
+    } catch (e) {
+      setIaMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNotesSubmitting(false);
+    }
+  }, [reportId, viewerToken, terrainNoteText]);
+
+  const runCoverAssistant = useCallback(async (label: string) => {
+    setIaMessage(null);
+    try {
+      const res = await fetch("/api/inspection-assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, context: compactCoverContext(data) }),
+      });
+      const j = (await res.json()) as { ok?: boolean; message?: string };
+      if (j.ok && j.message) {
+        setIaMessage(j.message);
+      } else {
+        setIaMessage(j.message ?? "L’assistant n’a pas renvoyé de texte utilisable.");
+      }
+    } catch {
+      setIaMessage("Erreur réseau. Vérifie la connexion et réessaie.");
+    }
+  }, [data]);
+
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const validate = useCallback(() => {
     const next: typeof errors = {};
     if (!data.requerants.trim()) next.requerants = "Champ obligatoire.";
@@ -178,14 +836,73 @@ export default function InspectionCoverForm() {
 
   const saveDraft = useCallback(() => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
+<<<<<<< HEAD
     setIaMessage("Brouillon enregistré dans le navigateur.");
   }, [data]);
 
+=======
+    setDraftSaveHint(
+      `Brouillon enregistré manuellement — ${new Date().toLocaleTimeString("fr-CA")}`,
+    );
+    setIaMessage("Brouillon enregistré dans le navigateur.");
+  }, [data]);
+
+  const saveToReport = useCallback(async () => {
+    if (!reportId || !viewerToken) return;
+    if (!validate()) {
+      setIaMessage("Corrigez les champs obligatoires avant d’enregistrer sur le rapport.");
+      return;
+    }
+    setRemoteSaving(true);
+    setIaMessage(null);
+    try {
+      const prof: InspectorProfileV1 = {
+        nom: data.inspecteur_nom.trim(),
+        numero_certification: data.inspecteur_numero_certification.trim(),
+        compagnie: data.compagnie.trim(),
+        logo_data_url: profile?.logo_data_url ?? null,
+      };
+      const res = await fetch("/api/report-cover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report_id: reportId,
+          access_token: viewerToken,
+          cover_v1: data,
+          inspector_profile_v1: prof,
+        }),
+      });
+      const j = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        cover_saved_at?: string;
+      };
+      if (!res.ok || !j.success) {
+        throw new Error(j.error ?? `Erreur ${res.status}`);
+      }
+      setIaMessage(
+        `Couverture enregistrée sur le rapport${j.cover_saved_at ? ` (${new Date(j.cover_saved_at).toLocaleString("fr-CA")})` : ""}. Vous pouvez régénérer le PDF depuis la page rapport.`,
+      );
+    } catch (e) {
+      setIaMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRemoteSaving(false);
+    }
+  }, [
+    data,
+    profile?.logo_data_url,
+    reportId,
+    viewerToken,
+    validate,
+  ]);
+
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const complianceNote = useMemo(
     () => defaultComplianceNote(data.conformite_juridiction),
     [data.conformite_juridiction],
   );
 
+<<<<<<< HEAD
   return (
     <div className="space-y-10">
       <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
@@ -197,6 +914,236 @@ export default function InspectionCoverForm() {
         </p>
       </div>
 
+=======
+  const onJurisdictionSelect = useCallback((v: ComplianceJurisdiction) => {
+    if (!COMPLIANCE_JURISDICTIONS.includes(v)) return;
+    const defs = defaultComplianceNote(v);
+    setData((prev) => ({
+      ...prev,
+      conformite_juridiction: v,
+      notes_conformite: defs,
+      compliance_block_v1: buildComplianceBlockV1(v, defs),
+      compliance_profile_v1: {
+        schema_version: 1 as const,
+        mode: v === "ca_qc" ? "QC_2027" : "CA_STANDARD",
+        clauses_pack_version: "QC_2027_v1",
+      },
+    }));
+  }, []);
+
+  const onComplianceNotesChange = useCallback((t: string) => {
+    setData((prev) => {
+      const defs = defaultComplianceNote(prev.conformite_juridiction);
+      const block =
+        prev.compliance_block_v1 ?? buildComplianceBlockV1(prev.conformite_juridiction, defs);
+      return {
+        ...prev,
+        notes_conformite: t,
+        compliance_block_v1: {
+          ...block,
+          user_note: t,
+          is_user_modified: t.trim() !== block.default_note.trim(),
+        },
+      };
+    });
+  }, []);
+
+  const improveDescriptionWithAi = useCallback(async () => {
+    setAiImproveLoading("description");
+    setIaMessage(null);
+    try {
+      const narrative = effectiveDescriptionNarrative(data);
+      const res = await fetch("/api/inspection-assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label:
+            "Reformule et enrichis ce texte pour la section « description sommaire du bâtiment » d'un rapport d'inspection professionnel (français québécois). Réponds par un seul paragraphe fluide, sans titre ni liste à puces.",
+          context: {
+            description_actuelle: narrative,
+            adresse: data.propriete.adresse.trim(),
+          },
+        }),
+      });
+      const j = (await res.json()) as { ok?: boolean; message?: string };
+      if (j.ok && j.message?.trim()) {
+        setData((prev) => ({
+          ...prev,
+          generated_description_text: j.message!.trim(),
+        }));
+        setIaMessage("Description reformulée — relisez le bloc.");
+      } else {
+        setIaMessage(j.message ?? "L’assistant n’a pas pu reformuler.");
+      }
+    } catch {
+      setIaMessage("Erreur réseau.");
+    } finally {
+      setAiImproveLoading(null);
+    }
+  }, [data]);
+
+  const improveConditionWithAi = useCallback(async () => {
+    setAiImproveLoading("condition");
+    setIaMessage(null);
+    try {
+      const res = await fetch("/api/inspection-assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label:
+            "Reformule et enrichis ce texte pour la section « condition générale du bâtiment » d'un rapport d'inspection. Un seul paragraphe professionnel en français, sans titre.",
+          context: {
+            condition_actuelle: data.condition_generale.trim() || "(vide)",
+          },
+        }),
+      });
+      const j = (await res.json()) as { ok?: boolean; message?: string };
+      if (j.ok && j.message?.trim()) {
+        setData((prev) => ({
+          ...prev,
+          condition_generale: j.message!.trim(),
+        }));
+        setIaMessage("Condition générale reformulée — relisez.");
+      } else {
+        setIaMessage(j.message ?? "L’assistant n’a pas pu reformuler.");
+      }
+    } catch {
+      setIaMessage("Erreur réseau.");
+    } finally {
+      setAiImproveLoading(null);
+    }
+  }, [data.condition_generale]);
+
+  return (
+    <div className="space-y-10">
+      {/*
+        Toujours montés : description / notes + DV vendeur (`cover-seller-dv`). Résumé et Outils utilisent les mêmes ids (labels htmlFor).
+      */}
+      <input
+        id="cover-seller-dv"
+        ref={sellerDvFileInputRef}
+        type="file"
+        accept=".pdf,application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Déclaration du vendeur — photo ou PDF pour remplir requérant et propriété"
+        disabled={dvLoading}
+        onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          e.target.value = "";
+          void onDvPhoto(f);
+        }}
+      />
+      <input
+        id="cover-description-files"
+        ref={descriptionFileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Photos façades / toiture pour remplir la description sommaire"
+        onChange={() => setDescriptionFilesTick((n) => n + 1)}
+      />
+      <input
+        id="cover-notes-photo"
+        ref={notesPhotoRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Photo de notes manuscrites pour le rapport"
+      />
+      <input
+        id="cover-notes-audio"
+        ref={notesAudioRef}
+        type="file"
+        accept="audio/*,.m4a,.mp3,.webm"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Mémo vocal pour le rapport"
+      />
+      <div
+        className={`rounded-lg border px-4 py-3 text-sm ${
+          linkedToReport
+            ? "border-emerald-200 bg-emerald-50/90 text-emerald-950"
+            : "border-amber-200 bg-amber-50/80 text-amber-950"
+        }`}
+      >
+        <p className="font-medium">
+          {linkedToReport
+            ? `Rapport ${reportId?.slice(0, 8)}… — couverture`
+            : "Couverture (brouillon local ou rapport)"}
+        </p>
+        <p className={`mt-1 ${linkedToReport ? "text-emerald-900/95" : "text-amber-900/90"}`}>
+          {workspace === "resume"
+            ? "Mode simple: photos, constats et PDF avec le moins de rédaction possible."
+            : linkedToReport
+              ? "Mode détaillé: tous les champs réglementaires restent éditables."
+              : "Brouillon local ou liaison rapport ; extraction DV / photos assistée quand disponible."}
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            className={`rounded-xl px-4 py-3 text-left text-sm font-semibold shadow-sm transition ${
+              workspace === "resume"
+                ? "bg-emerald-800 text-white"
+                : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+            }`}
+            onClick={() => setWorkspace("resume")}
+          >
+            Résumé (simple)
+          </button>
+          <button
+            type="button"
+            className={`rounded-xl px-4 py-3 text-left text-sm font-semibold shadow-sm transition ${
+              workspace === "outils"
+                ? "bg-emerald-800 text-white"
+                : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+            }`}
+            onClick={() => setWorkspace("outils")}
+          >
+            Champs détaillés
+          </button>
+        </div>
+        {linkedToReport ? (
+          <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Link
+              href={`/report/${encodeURIComponent(reportId!)}?token=${encodeURIComponent(viewerToken!)}`}
+              className="inline-flex rounded-md bg-blue-800 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-900"
+            >
+              Prévisualiser le rapport
+            </Link>
+            <span className="text-xs text-emerald-900/85">
+              PDF et constats sur la page rapport.
+            </span>
+          </p>
+        ) : null}
+      </div>
+
+      {linkedToReport ? (
+        <div className="sticky top-2 z-20 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur-sm">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={remoteSaving}
+              className="inline-flex min-h-12 flex-1 items-center justify-center rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-60"
+              onClick={() => void saveToReport()}
+            >
+              {remoteSaving ? "Enregistrement…" : "Enregistrer sur le rapport"}
+            </button>
+            <button
+              type="button"
+              className={actionSecondaryClass}
+              onClick={() => setWorkspace((prev) => (prev === "resume" ? "outils" : "resume"))}
+            >
+              {workspace === "resume" ? "Voir champs détaillés" : "Retour mode simple"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
       {iaMessage ? (
         <div
           className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800"
@@ -206,7 +1153,157 @@ export default function InspectionCoverForm() {
         </div>
       ) : null}
 
+<<<<<<< HEAD
       <section className="space-y-4">
+=======
+      {terrainInspectionResult ? (
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm shadow-sm ${
+            terrainInspectionResult.ok
+              ? "border-emerald-200 bg-emerald-50/90 text-emerald-950"
+              : "border-amber-200 bg-amber-50/90 text-amber-950"
+          }`}
+          role="region"
+          aria-label="Synthèse analyse terrain"
+        >
+          {(() => {
+            const d = getDisplaySummary(terrainInspectionResult);
+            return (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Synthèse terrain
+                </p>
+                <p className="text-[15px] font-semibold leading-snug text-slate-900">
+                  {terrainInspectionResult.ok
+                    ? d.title || "Analyse complétée"
+                    : [terrainInspectionResult.error, terrainInspectionResult.hint]
+                        .filter(Boolean)
+                        .join(" — ") || "Analyse indisponible"}
+                </p>
+                <p className="text-sm text-slate-700">
+                  <span className="font-medium">Gravité :</span> {d.severity}
+                  {terrainInspectionResult.ok && terrainInspectionResult.issues.length > 0 ? (
+                    <span className="text-slate-600">
+                      {" "}
+                      · {terrainInspectionResult.issues.length} point(s) relevé(s)
+                    </span>
+                  ) : null}
+                </p>
+                {terrainInspectionResult.ok ? (
+                  <p className="border-t border-emerald-200/80 pt-2 text-sm leading-relaxed text-slate-800">
+                    <span className="font-medium text-slate-900">Action :</span> {d.action}
+                  </p>
+                ) : terrainInspectionResult.hint ? (
+                  <p className="border-t border-amber-200/80 pt-2 text-sm text-amber-950">
+                    {terrainInspectionResult.hint}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
+        </div>
+      ) : null}
+
+      {workspace === "resume" ? (
+        <SimpleInspectionWrapper
+          descriptionFilesTick={descriptionFilesTick}
+          data={data}
+          profile={profile}
+          reportId={reportId}
+          viewerToken={viewerToken}
+          reportHasPdf={reportHasPdf}
+          onChangeRequerants={(v) => update("requerants", v)}
+          onChangeProprieteField={(key, v) => updatePropriete(key, v)}
+          onChangeCondition={(v) => update("condition_generale", v)}
+          onChangeGeneratedDescription={(v) => update("generated_description_text", v)}
+          onComplianceNotesChange={onComplianceNotesChange}
+          onJurisdictionSelect={onJurisdictionSelect}
+          update={update}
+          onOpenOutils={() => setWorkspace("outils")}
+          onPickDescriptionPhotos={() => descriptionFileInputRef.current?.click()}
+          onRunDescriptionFromPhotos={() => runDescriptionFromPhotos()}
+          onPickSellerDeclaration={() => sellerDvFileInputRef.current?.click()}
+          onTriggerNotesPhoto={() => notesPhotoRef.current?.click()}
+          onTriggerNotesAudio={() => notesAudioRef.current?.click()}
+          terrainNoteText={terrainNoteText}
+          onTerrainNoteText={setTerrainNoteText}
+          onSubmitTerrainNotes={() => void submitTerrainNotes()}
+          notesSubmitting={notesSubmitting}
+          descriptionExtracting={descriptionExtracting}
+          dvLoading={dvLoading}
+          onImproveDescription={() => void improveDescriptionWithAi()}
+          onImproveCondition={() => void improveConditionWithAi()}
+          aiImproveLoading={aiImproveLoading}
+          onAckReadiness={() => {
+            const snapshot = { ...data, readiness_ack_v1: undefined };
+            const r = evaluateCoverReadiness(snapshot);
+            setData((prev) => ({
+              ...prev,
+              readiness_ack_v1: {
+                schema_version: 1,
+                acknowledged_at: new Date().toISOString(),
+                score_at_ack: r.score,
+                warning_codes_at_ack: [...r.warnings.map((w) => w.code)].sort(),
+              },
+              last_reviewed_fields: r.warnings.map((w) => w.code),
+            }));
+          }}
+          onFocusReadinessIssue={(issue: ReadinessIssue) => {
+            if (issue.focusId) {
+              document.getElementById(issue.focusId)?.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+              });
+            }
+          }}
+          onChangeLimitationsFreeText={(v) => {
+            update("limitations_free_text", v);
+          }}
+          onBlurLimitationsFreeText={() => {
+            emitProductEvent("limitations_modified", { source: "free_text", edited: true });
+          }}
+          onToggleLimitationChecklist={(id: LimitationChecklistId) => {
+            setData((prev) => ({
+              ...prev,
+              limitations_checklist: {
+                ...prev.limitations_checklist,
+                [id]: !prev.limitations_checklist?.[id],
+              },
+            }));
+            emitProductEvent("limitations_modified", { source: "checklist", id, edited: true });
+          }}
+          onSuggestLimitations={() => {
+            setData((prev) => {
+              const s = suggestLimitationsFromCover(prev);
+              const mergedText = [prev.limitations_free_text?.trim(), s.freeText]
+                .filter(Boolean)
+                .join("\n\n")
+                .trim();
+              const ticked = LIMITATION_CHECKLIST_DEFS.filter((d) => s.checklist[d.id]).length;
+              const count = ticked + (s.freeText.trim() ? 1 : 0);
+              if (count > 0) {
+                emitProductEvent("limitations_auto_generated", { count });
+              }
+              return {
+                ...prev,
+                limitations_free_text: mergedText,
+                limitations_checklist: { ...prev.limitations_checklist, ...s.checklist },
+              };
+            });
+          }}
+          onSaveInspectorProfile={persistProfile}
+        />
+      ) : (
+        <>
+      <TerrainSmartEntryHero
+        dvLoading={dvLoading}
+        sellerDvInputId="cover-seller-dv"
+        onManual={scrollToManualFields}
+        showDvSuccessHint={!!data.ia_hints?.dv_photo_imported}
+      />
+
+      <section className="space-y-4" id="resume-entete-inspection">
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <SectionTitle>Entête — requérant & inspection</SectionTitle>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2">
@@ -214,7 +1311,11 @@ export default function InspectionCoverForm() {
               REQUÉRANT(S) <span className="text-red-600">*</span>
             </label>
             <input
+<<<<<<< HEAD
               className={inputClass}
+=======
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.requerants}
               onChange={(e) => update("requerants", e.target.value)}
               placeholder="ex. 9354-3650 Québec Inc."
@@ -228,6 +1329,7 @@ export default function InspectionCoverForm() {
             <input
               className={inputClass}
               value={data.conditions_meteo}
+<<<<<<< HEAD
               onChange={(e) => update("conditions_meteo", e.target.value)}
               placeholder="ex. 19°C, soleil"
             />
@@ -238,6 +1340,22 @@ export default function InspectionCoverForm() {
               disabled={weatherLoading}
             >
               {weatherLoading ? "Météo…" : "Remplir via position + Open-Meteo"}
+=======
+              onChange={(e) => {
+                update("conditions_meteo", e.target.value);
+                setWeatherFilledByGps(false);
+              }}
+              placeholder="ex. 19°C, soleil"
+            />
+            {weatherFilledByGps ? <TerrainWeatherGpsBadge /> : null}
+            <button
+              type="button"
+              className={`mt-2 ${actionPrimaryClass}`}
+              onClick={() => void fillWeather()}
+              disabled={weatherLoading}
+            >
+              {weatherLoading ? "Météo…" : "Remplir via position / adresse + Open-Meteo"}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
             </button>
           </div>
           <div>
@@ -253,7 +1371,11 @@ export default function InspectionCoverForm() {
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
+<<<<<<< HEAD
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
+=======
+                className={actionSecondaryClass}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
                 onClick={fillNow}
               >
                 Maintenant (navigateur)
@@ -300,7 +1422,11 @@ export default function InspectionCoverForm() {
             />
           </div>
           <div className="md:col-span-2">
+<<<<<<< HEAD
             <label className={labelClass}>Logo (aperçu local)</label>
+=======
+            <label className={labelClass}>Logo (profil inspecteur + rapport)</label>
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
             <input
               type="file"
               accept="image/*"
@@ -317,11 +1443,21 @@ export default function InspectionCoverForm() {
             ) : null}
             <button
               type="button"
+<<<<<<< HEAD
               className="mt-2 rounded-md border border-slate-300 px-3 py-1.5 text-xs"
+=======
+              className={`mt-2 ${actionSecondaryClass}`}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               onClick={persistProfile}
             >
               Enregistrer le profil inspecteur (navigateur)
             </button>
+<<<<<<< HEAD
+=======
+            {profileSaveHint ? (
+              <p className="mt-1 text-xs font-medium text-emerald-700">{profileSaveHint}</p>
+            ) : null}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           </div>
           <div className="md:col-span-2">
             <label className={labelClass}>INTERVENANTS SUR PLACE</label>
@@ -335,11 +1471,16 @@ export default function InspectionCoverForm() {
         </div>
       </section>
 
+<<<<<<< HEAD
       <section className="space-y-4">
+=======
+      <section className="space-y-4" id="terrain-propriete-fields">
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <SectionTitle>
           Propriété inspectée <span className="text-red-600">*</span>
         </SectionTitle>
         <p className="text-sm text-slate-600">
+<<<<<<< HEAD
           Tu peux remplir manuellement ou importer une photo de déclaration du vendeur — l&apos;OCR sera branché
           côté serveur.
         </p>
@@ -355,12 +1496,41 @@ export default function InspectionCoverForm() {
           </label>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
+=======
+          Saisie libre possible. Le scan DV (photo ou PDF) remplit les champs ci-dessous ; tout reste éditable.
+        </p>
+        {data.ia_hints?.dv_photo_imported ? (
+          <div className="rounded-lg border border-sky-100 bg-sky-50/50 px-3 py-2 text-sm text-sky-900">
+            <span className="font-medium">✨ Champs assistés par la DV</span> — fond bleu léger = prérempli,
+            modifiable.
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            htmlFor="cover-seller-dv"
+            className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-2.5 text-sm font-semibold ${dvLoading ? "pointer-events-none opacity-60" : ""}`}
+          >
+            <span>{dvLoading ? "Analyse du document…" : "Ré-importer DV (photo ou PDF)"}</span>
+          </label>
+        </div>
+        <div
+          className={`grid gap-4 md:grid-cols-2 ${
+            data.ia_hints?.dv_photo_imported
+              ? "rounded-lg border border-sky-100 bg-sky-50/40 p-3"
+              : ""
+          }`}
+        >
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           <div className="md:col-span-2">
             <label className={labelClass}>
               ADRESSE <span className="text-red-600">*</span>
             </label>
             <input
+<<<<<<< HEAD
               className={inputClass}
+=======
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.adresse}
               onChange={(e) => updatePropriete("adresse", e.target.value)}
               placeholder="ex. 182 Lamarche, Gatineau, Québec"
@@ -372,7 +1542,11 @@ export default function InspectionCoverForm() {
           <div>
             <label className={labelClass}>TYPE DE PROPRIÉTÉ</label>
             <input
+<<<<<<< HEAD
               className={inputClass}
+=======
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.type_propriete}
               onChange={(e) => updatePropriete("type_propriete", e.target.value)}
               placeholder="ex. 8 plex"
@@ -381,7 +1555,11 @@ export default function InspectionCoverForm() {
           <div>
             <label className={labelClass}>ANNÉE DE CONSTRUCTION</label>
             <input
+<<<<<<< HEAD
               className={inputClass}
+=======
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.annee_construction}
               onChange={(e) => updatePropriete("annee_construction", e.target.value)}
               placeholder="ex. 1986"
@@ -390,7 +1568,11 @@ export default function InspectionCoverForm() {
           <div>
             <label className={labelClass}>Nom du client (optionnel)</label>
             <input
+<<<<<<< HEAD
               className={inputClass}
+=======
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.client_nom}
               onChange={(e) => updatePropriete("client_nom", e.target.value)}
             />
@@ -398,7 +1580,11 @@ export default function InspectionCoverForm() {
           <div>
             <label className={labelClass}>Téléphone (optionnel)</label>
             <input
+<<<<<<< HEAD
               className={inputClass}
+=======
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.client_telephone}
               onChange={(e) => updatePropriete("client_telephone", e.target.value)}
               inputMode="tel"
@@ -407,7 +1593,11 @@ export default function InspectionCoverForm() {
           <div className="md:col-span-2">
             <label className={labelClass}>Courriel (optionnel)</label>
             <input
+<<<<<<< HEAD
               className={inputClass}
+=======
+              className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               type="email"
               value={data.propriete.client_courriel}
               onChange={(e) => updatePropriete("client_courriel", e.target.value)}
@@ -418,6 +1608,7 @@ export default function InspectionCoverForm() {
 
       <section className="space-y-4">
         <SectionTitle>Description sommaire du bâtiment</SectionTitle>
+<<<<<<< HEAD
         <div className="flex flex-wrap gap-3 text-sm">
           <label className="inline-flex items-center gap-2">
             <input
@@ -445,6 +1636,38 @@ export default function InspectionCoverForm() {
               className="text-sm"
               onChange={() => stubIa("Analyse photos description sommaire")}
             />
+=======
+        <TerrainDescriptionModePills
+          modeManuel={data.description_sommaire.mode === "manuel"}
+          onManuel={() => updateDescription("mode", "manuel")}
+          onAutoIa={() => updateDescription("mode", "photos_ia")}
+        />
+        <p className="text-xs text-slate-500">
+          AUTO (IA) : analyse de photos façades / toiture. MANUEL : saisie directe des champs.
+        </p>
+        {data.description_sommaire.mode === "photos_ia" ? (
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label
+                htmlFor="cover-description-files"
+                className={actionSecondaryClass}
+              >
+                Choisir des photos…
+              </label>
+              <p className="mt-1 text-xs text-slate-500">
+                Façades, toiture, fondations visibles, etc. Puis lance l’analyse — tu peux corriger chaque champ
+                après coup.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={descriptionExtracting}
+              className={actionPrimaryClass}
+              onClick={() => void runDescriptionFromPhotos()}
+            >
+              {descriptionExtracting ? "Analyse…" : "Analyser les photos sélectionnées"}
+            </button>
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           </div>
         ) : null}
         <div className="grid gap-4 md:grid-cols-2">
@@ -481,6 +1704,7 @@ export default function InspectionCoverForm() {
           onChange={(e) => update("condition_generale", e.target.value)}
           placeholder="Texte type : le bâtiment est généralement en bonne condition…"
         />
+<<<<<<< HEAD
         <button
           type="button"
           className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium"
@@ -488,10 +1712,57 @@ export default function InspectionCoverForm() {
         >
           Générer depuis les photos (IA — à brancher)
         </button>
+=======
+        <div className="flex flex-wrap gap-2">
+          {linkedToReport ? (
+            <button
+              type="button"
+              disabled={conditionSynthesizing}
+              className={actionPrimaryClass}
+              onClick={() => void runConditionFromReportPhotos()}
+            >
+              {conditionSynthesizing
+                ? "Synthèse depuis les photos du rapport…"
+                : "Synthétiser depuis les photos du rapport"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium"
+            onClick={() => void runCoverAssistant("Synthèse condition générale depuis lot de photos")}
+          >
+            Suggestions rédigées (assistant texte)
+          </button>
+        </div>
+        {linkedToReport ? (
+          <p className="text-xs text-slate-500">
+            La synthèse utilise les photos déjà liées à l’inspection de ce rapport (analyses existantes ou
+            lecture des fichiers). Ajoute des photos depuis la page rapport si le résultat est vide.
+          </p>
+        ) : (
+          <p className="text-xs text-slate-500">
+            Lie ce formulaire à un rapport pour générer la condition générale à partir du lot de photos
+            d’inspection.
+          </p>
+        )}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
       </section>
 
       <section className="space-y-4">
         <SectionTitle>Orientation de la façade</SectionTitle>
+<<<<<<< HEAD
+=======
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={compassSampling}
+            onClick={() => void tryCompassFacade()}
+            className="rounded-md bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+          >
+            {compassSampling ? "Cap…" : "Estimer avec la boussole (appareil)"}
+          </button>
+        </div>
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <div className="flex flex-wrap gap-4 text-sm">
           {(["nord", "sud", "est", "ouest"] as const).map((dir) => (
             <label key={dir} className="inline-flex items-center gap-2 capitalize">
@@ -517,6 +1788,7 @@ export default function InspectionCoverForm() {
         <button
           type="button"
           className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium"
+<<<<<<< HEAD
           onClick={() => stubIa("Orientation façade (vision / plan)")}
         >
           Estimer automatiquement (IA — à brancher)
@@ -524,6 +1796,15 @@ export default function InspectionCoverForm() {
       </section>
 
       <section className="space-y-4">
+=======
+          onClick={() => void runCoverAssistant("Orientation façade (vision / plan)")}
+        >
+          Conseils pour l’orientation (pas de vision auto)
+        </button>
+      </section>
+
+      <section className="space-y-4" id="resume-conformite">
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <SectionTitle>Conformité & juridiction</SectionTitle>
         <div className="grid gap-4 md:grid-cols-2">
           <div>
@@ -532,6 +1813,7 @@ export default function InspectionCoverForm() {
               className={inputClass}
               value={data.conformite_juridiction}
               onChange={(e) => {
+<<<<<<< HEAD
                 const v = e.target.value === "ca_qc" ? "ca_qc" : "ca_general";
                 update("conformite_juridiction", v);
                 update("notes_conformite", defaultComplianceNote(v));
@@ -539,12 +1821,36 @@ export default function InspectionCoverForm() {
             >
               <option value="ca_qc">Québec (incl. rappel norme de pratique)</option>
               <option value="ca_general">Canada (général)</option>
+=======
+                const v = e.target.value as ComplianceJurisdiction;
+                if (!COMPLIANCE_JURISDICTIONS.includes(v)) return;
+                const defs = defaultComplianceNote(v);
+                setData((prev) => ({
+                  ...prev,
+                  conformite_juridiction: v,
+                  notes_conformite: defs,
+                  compliance_block_v1: buildComplianceBlockV1(v, defs),
+                  compliance_profile_v1: {
+                    schema_version: 1,
+                    mode: v === "ca_qc" ? "QC_2027" : "CA_STANDARD",
+                    clauses_pack_version: "QC_2027_v1",
+                  },
+                }));
+              }}
+            >
+              {COMPLIANCE_JURISDICTIONS.map((code) => (
+                <option key={code} value={code}>
+                  {COMPLIANCE_LABELS[code]}
+                </option>
+              ))}
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
             </select>
           </div>
         </div>
         <textarea
           className={`${inputClass} min-h-24 font-sans`}
           value={data.notes_conformite}
+<<<<<<< HEAD
           onChange={(e) => update("notes_conformite", e.target.value)}
         />
         <p className="text-xs text-slate-500">{complianceNote}</p>
@@ -570,11 +1876,148 @@ export default function InspectionCoverForm() {
         <button
           type="button"
           className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800"
+=======
+          onChange={(e) => {
+            const t = e.target.value;
+            setData((prev) => {
+              const defs = defaultComplianceNote(prev.conformite_juridiction);
+              const block =
+                prev.compliance_block_v1 ??
+                buildComplianceBlockV1(prev.conformite_juridiction, defs);
+              return {
+                ...prev,
+                notes_conformite: t,
+                compliance_block_v1: {
+                  ...block,
+                  user_note: t,
+                  is_user_modified: t.trim() !== block.default_note.trim(),
+                },
+              };
+            });
+          }}
+        />
+        <p className="text-xs text-slate-500">{complianceNote}</p>
+        <p className="text-xs text-slate-500">
+          Modèle conformité v{COMPLIANCE_TEMPLATE_VERSION}
+          {data.compliance_block_v1?.is_user_modified
+            ? " — texte adapté par rapport au modèle (traçable dans le payload)."
+            : " — texte identique au modèle pour cette province."}
+        </p>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <SectionTitle>Notes terrain</SectionTitle>
+        {linkedToReport ? (
+          <>
+            <p className="text-sm text-slate-600">
+              Texte libre, photo de feuille manuscrite (OCR) ou mémo vocal — les notes structurées sont ajoutées
+              au payload du rapport via le service <code className="text-xs">process-notes</code>.
+            </p>
+            <textarea
+              className={`${inputClass} min-h-20 font-sans`}
+              value={terrainNoteText}
+              onChange={(e) => setTerrainNoteText(e.target.value)}
+              placeholder="Notes tapées, ou laisse vide et envoie seulement une photo / audio."
+            />
+            <div className="flex flex-wrap gap-4 text-sm">
+              <div>
+                <label className={labelClass} htmlFor="cover-notes-photo">
+                  Photo de notes manuscrites
+                </label>
+                <label
+                  htmlFor="cover-notes-photo"
+                  className={`mt-1 ${actionSecondaryClass} cursor-pointer`}
+                >
+                  Choisir une image…
+                </label>
+              </div>
+              <div>
+                <label className={labelClass} htmlFor="cover-notes-audio">
+                  Mémo vocal
+                </label>
+                <label
+                  htmlFor="cover-notes-audio"
+                  className={`mt-1 ${actionSecondaryClass} cursor-pointer`}
+                >
+                  Choisir un fichier audio…
+                </label>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={notesSubmitting}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              onClick={() => void submitTerrainNotes()}
+            >
+              {notesSubmitting ? "Envoi…" : "Envoyer au rapport"}
+            </button>
+          </>
+        ) : (
+          <p className="text-sm text-slate-600">
+            Ouvre ce formulaire depuis un rapport (lien avec jeton) pour envoyer des notes terrain vers le service
+            d’analyse — elles seront stockées dans le rapport avec classification suggérée.
+          </p>
+        )}
+      </section>
+
+      {linkedToReport && reportId && viewerToken ? (
+        <ReportVersionTimeline reportId={reportId} viewerToken={viewerToken} />
+      ) : null}
+
+        </>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
+        {linkedToReport ? (
+          <button
+            type="button"
+            disabled={remoteSaving}
+            className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-60"
+            onClick={() => void saveToReport()}
+          >
+            {remoteSaving ? "Enregistrement…" : "Enregistrer sur le rapport"}
+          </button>
+        ) : null}
+        {linkedToReport ? (
+          <Link
+            href={`/report/${encodeURIComponent(reportId!)}?token=${encodeURIComponent(viewerToken!)}`}
+            className="inline-flex min-h-12 items-center justify-center rounded-xl border border-emerald-700 bg-white px-5 py-3 text-sm font-semibold text-emerald-900 shadow-sm hover:bg-emerald-50"
+          >
+            Ouvrir le rapport — constats et PDF
+          </Link>
+        ) : null}
+        {!COVER_SIMPLE_UX ? (
+          <button
+            type="button"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+            onClick={exportJson}
+          >
+            Exporter JSON (cover_v1)
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="inline-flex min-h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800"
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           onClick={saveDraft}
         >
           Sauver brouillon local
         </button>
       </div>
+<<<<<<< HEAD
+=======
+      {!linkedToReport && draftSaveHint ? (
+        <p className="text-xs text-slate-500" role="status">
+          {draftSaveHint}
+        </p>
+      ) : null}
+
+      <p className="border-t border-slate-200 pt-6 text-center text-xs leading-relaxed text-slate-500">
+        InspectFlow — couverture de rapport et mentions de conformité : contrôlez toujours le PDF final et les
+        obligations professionnelles avant remise au client. Traçabilité des mises à jour : enregistrez la
+        couverture sur le rapport après modification.
+      </p>
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     </div>
   );
 }

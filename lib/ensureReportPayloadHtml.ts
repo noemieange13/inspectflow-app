@@ -1,9 +1,16 @@
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { rpcUpdateReportPayloadWithUnlock } from "@/lib/rpcUpdateReportPayload";
 
 import {
   buildHtmlFromReportPayload,
   isHtmlLongEnough,
 } from "@/lib/buildInspectionReportHtml";
+import { evaluatePdfExportReadiness } from "@/lib/pdfExportReadiness";
+import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
+import {
+  fetchLegalClausesForCoverJurisdiction,
+  filterLegalClausesByReportContext,
+} from "@/lib/qcLegalClauses";
 
 /**
  * Garantit `reports.payload.html` avant l’appel à `reports-pdf` : génération côté serveur
@@ -11,7 +18,9 @@ import {
  */
 export async function ensureReportPayloadHtml(
   reportId: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; builtHtml: string } | { ok: false; error: string }
+> {
   let supabase;
   try {
     supabase = await createServiceRoleClient();
@@ -30,7 +39,41 @@ export async function ensureReportPayloadHtml(
   if (!report) return { ok: false, error: "Rapport introuvable" };
 
   const payload = (report.payload ?? {}) as Record<string, unknown>;
-  const built = buildHtmlFromReportPayload(payload);
+
+  const readiness = await evaluatePdfExportReadiness(supabase, reportId, payload);
+  if (!readiness.ok) {
+    return { ok: false, error: readiness.error };
+  }
+
+  let legalClauseRows: Awaited<
+    ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
+  > | undefined;
+  const coverForClauses = parseCoverV1FromUnknown(payload.cover_v1);
+  if (coverForClauses) {
+    try {
+      legalClauseRows = await fetchLegalClausesForCoverJurisdiction(
+        supabase,
+        coverForClauses.conformite_juridiction,
+      );
+    } catch (e) {
+      console.warn(
+        "ensureReportPayloadHtml: qc_legal_clauses fetch failed",
+        e instanceof Error ? e.message : e,
+      );
+      legalClauseRows = undefined;
+    }
+  }
+
+  if (legalClauseRows && legalClauseRows.length > 0) {
+    legalClauseRows = filterLegalClausesByReportContext(
+      legalClauseRows,
+      payload,
+    );
+  }
+
+  const built = buildHtmlFromReportPayload(payload, {
+    legalClauseRows,
+  });
 
   if (!built || !isHtmlLongEnough(built)) {
     const language = payload.language === "en" || payload.lang === "en"
@@ -39,22 +82,24 @@ export async function ensureReportPayloadHtml(
     return {
       ok: false,
       error: language === "en"
-        ? "Unable to build report HTML: provide payload.html, payload.sections, or defects/observations."
-        : "Impossible de produire le HTML du rapport : renseignez payload.html, payload.sections ou defauts/observations.",
+        ? "Unable to build report HTML: provide payload.html, payload.sections, defects/observations, or cover_v1."
+        : "Impossible de produire le HTML du rapport : renseignez payload.html, payload.sections, defauts/observations ou cover_v1.",
     };
   }
 
   const current = typeof payload.html === "string" ? payload.html : "";
   if (built === current) {
-    return { ok: true };
+    return { ok: true, builtHtml: built };
   }
 
   const nextPayload = { ...payload, html: built };
-  const { error: upErr } = await supabase
-    .from("reports")
-    .update({ payload: nextPayload })
-    .eq("id", reportId);
-
-  if (upErr) return { ok: false, error: upErr.message };
-  return { ok: true };
+  const { error: rpcErr } = await rpcUpdateReportPayloadWithUnlock(supabase, {
+    reportId,
+    payload: nextPayload,
+    source: "ensure-report-payload-html",
+    clearPdfPath: true,
+    allowUnlock: true,
+  });
+  if (rpcErr) return { ok: false, error: rpcErr.message };
+  return { ok: true, builtHtml: built };
 }

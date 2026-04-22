@@ -1,6 +1,9 @@
 import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
 
+/** Génération PDF + appel Edge : peut dépasser le défaut Vercel (60s). */
+export const maxDuration = 120;
+
 export async function POST(req: Request) {
   const secret = process.env.TRIGGER_INSPECTION_SECRET;
   if (secret) {
@@ -83,6 +86,7 @@ export async function POST(req: Request) {
       return Response.json({ success: false, error: ensured.error }, { status: 400 });
     }
 
+<<<<<<< HEAD
     const tInvoke = Date.now();
     const res = await invokeReportsPdf(report_id);
     // #region agent log
@@ -103,6 +107,11 @@ export async function POST(req: Request) {
       }),
     }).catch(() => {});
     // #endregion
+=======
+    const res = await invokeReportsPdf(report_id, {
+      htmlForPdf: ensured.builtHtml,
+    });
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     const text = await res.text();
     let parsed: unknown = text;
     try {
@@ -112,10 +121,22 @@ export async function POST(req: Request) {
     }
 
     if (!res.ok) {
+      let message = `reports-pdf a répondu avec le statut ${res.status}`;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "error" in parsed &&
+        typeof (parsed as { error?: unknown }).error === "string"
+      ) {
+        const e = (parsed as { error: string }).error.trim();
+        if (e) message = e;
+      } else if (typeof parsed === "string" && parsed.trim()) {
+        message = parsed.trim().slice(0, 500);
+      }
       return Response.json(
         {
           success: false,
-          error: "reports-pdf returned an error",
+          error: message,
           status: res.status,
           body: parsed,
         },

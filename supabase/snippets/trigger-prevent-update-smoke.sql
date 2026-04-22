@@ -1,0 +1,15 @@
+-- Comportement public.prevent_update_reports() après 20260420120000 (verrou métier + whitelist).
+--
+-- Identité : id, user_id, report_id, inspection_id — jamais modifiables (P0001 immutable).
+--
+-- Déverrouillage : UPDATE qui passe is_locked de true → false (tout le reste autorisé dans la même requête).
+--
+-- is_locked = true (toujours verrouillé après UPDATE) :
+--   - payload interdit sauf si OLD.generating ou NEW.generating (pipeline PDF Edge).
+--   - client, adresse, "date", inspecteur, data_hash, job_id, photo_id interdits.
+--   - pdf_path, pdf_url, generating, generating_at, status, jetons, first_view_notified, client_email, etc. OK.
+--
+-- is_locked = false : au moins une colonne « pipeline » doit changer sinon P0001 immutable (no-op interdit).
+
+-- Exemple d’échec attendu (rapport verrouillé, hors génération) :
+-- update public.reports set payload = payload || '{}'::jsonb where id = '…';

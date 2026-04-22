@@ -1,7 +1,18 @@
 import type { Metadata } from "next";
+<<<<<<< HEAD
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+=======
+import { Suspense } from "react";
+import ReportPageReadiness from "@/components/ReportPageReadiness";
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 import ZeroDraftReportComposer from "@/components/ZeroDraftReportComposer";
+import { loadReportForViewer } from "@/lib/reportViewerServer";
 
+<<<<<<< HEAD
+=======
+export type { ReportServerData } from "@/lib/reportViewerServer";
+
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 type Props = {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ token?: string | string[] }>;
@@ -12,6 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `Rapport ${id.slice(0, 8)}…` };
 }
 
+<<<<<<< HEAD
 export type ReportServerData = {
   id: string;
   status: string | null;
@@ -121,13 +133,19 @@ async function loadReport(
   }
 }
 
+=======
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 export default async function Page({ params, searchParams }: Props) {
   const { id } = await params;
   const sp = await searchParams;
   const rawToken = sp.token;
   const viewerToken = Array.isArray(rawToken) ? rawToken[0] : rawToken;
 
+<<<<<<< HEAD
   const reportData = await loadReport(id, viewerToken?.trim());
+=======
+  const reportData = await loadReportForViewer(id, viewerToken?.trim());
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
   if (reportData.notFound) {
     return (
@@ -181,6 +199,18 @@ export default async function Page({ params, searchParams }: Props) {
       </div>
     );
   }
+<<<<<<< HEAD
+=======
+
+  const tokenQ = viewerToken?.trim();
+  const couvertureBaseHref = `/rapport/couverture?report=${encodeURIComponent(id)}${tokenQ ? `&token=${encodeURIComponent(tokenQ)}` : ""}`;
+  const reportSelfHref = `/report/${encodeURIComponent(id)}${tokenQ ? `?token=${encodeURIComponent(tokenQ)}` : ""}`;
+  const reportPayload =
+    reportData.payload && typeof reportData.payload === "object"
+      ? (reportData.payload as Record<string, unknown>)
+      : null;
+  const coverRaw = reportPayload?.cover_v1;
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -197,6 +227,25 @@ export default async function Page({ params, searchParams }: Props) {
           Générez un rapport complet, bilingue et traçable — sans rédaction manuelle.
         </p>
       </header>
+<<<<<<< HEAD
+=======
+      <Suspense
+        fallback={
+          <div className="mb-6 h-24 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
+        }
+      >
+        <ReportPageReadiness
+          reportId={id}
+          coverRaw={coverRaw}
+          reportPayload={reportPayload}
+          photoCount={reportData.photoCountForReadiness}
+          couvertureBaseHref={couvertureBaseHref}
+          reportSelfHref={reportSelfHref}
+          viewerAccessToken={viewerToken?.trim() || undefined}
+          simpleMode
+        />
+      </Suspense>
+>>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
       <ZeroDraftReportComposer
         reportId={id}
         viewerToken={viewerToken?.trim() || undefined}

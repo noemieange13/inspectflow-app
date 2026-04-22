@@ -15,6 +15,8 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+import { updateReportPayloadWithAutoUnlock } from "../_shared/updateReportPayloadWithAutoUnlock.ts";
+
 const JSON_HDR = { "Content-Type": "application/json; charset=utf-8" } as const;
 
 function json(body: Record<string, unknown>, status: number): Response {
@@ -283,11 +285,15 @@ Deno.serve(async (req: Request) => {
 
     const processed = await enhanceAndClassifyNotes(rawNotes, OPENAI_KEY, language);
 
-    const { data: report } = await supabase
+    const { data: report, error: reportReadErr } = await supabase
       .from("reports")
       .select("id, payload")
       .eq("id", reportId)
       .maybeSingle();
+
+    if (reportReadErr) {
+      return json({ error: reportReadErr.message, code: "report_read_failed" }, 500);
+    }
 
     if (report) {
       const payload = (report.payload && typeof report.payload === "object")
@@ -301,10 +307,19 @@ Deno.serve(async (req: Request) => {
       payload.processed_notes = [...existingNotes, ...processed];
       payload.notes_processed_at = new Date().toISOString();
 
-      await supabase
-        .from("reports")
-        .update({ payload })
-        .eq("id", reportId);
+      const { error: upErr } = await updateReportPayloadWithAutoUnlock(
+        supabase,
+        reportId,
+        payload,
+        { source: "process-notes" },
+      );
+      if (upErr) {
+        const code = /locked|immutable/i.test(upErr.message)
+          ? "unlock_or_update_failed"
+          : "report_update_failed";
+        const status = code === "unlock_or_update_failed" ? 403 : 500;
+        return json({ error: upErr.message, code }, status);
+      }
     }
 
     return json({
