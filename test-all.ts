@@ -1,5 +1,5 @@
 /**
- * Suite de smoke tests locaux (API, env, image distante, Gemini SDK, POST /api/analyze).
+ * Suite de smoke tests locaux (API, env, image distante, Gemini REST, POST /api/analyze).
  *
  * Prérequis : `npm run dev` sur le port ciblé (défaut 3000).
  * Lancement : `npm run test:all`
@@ -183,7 +183,15 @@ async function test5FullPost() {
 }
 
 async function runAll() {
-  console.log("\n🚀 SUITE DE TESTS —", BASE_URL, "\n");
+  const envBase = process.env.TEST_BASE_URL;
+  console.log("\n🚀 SUITE DE TESTS\n");
+  console.log("BASE URL (résolu) :", BASE_URL);
+  console.log(
+    "TEST_BASE_URL (.env) :",
+    envBase?.trim() ? envBase.trim() : "(non défini → défaut http://localhost:3000)",
+  );
+  console.log("Modèle Gemini (test 4) :", GEMINI_TEST_MODEL);
+  console.log("");
 
   await test1ApiGet();
   await test2EnvGemini();
@@ -195,10 +203,13 @@ async function runAll() {
   console.log("\n==============================");
   if (failed === 0) {
     console.log("🏁 TERMINÉ — tout PASS");
+    console.log("🎉 ALL TESTS PASSED");
     process.exit(0);
   } else {
     console.log(`🏁 TERMINÉ — ${failed} échec(s)`);
-    console.log("Astuce : démarre `npm run dev`, vérifie .env.local, puis relance `npm run test:all`.");
+    console.log(
+      "Astuce : `npm run dev` sur le bon port, puis dans .env.local définis TEST_BASE_URL (ex. http://localhost:3001) si ce n’est pas 3000.",
+    );
     process.exit(1);
   }
 }
