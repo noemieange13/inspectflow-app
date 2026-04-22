@@ -13,10 +13,7 @@
     "supabase:deploy:create-report": "npx supabase functions deploy create-report",
     "supabase:deploy:upload-photo": "npx supabase functions deploy upload-photo",
     "supabase:db:push": "npx supabase db push",
-<<<<<<< HEAD
-=======
     "supabase:qc-events:migrate": "node scripts/run-qc-events-migrations.mjs",
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     "find:reports-writer": "node scripts/find-reports-writer.mjs",
     "smoke:e2e": "node scripts/e2e-smoke.mjs"
   },
