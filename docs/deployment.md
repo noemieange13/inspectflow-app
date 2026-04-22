@@ -13,6 +13,7 @@ Guide unique pour mettre **InspectFlow** en ligne avec le pipeline PDF **`report
 | `SUPABASE_SERVICE_ROLE_KEY` | oui | Clé service role — **secret**, jamais exposée au client |
 | `TRIGGER_INSPECTION_SECRET` | oui | Secret pour `POST /api/trigger-inspection` (header `x-trigger-secret`) |
 | `REPORTS_PDF_SLUG` | non | Défaut : `reports-pdf` |
+| `CREATE_REPORT_SLUG` | non | Défaut : `create-report` (utilisé par `lib/invokeCreateReport.ts` / `POST /api/create-report`) |
 | `DASHBOARD_USER` / `DASHBOARD_PASS` | si `/dashboard` | Basic Auth (middleware) |
 | `RESEND_API_KEY` / `RESEND_FROM` | non | Email « première vue » |
 | `WEBHOOK_REPORT_OPENED` / `WEBHOOK_SECRET` | non | Webhook optionnel |
@@ -36,7 +37,21 @@ Après modification : **Redeploy** sur Vercel ou pousser un commit sur `main`.
 
 `supabase/functions/reports-pdf/index.ts` — contrat : `POST` JSON `{ "report_id": "<uuid>" }`.
 
-`supabase/functions/create-report/index.ts` — contrat : `POST` JSON avec `user_id` (uuid) et **`inspection_id` et/ou `job_id`** (le job doit exister ; `inspection_id` peut être déduit du job). Crée la ligne `reports` avec `inspection_id`, `job_id`, `photo_id` quand connus.
+`supabase/functions/create-report/index.ts` — contrat : `POST` JSON avec `user_id` (uuid) et **`inspection_id` et/ou `job_id`**. Si `job_id` est absent mais `inspection_id` est fourni, la fonction cherche **un** job lié à cette inspection (sinon **400** : aucun job). La ligne `reports` est toujours créée avec un `job_id` valide lorsque l’insert réussit. Secret optionnel sur l’Edge : **`PUBLIC_APP_URL`** (base de l’app pour `reportUrl` ; sinon valeur par défaut codée).
+
+### Edge Function `create-report`
+
+Même secrets minimaux que le reste : `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. Optionnel : `PUBLIC_APP_URL`.
+
+Déploiement (CLI), après `supabase link` :
+
+```bash
+supabase functions deploy create-report
+```
+
+Ou via le script npm : `npm run supabase:deploy:create-report` (avec CLI et projet liés).
+
+Côté **Vercel**, aucune variable supplémentaire obligatoire si `SUPABASE_SERVICE_ROLE_KEY` et `NEXT_PUBLIC_SUPABASE_URL` sont déjà définies : `POST /api/create-report` réutilise la même clé pour appeler l’Edge. Si `TRIGGER_INSPECTION_SECRET` est défini, le header `x-trigger-secret` est **requis** sur cette route (comme pour `trigger-inspection`).
 
 ### Prérequis base
 
@@ -46,10 +61,13 @@ Après modification : **Redeploy** sur Vercel ou pousser un commit sur `main`.
 
 ### Déploiement (CLI)
 
+Sur Windows, si la commande globale `supabase` est absente, utiliser **`npx supabase`** (les scripts npm du `package.json` le font déjà). Connexion obligatoire : `npx supabase login` ou variable d’environnement **`SUPABASE_ACCESS_TOKEN`** (dashboard Supabase → Account → Access Tokens).
+
 ```bash
-supabase link --project-ref <REF_PROJET>
-supabase db push
-supabase functions deploy reports-pdf
+npx supabase link --project-ref <REF_PROJET>
+npm run supabase:db:push
+npm run supabase:deploy:reports-pdf
+npm run supabase:deploy:create-report
 ```
 
 Sans CLI : importer / coller le fichier depuis le Dashboard selon ton flux habituel.
@@ -71,6 +89,7 @@ Réponse attendue : JSON avec `success`, `signed_url`, `cached`, etc. — voir *
 1. **Accueil** : titre InspectFlow (pas « Create Next App »).
 2. **Viewer** : `/report/<id>?token=...` — PDF + rafraîchissement du lien si besoin.
 3. **API** : `POST /api/trigger-inspection` avec `x-trigger-secret` (Postman / script serveur).
+4. **Création rapport** : Edge `create-report` à jour ; test via `POST /api/create-report` (body `user_id`, `inspection_id`) puis ouverture de `reportUrl` retourné.
 
 ## 4. Références
 

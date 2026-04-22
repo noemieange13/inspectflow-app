@@ -53,8 +53,9 @@ Deno.serve(async (req: Request) => {
     }
 
     let inspectionId = optUuid(body.inspection_id);
-    const jobId = optUuid(body.job_id);
+    let jobId = optUuid(body.job_id);
     let photoId = optUuid(body.photo_id);
+    let jobResolvedVia: "body" | "inspection" | null = jobId ? "body" : null;
 
     if (jobId) {
       const { data: job, error: jobErr } = await supabase
@@ -95,6 +96,44 @@ Deno.serve(async (req: Request) => {
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
         photoId = jobPhoto;
       }
+    } else if (inspectionId) {
+      const { data: job, error: jobByInspErr } = await supabase
+        .from("jobs")
+        .select("id, inspection_id, photo_id")
+        .eq("inspection_id", inspectionId)
+        .limit(1)
+        .maybeSingle();
+
+      if (jobByInspErr) {
+        console.error("create-report jobs by inspection:", jobByInspErr);
+        return json(
+          {
+            error: "job lookup by inspection failed",
+            details: jobByInspErr.message,
+          },
+          502,
+        );
+      }
+      if (!job) {
+        return json(
+          {
+            error:
+              "No job found for this inspection: create a job first or pass job_id explicitly",
+            inspection_id: inspectionId,
+          },
+          400,
+        );
+      }
+      const jid = job.id != null ? String(job.id) : "";
+      if (!isUuid(jid)) {
+        return json({ error: "invalid job id from database" }, 500);
+      }
+      jobId = jid;
+      jobResolvedVia = "inspection";
+      const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
+      if (!photoId && jobPhoto && isUuid(jobPhoto)) {
+        photoId = jobPhoto;
+      }
     }
 
     if (!inspectionId) {
@@ -102,6 +141,17 @@ Deno.serve(async (req: Request) => {
         {
           error:
             "Missing inspection_id: send inspection_id and/or job_id whose job carries inspection_id",
+        },
+        400,
+      );
+    }
+
+    if (!jobId) {
+      return json(
+        {
+          error:
+            "Missing job_id: no job linked to this inspection (create a job or pass job_id)",
+          inspection_id: inspectionId,
         },
         400,
       );
@@ -136,7 +186,7 @@ Deno.serve(async (req: Request) => {
       inspection_id: inspectionId,
     };
 
-    if (jobId) insertRow.job_id = jobId;
+    insertRow.job_id = jobId;
     if (photoId) insertRow.photo_id = photoId;
 
     const { error: insertError } = await supabase.from("reports").insert(
@@ -164,6 +214,7 @@ Deno.serve(async (req: Request) => {
         reportUrl,
         inspection_id: inspectionId,
         job_id: jobId,
+        job_resolved_via: jobResolvedVia,
         photo_id: photoId,
       },
       200,

@@ -34,6 +34,12 @@ function i18n(language: ReportLanguage) {
       legalNoticeTitle: "Legal notice",
       referencesTitle: "Reference candidates",
       elementFallback: "Item",
+      clientSectionTitle: "Client summary",
+      technicalSummaryTitle: "Technical summary",
+      severityLabel: "Severity",
+      findingObservation: "Observation",
+      findingAnalysis: "Analysis",
+      findingRecommendation: "Recommendation",
     }
     : {
       htmlLang: "fr",
@@ -48,6 +54,12 @@ function i18n(language: ReportLanguage) {
       legalNoticeTitle: "Avis legal",
       referencesTitle: "References candidates",
       elementFallback: "Element",
+      clientSectionTitle: "Compte rendu à l'intention du client",
+      technicalSummaryTitle: "Synthèse technique",
+      severityLabel: "Gravité",
+      findingObservation: "Observation",
+      findingAnalysis: "Analyse",
+      findingRecommendation: "Recommandation",
     };
 }
 
@@ -119,22 +131,6 @@ export function buildHtmlFromReportPayload(
 
   const sectionsRaw = payload.sections;
   if (Array.isArray(sectionsRaw) && sectionsRaw.length > 0) {
-    const sectionsWithItems = sectionsRaw.filter(
-      (sec) =>
-        sec &&
-        typeof sec === "object" &&
-        Array.isArray((sec as { items?: unknown }).items) &&
-        ((sec as { items?: unknown[] }).items?.length ?? 0) > 0,
-    ).length;
-    const sectionsWithNarrativeFields = sectionsRaw.filter(
-      (sec) =>
-        sec &&
-        typeof sec === "object" &&
-        ("observation" in (sec as Record<string, unknown>) ||
-          "analysis" in (sec as Record<string, unknown>) ||
-          "recommendation" in (sec as Record<string, unknown>)),
-    ).length;
-
     const parts: string[] = [];
     parts.push(
       `<!DOCTYPE html><html lang="${t.htmlLang}"><head><meta charset="utf-8"><title>${t.defaultTitle}</title>`,
@@ -154,23 +150,79 @@ export function buildHtmlFromReportPayload(
       parts.push(`<h2>${t.scoreLabel}: ${escapeHtml(String(payload.score))}</h2>`);
     }
 
+    const clientSectionRaw = payload.client_section;
+    if (typeof clientSectionRaw === "string" && clientSectionRaw.trim()) {
+      parts.push(
+        `<div class="client-summary" style="margin-bottom:1.5em;padding:1em;border:1px solid #cbd5e1;border-radius:8px;background:#f8fafc">`,
+      );
+      parts.push(`<h2>${escapeHtml(t.clientSectionTitle)}</h2>`);
+      for (const para of clientSectionRaw
+        .split(/\n\n+/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0)) {
+        parts.push(`<p>${escapeHtml(para)}</p>`);
+      }
+      parts.push(`</div>`);
+    }
+
+    if (typeof payload.summary === "string" && payload.summary.trim()) {
+      parts.push(`<h2>${escapeHtml(t.technicalSummaryTitle)}</h2>`);
+      parts.push(`<p>${escapeHtml(payload.summary.trim())}</p>`);
+    }
+
     for (const sec of sectionsRaw) {
       if (!sec || typeof sec !== "object") continue;
-      const s = sec as Section;
+      const s = sec as Section & {
+        observation?: unknown;
+        analysis?: unknown;
+        recommendation?: unknown;
+        severity?: unknown;
+      };
       const secTitle = s.title != null ? String(s.title) : "";
-      parts.push(`<h3>${escapeHtml(secTitle)}</h3><ul>`);
       const items = Array.isArray(s.items) ? s.items : [];
-      for (const item of items) {
-        if (!item || typeof item !== "object") continue;
-        const it = item as SectionItem;
-        const label = it.label != null ? String(it.label) : "";
-        const status = it.status != null ? String(it.status) : "";
-        const cls = statusCssClass(status);
-        parts.push(
-          `<li class="${cls}">${escapeHtml(label)} — ${escapeHtml(status)}</li>`,
-        );
+      const obs =
+        typeof s.observation === "string" ? s.observation.trim() : "";
+      const ana = typeof s.analysis === "string" ? s.analysis.trim() : "";
+      const rec =
+        typeof s.recommendation === "string" ? s.recommendation.trim() : "";
+      const sev = typeof s.severity === "string" ? s.severity.trim() : "";
+
+      if (items.length > 0) {
+        parts.push(`<h3>${escapeHtml(secTitle)}</h3><ul>`);
+        for (const item of items) {
+          if (!item || typeof item !== "object") continue;
+          const it = item as SectionItem;
+          const label = it.label != null ? String(it.label) : "";
+          const status = it.status != null ? String(it.status) : "";
+          const cls = statusCssClass(status);
+          parts.push(
+            `<li class="${cls}">${escapeHtml(label)} — ${escapeHtml(status)}</li>`,
+          );
+        }
+        parts.push("</ul>");
+      } else if (obs || ana || rec || secTitle || sev) {
+        parts.push(`<h3>${escapeHtml(secTitle)}</h3>`);
+        if (sev) {
+          parts.push(
+            `<p><em>${escapeHtml(t.severityLabel)}: ${escapeHtml(sev)}</em></p>`,
+          );
+        }
+        if (obs) {
+          parts.push(
+            `<p><strong>${escapeHtml(t.findingObservation)}:</strong> ${escapeHtml(obs)}</p>`,
+          );
+        }
+        if (ana) {
+          parts.push(
+            `<p><strong>${escapeHtml(t.findingAnalysis)}:</strong> ${escapeHtml(ana)}</p>`,
+          );
+        }
+        if (rec) {
+          parts.push(
+            `<p><strong>${escapeHtml(t.findingRecommendation)}:</strong> ${escapeHtml(rec)}</p>`,
+          );
+        }
       }
-      parts.push("</ul>");
     }
 
     const compliance =
