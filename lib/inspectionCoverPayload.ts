@@ -1,20 +1,14 @@
-<<<<<<< HEAD
-=======
 import type { LimitationChecklistId } from "@/lib/limitations";
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 /**
  * Données de couverture / en-tête pour rapports d'inspection (modèle type Word QC).
  * Stockées dans `reports.payload.cover_v1` (JSON).
  */
 export const COVER_PAYLOAD_KEY = "cover_v1" as const;
 
-<<<<<<< HEAD
-=======
 /** Snapshot inspecteur + logo stocké dans `reports.payload.inspector_profile_v1` (PDF / couverture). */
 export const INSPECTOR_PROFILE_PAYLOAD_KEY = "inspector_profile_v1" as const;
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 export type FacadeOrientation = "nord" | "sud" | "est" | "ouest" | "";
 
 export type InspectorProfileV1 = {
@@ -23,19 +17,14 @@ export type InspectorProfileV1 = {
   compagnie: string;
   /** Data URL image (léger de préférence) */
   logo_data_url: string | null;
-<<<<<<< HEAD
-=======
   /** Signature scan / image (data URL), optionnel — PDF premium */
   signature_data_url?: string | null;
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 };
 
 export const INSPECTOR_PROFILE_STORAGE_KEY = "inspectflow:inspector_profile_v1";
 
 export type CoverDescriptionMode = "manuel" | "photos_ia";
 
-<<<<<<< HEAD
-=======
 /** Province ou territoire — clause de conformité par défaut pour la page couverture. */
 export const COMPLIANCE_JURISDICTIONS = [
   "ca_qc",
@@ -111,7 +100,6 @@ export type ReadinessAckV1 = {
   warning_codes_at_ack?: string[];
 };
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 export type InspectionCoverPayloadV1 = {
   schema_version: 1;
   /** Requérant(s) — obligatoire */
@@ -146,27 +134,14 @@ export type InspectionCoverPayloadV1 = {
     chauffage: string;
   };
   condition_generale: string;
-<<<<<<< HEAD
-=======
   /** Texte unique « résumé » pour la description (prioritaire sur l’assemblage des sous-champs). */
   generated_description_text?: string | null;
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   orientation_facade: FacadeOrientation;
   /** Pistes pour futures intégrations IA (non bloquant) */
   ia_hints?: {
     dv_photo_imported?: boolean;
     photos_description_imported?: boolean;
     photos_condition_imported?: boolean;
-<<<<<<< HEAD
-    orientation_auto?: boolean;
-  };
-  conformite_juridiction: "ca_qc" | "ca_general";
-  notes_conformite: string;
-};
-
-export function defaultCoverPayloadV1(): InspectionCoverPayloadV1 {
-  const now = new Date();
-=======
     notes_voice_imported?: boolean;
     orientation_auto?: boolean;
   };
@@ -219,7 +194,6 @@ export function effectiveComplianceNote(cover: InspectionCoverPayloadV1): string
 export function defaultCoverPayloadV1(): InspectionCoverPayloadV1 {
   const now = new Date();
   const qcNote = defaultComplianceNote("ca_qc");
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   return {
     schema_version: 1,
     requerants: "",
@@ -254,24 +228,6 @@ export function defaultCoverPayloadV1(): InspectionCoverPayloadV1 {
     condition_generale: "",
     orientation_facade: "",
     conformite_juridiction: "ca_qc",
-<<<<<<< HEAD
-    notes_conformite: defaultComplianceNote("ca_qc"),
-  };
-}
-
-export function defaultComplianceNote(j: "ca_qc" | "ca_general"): string {
-  if (j === "ca_qc") {
-    return (
-      "Document d'inspection visuelle — non juridique. Au Québec, les inspecteurs doivent se conformer aux exigences " +
-      "de la norme de pratique en vigueur (échéance réglementaire 2027 pour la conformité à la nouvelle norme). " +
-      "Valider toute obligation légale, réglementaire ou contractuelle sur place."
-    );
-  }
-  return (
-    "Document d'inspection visuelle — non juridique. Références aux codes du bâtiment (CNB, provincial, CSA) " +
-    "à valider sur le terrain selon la province et la juridiction applicables."
-  );
-=======
     notes_conformite: qcNote,
     compliance_block_v1: buildComplianceBlockV1("ca_qc", qcNote),
     limitations_free_text: "",
@@ -356,7 +312,6 @@ export function defaultComplianceNote(j: ComplianceJurisdiction): string {
         "Références aux codes du bâtiment (CNB, adaptations provinciales/territoriales, CSA) à valider selon la juridiction réelle du bien."
       );
   }
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 }
 
 export function formatFrDateTime(d: Date): string {
@@ -384,11 +339,6 @@ export function loadInspectorProfile(): InspectorProfileV1 | null {
   }
 }
 
-<<<<<<< HEAD
-export function saveInspectorProfile(p: InspectorProfileV1): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(INSPECTOR_PROFILE_STORAGE_KEY, JSON.stringify(p));
-=======
 /** Retourne `false` si le navigateur refuse l’écriture (quota, mode privé, etc.). */
 export function saveInspectorProfile(p: InspectorProfileV1): boolean {
   if (typeof window === "undefined") return false;
@@ -582,5 +532,4 @@ export function parseInspectorProfileFromUnknown(raw: unknown): InspectorProfile
       ? o.signature_data_url
       : null,
   };
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 }

@@ -72,9 +72,6 @@ const MAX_BULK_HARD = 320;
 const PHOTO_CHUNK = 50;
 const UPLOAD_CONCURRENCY = 4;
 
-import type { ReportServerData } from "@/app/report/[id]/page";
-import NotesCapture from "@/components/NotesCapture";
-
 type Props = {
   reportId: string;
   viewerToken?: string;
@@ -144,8 +141,6 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
   });
 }
 
-<<<<<<< HEAD
-=======
 async function readResponseJson<T>(res: Response): Promise<T | null> {
   try {
     return (await res.json()) as T;
@@ -172,7 +167,6 @@ function serializeEntriesForBaseline(entries: ReportEntryInput[]): string {
   );
 }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 type PayloadSection = {
   title?: string;
   order?: number;
@@ -193,10 +187,7 @@ export default function ZeroDraftReportComposer({
   viewerToken,
   initialData,
 }: Props) {
-<<<<<<< HEAD
-=======
   const SIMPLE_MODE = true;
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const storageKey = `zero-draft:${reportId}`;
   const hasExistingReport = !!(initialData?.payload && !initialData.notFound && !initialData.accessDenied);
   const existingPayload = hasExistingReport ? initialData!.payload! : null;
@@ -211,15 +202,11 @@ export default function ZeroDraftReportComposer({
     (existingPayload && typeof existingPayload.inspector_note === "string" ? existingPayload.inspector_note : null)
     ?? "",
   );
-<<<<<<< HEAD
-  const [entries, setEntries] = useState<ReportEntryInput[]>([defaultEntry()]);
-=======
   const [entries, setEntries] = useState<ReportEntryInput[]>(() => {
     if (!existingPayload) return [defaultEntry()];
     const parsed = parseStructuredEntriesFromPayload(existingPayload.entries);
     return parsed.length > 0 ? parsed : [defaultEntry()];
   });
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const [language, setLanguage] = useState<ReportLanguage>(
     existingPayload && (existingPayload.language === "en" || existingPayload.language === "fr")
       ? existingPayload.language as ReportLanguage
@@ -242,14 +229,6 @@ export default function ZeroDraftReportComposer({
   const [retryAvailable, setRetryAvailable] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [showEditor, setShowEditor] = useState(!hasExistingReport || existingSections.length === 0);
-<<<<<<< HEAD
-  const [photos, setPhotos] = useState<
-    { id: string; name: string; url: string | null; uploading: boolean; error?: string }[]
-  >([]);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [clientOverride, setClientOverride] = useState<string | null>(null);
-  const [polishClient, setPolishClient] = useState(false);
-=======
   const [simpleFlowMode, setSimpleFlowMode] = useState<"entry" | "live" | "upload">(
     !hasExistingReport || existingSections.length === 0 ? "live" : "entry",
   );
@@ -327,7 +306,6 @@ export default function ZeroDraftReportComposer({
   const [autoSavingAfterQc, setAutoSavingAfterQc] = useState(false);
   const [qcAutoSaveHint, setQcAutoSaveHint] = useState<string | null>(null);
   const [composerCoachDismissed, setComposerCoachDismissed] = useState(false);
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
   const generated = useMemo(
     () => buildStructuredReport(entries, language, jurisdiction),
@@ -338,9 +316,6 @@ export default function ZeroDraftReportComposer({
     [entries, language, jurisdiction, inspectorNote],
   );
   const clientSectionValue = clientOverride !== null ? clientOverride : autoClientDraft;
-<<<<<<< HEAD
-  const canGenerate = title.trim().length > 2 && entries.length > 0 && !loading;
-=======
 
   useEffect(() => {
     clientSectionLockedRef.current = clientSectionUserLocked;
@@ -1028,7 +1003,6 @@ export default function ZeroDraftReportComposer({
     entries.length > 0 &&
     !loading &&
     !pdfExportBlocked;
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const completion = Math.min(100, Math.max(15, Math.round((entries.length / 6) * 100)));
   const previewCompletion = Math.min(
     100,
@@ -1115,11 +1089,6 @@ export default function ZeroDraftReportComposer({
       refreshPdf: "Refresh PDF access",
       clientSection: "Client summary (plain language)",
       clientSectionHint:
-<<<<<<< HEAD
-        "Auto draft from your findings; edit freely. Included in the PDF before technical sections.",
-      regenerateClient: "Regenerate draft from findings",
-      polishClientLabel: "Polish wording with AI (OpenAI, optional)",
-=======
         "Stays in sync with findings until you edit this box; then use “Regenerate draft” to follow the list again.",
       clientSectionLockedHint:
         "You edited the client summary — it will not auto-rewrite when new findings arrive. Use “Regenerate draft from findings” to sync again.",
@@ -1215,7 +1184,6 @@ export default function ZeroDraftReportComposer({
         "Photo zones updated. Automatic QC draft findings were not merged because the title, client summary, field note, or findings were edited manually.",
       qcDraftSkippedFindingsNoZones:
         "QC draft findings were skipped (manual edits) and no “Other” photo zones were updated — try again after vision analysis finishes, or reset zones to Other where needed.",
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     }
     : {
       title: "Presque sans rédaction — trois étapes",
@@ -1256,11 +1224,6 @@ export default function ZeroDraftReportComposer({
       refreshPdf: "Rafraîchir l'accès au PDF",
       clientSection: "Compte rendu client (langage accessible)",
       clientSectionHint:
-<<<<<<< HEAD
-        "Brouillon auto à partir des constats ; modifiable. Inclus dans le PDF avant le volet technique.",
-      regenerateClient: "Régénérer le brouillon à partir des constats",
-      polishClientLabel: "Peaufiner la rédaction avec l'IA (OpenAI, optionnel)",
-=======
         "Reste aligné sur les constats tant que vous ne modifiez pas ce champ ; sinon utilisez « Régénérer » pour suivre à nouveau la liste.",
       clientSectionLockedHint:
         "Vous avez modifié le compte rendu client — il ne se réécrit plus tout seul quand de nouveaux constats arrivent. Utilisez « Régénérer le brouillon à partir des constats » pour resynchroniser.",
@@ -1403,7 +1366,6 @@ export default function ZeroDraftReportComposer({
       } catch {
         /* lien PDF vide : bouton Rafraîchir */
       }
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     };
     void run();
     return () => {
@@ -1414,45 +1376,6 @@ export default function ZeroDraftReportComposer({
   useEffect(() => {
     ensureSessionStart(reportId);
   }, [reportId]);
-
-  useEffect(() => {
-    if (
-      hasExistingReport &&
-      existingPayload &&
-      typeof existingPayload.client_section === "string" &&
-      existingPayload.client_section.trim()
-    ) {
-      setClientOverride(existingPayload.client_section.trim());
-    }
-  }, [hasExistingReport, existingPayload]);
-
-  /** SSR ne signe plus l’URL Storage ; on récupère le PDF après hydratation (évite chargement infini). */
-  useEffect(() => {
-    if (!viewerToken?.trim()) return;
-    if (!initialData?.hasPdf) return;
-    if (initialData.pdfSignedUrl) return;
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const res = await fetch("/api/regenerate-signed-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reportId, token: viewerToken }),
-        });
-        const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        if (cancelled) return;
-        if (res.ok && typeof body.pdf_signed_url === "string") {
-          setPdfLink(body.pdf_signed_url);
-        }
-      } catch {
-        /* lien PDF vide : bouton Rafraîchir */
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [reportId, viewerToken, initialData?.hasPdf, initialData?.pdfSignedUrl]);
 
   useEffect(() => {
     setHostInfo(window.location.host);
@@ -1474,10 +1397,7 @@ export default function ZeroDraftReportComposer({
         }
         if (typeof parsed.clientOverride === "string") {
           setClientOverride(parsed.clientOverride);
-<<<<<<< HEAD
-=======
           setClientSectionUserLocked(true);
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         }
         if (Array.isArray(parsed.entries) && parsed.entries.length > 0) {
           setEntries(parsed.entries);
@@ -1546,80 +1466,6 @@ export default function ZeroDraftReportComposer({
     }
   }, []);
 
-<<<<<<< HEAD
-  const handlePhotoUpload = useCallback(async (files: FileList) => {
-    setUploadingPhoto(true);
-    const additions = Array.from(files).map((f) => ({
-      id: crypto.randomUUID(),
-      name: f.name,
-      url: null as string | null,
-      uploading: true,
-    }));
-    setPhotos((prev) => [...prev, ...additions]);
-
-    await Promise.all(
-      Array.from({ length: files.length }, (_, i) => {
-        const file = files[i]!;
-        const slotId = additions[i]!.id;
-        const form = new FormData();
-        form.append("file", file);
-        form.append("report_id", reportId);
-        form.append("language", language);
-        return (async () => {
-          try {
-            const res = await fetch("/api/upload-photo", { method: "POST", body: form });
-            const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-            const suggested =
-              typeof body.suggested_inspector_note === "string" && body.suggested_inspector_note.trim()
-                ? body.suggested_inspector_note.trim()
-                : null;
-            if (suggested) {
-              setInspectorNote((prev) => (prev.trim() ? `${prev.trim()}\n\n${suggested}` : suggested));
-            }
-            setPhotos((prev) =>
-              prev.map((p) =>
-                p.id === slotId
-                  ? {
-                      ...p,
-                      uploading: false,
-                      url: typeof body.url === "string" ? body.url : null,
-                      error: !res.ok ? (typeof body.error === "string" ? body.error : `Erreur ${res.status}`) : undefined,
-                    }
-                  : p,
-              ),
-            );
-          } catch (e) {
-            setPhotos((prev) =>
-              prev.map((p) =>
-                p.id === slotId
-                  ? { ...p, uploading: false, error: e instanceof Error ? e.message : String(e) }
-                  : p,
-              ),
-            );
-          }
-        })();
-      }),
-    );
-    setUploadingPhoto(false);
-  }, [reportId, language]);
-
-  const requestPdfGeneration = useCallback(async () => {
-    const tPdf0 = Date.now();
-    // #region agent log
-    fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
-      body: JSON.stringify({
-        sessionId: "26655f",
-        location: "ZeroDraftReportComposer.tsx:requestPdfGeneration",
-        message: "client trigger-inspection start",
-        data: { reportId },
-        timestamp: Date.now(),
-        hypothesisId: "A",
-      }),
-    }).catch(() => {});
-    // #endregion
-=======
   const uploadOnePhoto = useCallback(
     async (
       file: File,
@@ -1629,6 +1475,7 @@ export default function ZeroDraftReportComposer({
       const form = new FormData();
       form.append("file", file);
       form.append("report_id", reportId);
+      form.append("access_token", viewerToken ?? "");
       form.append("language", language);
       try {
         const res = await fetch("/api/upload-photo", { method: "POST", body: form });
@@ -2404,7 +2251,6 @@ export default function ZeroDraftReportComposer({
   ]);
 
   const requestPdfGeneration = useCallback(async () => {
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     let pdfRes: Response;
     try {
       pdfRes = await withTimeout(
@@ -2417,44 +2263,8 @@ export default function ZeroDraftReportComposer({
         "trigger-inspection",
       );
     } catch (e) {
-<<<<<<< HEAD
-      // #region agent log
-      fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
-        body: JSON.stringify({
-          sessionId: "26655f",
-          location: "ZeroDraftReportComposer.tsx:requestPdfGeneration",
-          message: "client trigger-inspection error or timeout",
-          data: {
-            elapsedMs: Date.now() - tPdf0,
-            err: e instanceof Error ? e.message : String(e),
-          },
-          timestamp: Date.now(),
-          hypothesisId: "B",
-        }),
-      }).catch(() => {});
-      // #endregion
       throw e;
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
-      body: JSON.stringify({
-        sessionId: "26655f",
-        location: "ZeroDraftReportComposer.tsx:requestPdfGeneration",
-        message: "client trigger-inspection response",
-        data: { elapsedMs: Date.now() - tPdf0, status: pdfRes.status },
-        timestamp: Date.now(),
-        hypothesisId: "A",
-      }),
-    }).catch(() => {});
-    // #endregion
-=======
-      throw e;
-    }
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     const readJsonSafe = async <T,>(res: Response): Promise<T | null> => {
       try {
         return (await res.json()) as T;
@@ -2523,10 +2333,7 @@ export default function ZeroDraftReportComposer({
     setTitle(language === "en" ? "Automated inspection report" : "Rapport d'inspection automatisé");
     setInspectorNote("");
     setClientOverride(null);
-<<<<<<< HEAD
-=======
     setClientSectionUserLocked(false);
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     setPolishClient(false);
     setEntries([defaultEntry()]);
     setError(null);
@@ -2543,34 +2350,6 @@ export default function ZeroDraftReportComposer({
       setContentSaveErrorCode(null);
       setPdfLink(null);
       setRetryAvailable(false);
-<<<<<<< HEAD
-      setStatus("Etape 1/2: generation du contenu structure...");
-      const reportContentMs = polishClient ? 120_000 : 60_000;
-      const saveRes = await withTimeout(
-        fetch("/api/report-content", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            report_id: reportId,
-            title,
-            inspector_note: inspectorNote,
-            client_section: clientSectionValue,
-            polish_client: polishClient,
-            entries,
-            language,
-            jurisdiction,
-          }),
-        }),
-        reportContentMs,
-        "report-content",
-      );
-      const saveBody = await readJsonSafe<{ success?: boolean; error?: string }>(saveRes);
-      if (!saveRes.ok || !saveBody?.success) {
-        throw new Error(
-          saveBody?.error ??
-            `Impossible d'enregistrer le contenu (${saveRes.status})`,
-        );
-=======
 
       const readiness = coverReadiness;
 
@@ -2595,7 +2374,6 @@ export default function ZeroDraftReportComposer({
             ?.scrollIntoView({ behavior: "smooth", block: "center" });
         });
         return;
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
       }
       if (readiness.gate === "warning") {
         const msg = readiness.warnings.map((w) => w.messageFr).join("\n");
@@ -2721,15 +2499,12 @@ export default function ZeroDraftReportComposer({
                 >
                   {shareCopied ? labels.copied : labels.copyShareLink}
                 </button>
-<<<<<<< HEAD
-=======
                 <Link
                   href={`/rapport/couverture?report=${encodeURIComponent(reportId)}&token=${encodeURIComponent(viewerToken)}`}
                   className="rounded-md border border-emerald-700 bg-white px-3 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100"
                 >
                   Couverture & en-tête
                 </Link>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               </div>
             </div>
           ) : null}
@@ -2780,8 +2555,6 @@ export default function ZeroDraftReportComposer({
           </div>
         ) : null}
 
-<<<<<<< HEAD
-=======
         {SIMPLE_MODE ? (
           <div className="rounded-xl border border-blue-200 bg-blue-50/90 p-4 shadow-sm">
             <p className="text-sm font-semibold text-blue-950">
@@ -2865,7 +2638,6 @@ export default function ZeroDraftReportComposer({
           </div>
         )}
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         {existingClientSection ? (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/80 p-5 shadow-sm">
             <h3 className="text-base font-semibold text-slate-900">{labels.clientSection}</h3>
@@ -2913,11 +2685,7 @@ export default function ZeroDraftReportComposer({
   }
 
   return (
-<<<<<<< HEAD
-    <div className="mx-auto max-w-5xl space-y-6">
-=======
     <div className={`mx-auto max-w-5xl space-y-6 ${showEditor && SIMPLE_MODE ? "pb-24" : ""}`}>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
       {hasExistingReport && existingSections.length > 0 ? (
         <button
           type="button"
@@ -2928,17 +2696,6 @@ export default function ZeroDraftReportComposer({
         </button>
       ) : null}
 
-<<<<<<< HEAD
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-900">{labels.title}</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          {labels.subtitle}
-        </p>
-        <p className="mt-2 text-xs text-slate-500 leading-relaxed">
-          {labels.complianceBilingual}
-        </p>
-        <p className="mt-1 text-xs text-slate-500">Environnement actif: {hostInfo || "n/a"}</p>
-=======
       {showEditor ? (
         <div
           className="sticky top-0 z-30 -mx-4 border-b border-slate-200/90 bg-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm supports-[backdrop-filter]:bg-white/85 md:mx-0 md:rounded-lg md:border md:px-3"
@@ -3069,7 +2826,6 @@ export default function ZeroDraftReportComposer({
             <p className="mt-1 text-xs text-slate-500">Environnement actif: {hostInfo || "n/a"}</p>
           </>
         )}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         {viewerToken ? (
           <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/80 p-3">
             <p className="text-xs font-semibold text-emerald-900">
@@ -3095,15 +2851,12 @@ export default function ZeroDraftReportComposer({
               >
                 {shareCopied ? labels.copied : labels.copyShareLink}
               </button>
-<<<<<<< HEAD
-=======
               <Link
                 href={`/rapport/couverture?report=${encodeURIComponent(reportId)}&token=${encodeURIComponent(viewerToken)}`}
                 className="rounded-md border border-emerald-700 bg-white px-3 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100"
               >
                 Couverture & en-tête
               </Link>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
             </div>
           </div>
         ) : (
@@ -3111,8 +2864,6 @@ export default function ZeroDraftReportComposer({
             {labels.missingToken}
           </p>
         )}
-<<<<<<< HEAD
-=======
         {!SIMPLE_MODE ? (
         <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50/90 px-3 py-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
@@ -3195,7 +2946,6 @@ export default function ZeroDraftReportComposer({
         </div>
         ) : null}
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs font-medium text-slate-600">{labels.quality}</span>
           <div className="h-2 flex-1 rounded-full bg-slate-200">
@@ -3841,25 +3591,15 @@ export default function ZeroDraftReportComposer({
                 type="button"
                 className="shrink-0 rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
                 disabled={loading}
-<<<<<<< HEAD
-                onClick={() => setClientOverride(null)}
-=======
                 onClick={() => {
                   setClientOverride(null);
                   setClientSectionUserLocked(false);
                 }}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               >
                 {labels.regenerateClient}
               </button>
             </div>
             <p className="mt-1 text-xs text-slate-600">{labels.clientSectionHint}</p>
-<<<<<<< HEAD
-            <textarea
-              className="mt-2 min-h-36 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-              value={clientSectionValue}
-              onChange={(e) => setClientOverride(e.target.value)}
-=======
             {clientSectionUserLocked ? (
               <p className="mt-2 rounded-md border border-amber-200 bg-amber-50/90 px-2.5 py-2 text-[11px] leading-snug text-amber-950">
                 {labels.clientSectionLockedHint}
@@ -3872,7 +3612,6 @@ export default function ZeroDraftReportComposer({
                 setClientOverride(e.target.value);
                 setClientSectionUserLocked(true);
               }}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               disabled={loading}
             />
             <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-700">
@@ -3884,159 +3623,13 @@ export default function ZeroDraftReportComposer({
               />
               {labels.polishClientLabel}
             </label>
-<<<<<<< HEAD
           </div>
 
-          <div className="space-y-3">
-            {entries.map((entry, idx) => (
-              <div key={idx} className="rounded-lg border border-slate-200 p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-slate-800">{labels.finding} #{idx + 1}</p>
-                  <button
-                    type="button"
-                    className="text-xs text-red-600 disabled:text-slate-400"
-                    disabled={entries.length === 1 || loading}
-                    onClick={() => removeEntry(idx)}
-                  >
-                    {labels.remove}
-                  </button>
-                </div>
-
-                <div className="grid gap-2 md:grid-cols-3">
-                  <select
-                    className="rounded-md border border-slate-300 px-2 py-2 text-sm"
-                    value={entry.zone}
-                    onChange={(e) => updateEntry(idx, "zone", e.target.value as ZoneCode)}
-                    disabled={loading}
-                  >
-                    {ZONES.map((zone) => (
-                      <option key={zone.value} value={zone.value}>
-                        {zone.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    className="rounded-md border border-slate-300 px-2 py-2 text-sm"
-                    value={entry.issue}
-                    onChange={(e) => updateEntry(idx, "issue", e.target.value as IssueCode)}
-                    disabled={loading}
-                  >
-                    {ISSUES.map((issue) => (
-                      <option key={issue.value} value={issue.value}>
-                        {issue.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  <select
-                    className="rounded-md border border-slate-300 px-2 py-2 text-sm"
-                    value={entry.severity}
-                    onChange={(e) => updateEntry(idx, "severity", e.target.value as Severity)}
-                    disabled={loading}
-                  >
-                    {SEVERITIES.map((severity) => (
-                      <option key={severity.value} value={severity.value}>
-                        {severity.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <input
-                  className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={entry.note ?? ""}
-                  onChange={(e) => updateEntry(idx, "note", e.target.value)}
-                  placeholder="Note optionnelle pour ce constat..."
-                  disabled={loading}
-                />
-              </div>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-              onClick={addEntry}
-              disabled={loading}
-            >
-              {labels.addFinding}
-            </button>
-            <button
-              type="button"
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-              onClick={clearLocalDraft}
-              disabled={loading}
-            >
-              {labels.clearDraft}
-            </button>
-          </div>
-
-=======
-          </div>
-
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           <NotesCapture
             reportId={reportId}
             language={language}
             onNotesProcessed={handleNotesProcessed}
           />
-<<<<<<< HEAD
-
-          <div className="rounded-lg border border-slate-200 p-4">
-            <p className="text-sm font-medium text-slate-700 mb-3">
-              {language === "en" ? "Photos" : "Photos"}
-            </p>
-            <label className="flex cursor-pointer items-center justify-center rounded-md border-2 border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500 transition hover:border-blue-400 hover:text-blue-600">
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="sr-only"
-                disabled={loading || uploadingPhoto}
-                onChange={(e) => {
-                  if (e.target.files && e.target.files.length > 0) {
-                    handlePhotoUpload(e.target.files);
-                    e.target.value = "";
-                  }
-                }}
-              />
-              {uploadingPhoto
-                ? (language === "en" ? "Uploading..." : "Téléversement...")
-                : (language === "en" ? "Click to add photos" : "Cliquez pour ajouter des photos")}
-            </label>
-            {photos.length > 0 ? (
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {photos.map((photo) => (
-                  <div key={photo.id} className="rounded-md border border-slate-200 p-1.5 text-center">
-                    {photo.url ? (
-                      <img
-                        src={photo.url}
-                        alt={photo.name}
-                        className="h-20 w-full rounded object-cover"
-                      />
-                    ) : photo.uploading ? (
-                      <div className="flex h-20 items-center justify-center bg-slate-100 rounded">
-                        <span className="text-xs text-slate-400">…</span>
-                      </div>
-                    ) : (
-                      <div className="flex h-20 items-center justify-center bg-red-50 rounded">
-                        <span className="text-xs text-red-500">Erreur</span>
-                      </div>
-                    )}
-                    <p className="mt-1 truncate text-xs text-slate-500">{photo.name}</p>
-                    {photo.error ? (
-                      <p className="text-xs text-red-500">{photo.error}</p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </div>
-=======
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-base font-semibold text-slate-900">{labels.previewTitle}</h3>
