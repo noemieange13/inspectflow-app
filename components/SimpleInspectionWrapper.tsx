@@ -34,10 +34,16 @@ export default function SimpleInspectionWrapper({
   const sawExtractingTrueRef = useRef(false);
   const tickWhenPickerOpenedRef = useRef<number | null>(null);
   const tickLatestRef = useRef(descriptionFilesTick);
-  tickLatestRef.current = descriptionFilesTick;
 
   const onRunDescriptionRef = useRef(props.onRunDescriptionFromPhotos);
-  onRunDescriptionRef.current = props.onRunDescriptionFromPhotos;
+
+  useEffect(() => {
+    tickLatestRef.current = descriptionFilesTick;
+  }, [descriptionFilesTick]);
+
+  useEffect(() => {
+    onRunDescriptionRef.current = props.onRunDescriptionFromPhotos;
+  }, [props.onRunDescriptionFromPhotos]);
 
   useEffect(() => {
     if (props.descriptionExtracting) {
