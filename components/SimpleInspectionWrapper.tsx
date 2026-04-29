@@ -34,10 +34,16 @@ export default function SimpleInspectionWrapper({
   const sawExtractingTrueRef = useRef(false);
   const tickWhenPickerOpenedRef = useRef<number | null>(null);
   const tickLatestRef = useRef(descriptionFilesTick);
-  tickLatestRef.current = descriptionFilesTick;
 
   const onRunDescriptionRef = useRef(props.onRunDescriptionFromPhotos);
-  onRunDescriptionRef.current = props.onRunDescriptionFromPhotos;
+
+  useEffect(() => {
+    tickLatestRef.current = descriptionFilesTick;
+  }, [descriptionFilesTick]);
+
+  useEffect(() => {
+    onRunDescriptionRef.current = props.onRunDescriptionFromPhotos;
+  }, [props.onRunDescriptionFromPhotos]);
 
   useEffect(() => {
     if (props.descriptionExtracting) {
@@ -48,8 +54,8 @@ export default function SimpleInspectionWrapper({
     if (analyzePendingRef.current && sawExtractingTrueRef.current) {
       analyzePendingRef.current = false;
       sawExtractingTrueRef.current = false;
-      setStep("resume");
-      return;
+      const id = window.setTimeout(() => setStep("resume"), 0);
+      return () => window.clearTimeout(id);
     }
 
     if (analyzePendingRef.current && !sawExtractingTrueRef.current) {
@@ -65,10 +71,11 @@ export default function SimpleInspectionWrapper({
     if (tickWhenPickerOpenedRef.current === null) return;
     if (descriptionFilesTick === tickWhenPickerOpenedRef.current) return;
     tickWhenPickerOpenedRef.current = null;
-    setAwaitingPickerReturn(false);
     analyzePendingRef.current = true;
     sawExtractingTrueRef.current = false;
     void onRunDescriptionRef.current();
+    const id = window.setTimeout(() => setAwaitingPickerReturn(false), 0);
+    return () => window.clearTimeout(id);
   }, [descriptionFilesTick]);
 
   useEffect(() => {

@@ -1,14 +1,12 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
 const BUCKET = "user-uploads";
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
-<<<<<<< HEAD
-=======
 /** Aligné terrain + client (lots volumineux) — refuse au-delà pour protéger stockage / coûts. */
 const MAX_PHOTOS_PER_INSPECTION = 320;
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
 async function ensureBucket(supabase: Awaited<ReturnType<typeof createServiceRoleClient>>) {
   const { data: buckets } = await supabase.storage.listBuckets();
@@ -21,6 +19,7 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
+    const accessTokenRaw = formData.get("access_token");
     const inspectionId = formData.get("inspection_id") as string | null;
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
@@ -43,7 +42,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -54,14 +53,22 @@ export async function POST(req: Request) {
       return Response.json({ error: "Report not found" }, { status: 404 });
     }
 
+    const gate = await assertReportAccessWithOptionalSession(
+      req,
+      reportId.trim(),
+      typeof accessTokenRaw === "string" ? accessTokenRaw : "",
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json({ error: gate.error, code: gate.code }, { status: gate.status });
+    }
+
     const effectiveInspectionId =
       inspectionId?.trim() ||
       (typeof report.inspection_id === "string" ? report.inspection_id : null);
     const ownerId =
       typeof report.user_id === "string" ? report.user_id : "anonymous";
 
-<<<<<<< HEAD
-=======
     if (effectiveInspectionId) {
       const { count, error: cntErr } = await supabase
         .from("photos")
@@ -77,7 +84,6 @@ export async function POST(req: Request) {
       }
     }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     const buffer = Buffer.from(await file.arrayBuffer());
     const fileHash = createHash("sha256").update(buffer).digest("hex");
 
