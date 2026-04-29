@@ -1769,7 +1769,7 @@ export default function ZeroDraftReportComposer({
         setQcAutoSaveNonce((n) => n + 1);
       }
     },
-    [reportId, labels, language, viewerToken],
+    [reportId, labels, language, uploadOnePhoto, viewerToken],
   );
 
   const resolveQcMergeChoice = useCallback(
