@@ -5,11 +5,8 @@
  *
  * Usage : depuis la racine du projet
  *   npm run smoke:e2e
-<<<<<<< HEAD
-=======
  *
  * Options : SMOKE_SKIP_TRIGGER, SMOKE_SKIP_REPORT_COVER (1 = ne pas appeler report-cover).
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -227,8 +224,6 @@ const htmlPayload =
   "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Smoke</title></head><body>" +
   "<p>Smoke test HTML content for PDF pipeline verification.</p></body></html>";
 
-<<<<<<< HEAD
-=======
 /** Couverture minimale pour valider POST /api/report-cover + fusion PDF (cover + html custom). */
 function smokeCoverV1() {
   const now = new Date();
@@ -270,7 +265,6 @@ function smokeCoverV1() {
   };
 }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 let userId;
 let inspectionId;
 try {
@@ -341,8 +335,6 @@ if (process.env.SMOKE_SKIP_TRIGGER === "1") {
   process.exit(0);
 }
 
-<<<<<<< HEAD
-=======
 const accessToken =
   typeof j1?.access_token === "string" ? j1.access_token.trim() : "";
 if (process.env.SMOKE_SKIP_REPORT_COVER === "1") {
@@ -389,7 +381,6 @@ if (process.env.SMOKE_SKIP_REPORT_COVER === "1") {
   );
 }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 let r2;
 let t2;
 try {
