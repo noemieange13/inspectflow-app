@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-<<<<<<< HEAD
-import InspectionCoverForm from "@/components/InspectionCoverForm";
-=======
 import InspectionCoverFormHydrated from "@/components/InspectionCoverFormHydrated";
 import {
   INSPECTOR_PROFILE_PAYLOAD_KEY,
@@ -11,15 +8,11 @@ import {
   parseInspectorProfileFromUnknown,
 } from "@/lib/inspectionCoverPayload";
 import { loadReportForViewer } from "@/lib/reportViewerServer";
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
 export const metadata: Metadata = {
   title: "Formulaire couverture — rapport d'inspection",
 };
 
-<<<<<<< HEAD
-export default function CouverturePage() {
-=======
 type Props = {
   searchParams: Promise<{ report?: string | string[]; token?: string | string[] }>;
 };
@@ -109,7 +102,6 @@ export default async function CouverturePage({ searchParams }: Props) {
     );
   }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   return (
     <div className="mx-auto min-h-screen max-w-4xl px-4 py-10 sm:px-6">
       <nav className="mb-6 text-sm text-slate-500">
@@ -121,21 +113,12 @@ export default async function CouverturePage({ searchParams }: Props) {
       </nav>
       <header className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-<<<<<<< HEAD
-          Création du rapport —{" "}
-          <span className="text-blue-600">couverture & en-tête</span>
-=======
           Création du rapport — <span className="text-blue-600">couverture & en-tête</span>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         </h1>
         <p className="mt-2 text-sm text-slate-600">
           Champs alignés sur ton modèle Word (requérant, propriété, description sommaire, condition générale,
           orientation). Les champs auto (météo, date) restent modifiables.
         </p>
-<<<<<<< HEAD
-      </header>
-      <InspectionCoverForm />
-=======
         <p className="mt-3 text-sm text-slate-500">
           Pour lier ce formulaire à un rapport existant, ouvrez-le depuis la page rapport avec{" "}
           <code className="rounded bg-slate-100 px-1 font-mono text-xs">
@@ -145,7 +128,6 @@ export default async function CouverturePage({ searchParams }: Props) {
         </p>
       </header>
       <InspectionCoverFormHydrated />
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     </div>
   );
 }
