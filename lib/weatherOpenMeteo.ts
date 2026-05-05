@@ -47,8 +47,6 @@ export async function fetchWeatherOpenMeteo(
   };
 }
 
-<<<<<<< HEAD
-=======
 export async function geocodeAddressOpenMeteo(
   address: string,
 ): Promise<{ latitude: number; longitude: number; label: string }> {
@@ -74,20 +72,12 @@ export async function geocodeAddressOpenMeteo(
   return { latitude: hit.latitude, longitude: hit.longitude, label: label || q };
 }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 export function geolocationPosition(): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       reject(new Error("Géolocalisation non disponible"));
       return;
     }
-<<<<<<< HEAD
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 15_000,
-      maximumAge: 60_000,
-    });
-=======
     navigator.geolocation.getCurrentPosition(
       resolve,
       (err) => {
@@ -108,6 +98,5 @@ export function geolocationPosition(): Promise<GeolocationPosition> {
         maximumAge: 60_000,
       },
     );
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   });
 }
