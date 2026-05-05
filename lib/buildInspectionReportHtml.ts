@@ -272,10 +272,6 @@ export function buildHtmlFromReportPayload(
       ? buildCoverSectionHtml(coverParsed, profileParsed)
       : "";
 
-<<<<<<< HEAD
-  const sectionsRaw = payload.sections;
-  if (Array.isArray(sectionsRaw) && sectionsRaw.length > 0) {
-=======
   const sectionsRaw =
     normalizeSectionsFromPayload(payload.sections) ?? [];
   if (sectionsRaw.length > 0) {
@@ -298,7 +294,6 @@ export function buildHtmlFromReportPayload(
       if (qcDoc) return qcDoc;
     }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     const parts: string[] = [];
     parts.push(
       `<!DOCTYPE html><html lang="${t.htmlLang}"><head><meta charset="utf-8"><title>${t.defaultTitle}</title>`,
@@ -320,8 +315,6 @@ export function buildHtmlFromReportPayload(
       parts.push(`<h2>${t.scoreLabel}: ${escapeHtml(String(payload.score))}</h2>`);
     }
 
-<<<<<<< HEAD
-=======
     const bsv1 = payload.building_summary_v1;
     if (bsv1 && typeof bsv1 === "object") {
       const s = bsv1 as Record<string, unknown>;
@@ -365,7 +358,6 @@ export function buildHtmlFromReportPayload(
       }
     }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     const clientSectionRaw = payload.client_section;
     if (typeof clientSectionRaw === "string" && clientSectionRaw.trim()) {
       parts.push(
