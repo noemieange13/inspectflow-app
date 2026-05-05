@@ -72,9 +72,6 @@ const MAX_BULK_HARD = 320;
 const PHOTO_CHUNK = 50;
 const UPLOAD_CONCURRENCY = 4;
 
-import type { ReportServerData } from "@/app/report/[id]/page";
-import NotesCapture from "@/components/NotesCapture";
-
 type Props = {
   reportId: string;
   viewerToken?: string;
