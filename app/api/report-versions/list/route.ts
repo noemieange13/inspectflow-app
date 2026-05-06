@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { reportAccessTokensMatch } from "@/lib/reportAccessToken"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -70,6 +71,43 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
+
+    if (!isLegacy) {
+      const providedToken = typeof access_token === "string" ? access_token : ""
+      const { data: report, error: reportError } = await supabase
+        .from("reports")
+        .select("access_token, token_expires_at")
+        .eq("id", report_id)
+        .maybeSingle()
+
+      if (reportError) {
+        console.error("REPORT TOKEN DB ERROR:", reportError)
+        return Response.json(
+          { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+          { status: 500 }
+        )
+      }
+
+      const rec = report as Record<string, unknown> | null
+      const dbToken = typeof rec?.access_token === "string" ? rec.access_token.trim() : ""
+      if (!dbToken || !reportAccessTokensMatch(providedToken, dbToken)) {
+        return Response.json(
+          { data: [], error: "ACCESS_DENIED", meta: { max_versions: MAX_VERSIONS } },
+          { status: 403 }
+        )
+      }
+
+      if (
+        rec?.token_expires_at != null &&
+        String(rec.token_expires_at) !== "" &&
+        new Date(String(rec.token_expires_at)) < new Date()
+      ) {
+        return Response.json(
+          { data: [], error: "ACCESS_DENIED", meta: { max_versions: MAX_VERSIONS } },
+          { status: 403 }
+        )
+      }
+    }
 
     const { data, error } = await supabase
       .from("report_versions")

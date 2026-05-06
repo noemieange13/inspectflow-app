@@ -4,11 +4,8 @@ import { createHash } from "crypto";
 
 const BUCKET = "user-uploads";
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
-<<<<<<< HEAD
-=======
 /** Aligné terrain + client (lots volumineux) — refuse au-delà pour protéger stockage / coûts. */
 const MAX_PHOTOS_PER_INSPECTION = 320;
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
 async function ensureBucket(supabase: Awaited<ReturnType<typeof createServiceRoleClient>>) {
   const { data: buckets } = await supabase.storage.listBuckets();
@@ -60,8 +57,6 @@ export async function POST(req: Request) {
     const ownerId =
       typeof report.user_id === "string" ? report.user_id : "anonymous";
 
-<<<<<<< HEAD
-=======
     if (effectiveInspectionId) {
       const { count, error: cntErr } = await supabase
         .from("photos")
@@ -77,7 +72,6 @@ export async function POST(req: Request) {
       }
     }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     const buffer = Buffer.from(await file.arrayBuffer());
     const fileHash = createHash("sha256").update(buffer).digest("hex");
 
