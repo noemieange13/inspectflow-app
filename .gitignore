@@ -30,6 +30,7 @@ Access codes.txt
 # debug
 .cursor/debug.log
 .cursor/*.log
+.cursor/mcp.json
 
 # supabase CLI local temp
 supabase/.temp/
