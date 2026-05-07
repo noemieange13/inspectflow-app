@@ -8,13 +8,16 @@ import {
 import { evaluatePdfExportReadiness } from "@/lib/pdfExportReadiness";
 import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
 import {
-  fetchLegalClausesForCoverJurisdiction,
-  filterLegalClausesByReportContext,
-} from "@/lib/qcLegalClauses";
+  buildClauseSnapshots,
+  hashClauseSnapshotSha256,
+  mergeClauseSnapshots,
+} from "@/lib/qcLegalClauseSnapshot";
+import { loadLegalClausesForReportPayload } from "@/lib/loadLegalClausesForReportPayload";
 
 /**
  * Garantit `reports.payload.html` avant l’appel à `reports-pdf` : génération côté serveur
  * (sections / défauts / observations) avec texte échappé, puis mise à jour en base.
+ * Inscrit aussi `compliance.clause_snapshot` pour traçabilité audit.
  */
 export async function ensureReportPayloadHtml(
   reportId: string,
@@ -45,34 +48,43 @@ export async function ensureReportPayloadHtml(
     return { ok: false, error: readiness.error };
   }
 
-  let legalClauseRows: Awaited<
-    ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
-  > | undefined;
+  const takenAt = new Date().toISOString();
   const coverForClauses = parseCoverV1FromUnknown(payload.cover_v1);
-  if (coverForClauses) {
-    try {
-      legalClauseRows = await fetchLegalClausesForCoverJurisdiction(
-        supabase,
-        coverForClauses.conformite_juridiction,
-      );
-    } catch (e) {
-      console.warn(
-        "ensureReportPayloadHtml: qc_legal_clauses fetch failed",
-        e instanceof Error ? e.message : e,
-      );
-      legalClauseRows = undefined;
-    }
+
+  let legalClauseRows: Awaited<
+    ReturnType<typeof loadLegalClausesForReportPayload>
+  >["legalClauseRows"];
+  let legalClauseRowsFrForQc: Awaited<
+    ReturnType<typeof loadLegalClausesForReportPayload>
+  >["legalClauseRowsFrForQc"];
+
+  try {
+    const bundle = await loadLegalClausesForReportPayload(supabase, payload);
+    legalClauseRows = bundle.legalClauseRows;
+    legalClauseRowsFrForQc = bundle.legalClauseRowsFrForQc;
+  } catch (e) {
+    console.warn(
+      "ensureReportPayloadHtml: legal clauses load failed",
+      e instanceof Error ? e.message : e,
+    );
+    legalClauseRows = undefined;
+    legalClauseRowsFrForQc = undefined;
   }
 
-  if (legalClauseRows && legalClauseRows.length > 0) {
-    legalClauseRows = filterLegalClausesByReportContext(
-      legalClauseRows,
-      payload,
-    );
-  }
+  const clauseSnapshot = coverForClauses
+    ? mergeClauseSnapshots(
+        legalClauseRows?.length
+          ? buildClauseSnapshots(legalClauseRows, takenAt)
+          : [],
+        legalClauseRowsFrForQc?.length
+          ? buildClauseSnapshots(legalClauseRowsFrForQc, takenAt)
+          : [],
+      )
+    : [];
 
   const built = buildHtmlFromReportPayload(payload, {
     legalClauseRows,
+    legalClauseRowsFrForQc,
   });
 
   if (!built || !isHtmlLongEnough(built)) {
@@ -88,11 +100,35 @@ export async function ensureReportPayloadHtml(
   }
 
   const current = typeof payload.html === "string" ? payload.html : "";
-  if (built === current) {
+
+  const complianceMerged =
+    coverForClauses
+      ? {
+          ...(typeof payload.compliance === "object" && payload.compliance !== null
+            ? (payload.compliance as Record<string, unknown>)
+            : {}),
+          clause_snapshot: clauseSnapshot,
+          clause_snapshot_generated_at: takenAt,
+          clause_snapshot_pack:
+            coverForClauses.compliance_profile_v1?.clauses_pack_version ??
+            "QC_2027_v1",
+          clause_snapshot_sha256:
+            clauseSnapshot.length > 0
+              ? hashClauseSnapshotSha256(clauseSnapshot)
+              : null,
+        }
+      : null;
+
+  const nextPayload = {
+    ...payload,
+    html: built,
+    ...(complianceMerged ? { compliance: complianceMerged } : {}),
+  };
+
+  if (built === current && !complianceMerged) {
     return { ok: true, builtHtml: built };
   }
 
-  const nextPayload = { ...payload, html: built };
   const { error: rpcErr } = await rpcUpdateReportPayloadWithUnlock(supabase, {
     reportId,
     payload: nextPayload,

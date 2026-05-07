@@ -26,6 +26,7 @@ import {
   groupClausesBySection,
   type QcLegalClauseRow,
 } from "@/lib/qcLegalClauses";
+import { shouldFetchQuebecFrenchParallel } from "@/lib/qcLegalClauseSnapshot";
 
 function esc(s: string): string {
   return s
@@ -66,6 +67,7 @@ export const PDF_QC_BLOCK_ORDER = [
   "general_recommendations",
   "legal_clauses",
   "signature",
+  "compliance_audit",
 ] as const;
 
 export const REPORT_QC2027_SUPPLEMENT_CSS =
@@ -92,7 +94,11 @@ export const REPORT_QC2027_SUPPLEMENT_CSS =
   ".qc-badge{display:inline-block;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:600}" +
   ".qc-badge-ok{background:#ecfdf3;color:#166534;border:1px solid #bbf7d0}" +
   ".qc-badge-warn{background:#fffbeb;color:#9a3412;border:1px solid #fde68a}" +
-  ".qc-badge-bad{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}";
+  ".qc-badge-bad{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}" +
+  ".qc-audit-wrap{border:1px solid #cbd5e1;border-radius:8px;padding:0.9em 1.05em;margin:1.25em 0 0;background:#f8fafc;font-size:12px;line-height:1.45;color:#334155}" +
+  ".qc-audit-pass{color:#166534;font-weight:700}" +
+  ".qc-audit-warn{color:#9a3412;font-weight:700}" +
+  ".qc-audit-snap{margin-top:0.65em;padding-top:0.55em;border-top:1px dashed #cbd5e1;font-size:11px;color:#475569}";
 
 type ReportLanguage = "fr" | "en";
 
@@ -664,6 +670,40 @@ function renderReferenceClausesHtml(
   return parts.join("");
 }
 
+/** Libellé français officiel en parallèle d’un rapport EN (Québec). */
+function renderQuebecFrenchParallelClausesHtml(
+  rows: QcLegalClauseRow[] | undefined,
+): string {
+  if (!rows || rows.length === 0) return "";
+  const grouped = groupClausesBySection(rows);
+  const parts: string[] = [];
+  parts.push(
+    `<h3 style="font-size:15px;margin-top:1.25em">${esc(
+      "Clauses de référence — texte français (Québec)",
+    )}</h3>`,
+  );
+  parts.push(
+    `<p class="qc-muted" style="font-size:12px;line-height:1.4;margin:0.35em 0 0.75em">${esc(
+      "Le texte français est reproduit pour clarté juridique (Charte de la langue française). Il complète la version anglaise du rapport sans la remplacer.",
+    )}</p>`,
+  );
+  parts.push(`<div lang="fr">`);
+  for (const [section, clauses] of Object.entries(grouped)) {
+    parts.push(
+      `<h4 style="font-size:14px;margin:0.75em 0 0.35em">${esc(section)}</h4>`,
+    );
+    parts.push(
+      `<ul style="margin:0.25em 0;padding-left:1.25em;font-size:13px;line-height:1.45">`,
+    );
+    for (const c of clauses) {
+      parts.push(`<li>${esc(c)}</li>`);
+    }
+    parts.push(`</ul>`);
+  }
+  parts.push(`</div>`);
+  return parts.join("");
+}
+
 function bilingualNoticeFragment(
   compliance: Record<string, unknown>,
   lang: ReportLanguage,
@@ -702,6 +742,7 @@ function legalClausesBlock(
   payload: Record<string, unknown>,
   lang: ReportLanguage,
   legalRows: QcLegalClauseRow[] | undefined,
+  legalRowsFrForQc: QcLegalClauseRow[] | undefined,
 ): string {
   const L = labels(lang);
   const compliance =
@@ -717,6 +758,13 @@ function legalClausesBlock(
   const note = effectiveComplianceNote(cover).trim();
   const bilingual = compliance ? bilingualNoticeFragment(compliance, lang) : "";
   const registry = renderReferenceClausesHtml(legalRows, lang);
+  const frParallel =
+    lang === "en" &&
+    cover.conformite_juridiction === "ca_qc" &&
+    legalRowsFrForQc &&
+    legalRowsFrForQc.length > 0
+      ? renderQuebecFrenchParallelClausesHtml(legalRowsFrForQc)
+      : "";
 
   return `
 <section class="qc-break">
@@ -730,6 +778,166 @@ function legalClausesBlock(
   ${legal ? `<p style="white-space:pre-wrap;line-height:1.45">${esc(legal)}</p>` : ""}
   ${bilingual}
   ${registry}
+  ${frParallel}
+</section>`.trim();
+}
+
+function complianceAuditLabels(lang: ReportLanguage) {
+  return lang === "en"
+    ? {
+      sectionTitle: "Compliance record (audit)",
+      passTitle: "Compliance: PASS",
+      partialTitle: "Compliance: review required",
+      bulletSystems: "QC 2027 mandatory system sections present",
+      bulletClausesBilingual: "Clause registry includes EN + FR (Quebec English report)",
+      bulletClausesMono: "Clause registry included for export language",
+      bulletBilingualGap:
+        "Bilingual clause trace incomplete (QC + English requires FR + EN in snapshot)",
+      bulletSnapshotOk: "Clause snapshot recorded in report file",
+      bulletSnapshotMissing: "No clause snapshot in report file metadata",
+      snapTitle: "Compliance snapshot (embedded record)",
+      packLabel: "Clause pack",
+      genLabel: "Generated at (ISO 8601)",
+      langLabel: "Languages in snapshot",
+      shaLabel: "SHA-256 (canonical clause_snapshot JSON)",
+      shaLegacy: "Integrity digest not recorded (legacy export)",
+      disclaimer:
+        "Technical compliance metadata — not a legal certificate. External counsel remains responsible for legal review.",
+    }
+    : {
+      sectionTitle: "Enregistrement conformité (audit)",
+      passTitle: "Conformité : CONFORME",
+      partialTitle: "Conformité : révision requise",
+      bulletSystems: "Sections systèmes obligatoires QC 2027 présentes",
+      bulletClausesBilingual:
+        "Registre des clauses EN + FR (rapport anglais, Québec)",
+      bulletClausesMono: "Registre des clauses inclus pour la langue d’export",
+      bulletBilingualGap:
+        "Trace bilingue incomplète (QC + anglais : instantané FR+EN requis)",
+      bulletSnapshotOk: "Instantané des clauses enregistré dans le fichier rapport",
+      bulletSnapshotMissing:
+        "Aucun instantané de clauses dans les métadonnées du rapport",
+      snapTitle: "Instantané conformité (preuve embarquée)",
+      packLabel: "Paquet de clauses",
+      genLabel: "Horodatage (ISO 8601)",
+      langLabel: "Langues dans l’instantané",
+      shaLabel: "SHA-256 (JSON canonique clause_snapshot)",
+      shaLegacy: "Empreinte d’intégrité absente (export antérieur)",
+      disclaimer:
+        "Métadonnées techniques de conformité — ne constitue pas une certification juridique.",
+    };
+}
+
+function parseClauseSnapshotRowsFromCompliance(
+  raw: unknown,
+): Array<{ clause_code: string; language: ReportLanguage }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ clause_code: string; language: ReportLanguage }> = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const code = typeof r.clause_code === "string" ? r.clause_code.trim() : "";
+    const lg = r.language;
+    if (!code) continue;
+    if (lg === "en" || lg === "fr") out.push({ clause_code: code, language: lg });
+  }
+  return out;
+}
+
+/** Pied / encadré audit : lit `payload.compliance` (écrit par ensureReportPayloadHtml). */
+function complianceAuditSectionHtml(
+  cover: InspectionCoverPayloadV1,
+  payload: Record<string, unknown>,
+  lang: ReportLanguage,
+): string {
+  const rawComp = payload.compliance;
+  if (!rawComp || typeof rawComp !== "object") return "";
+  const c = rawComp as Record<string, unknown>;
+  const pack =
+    typeof c.clause_snapshot_pack === "string" && c.clause_snapshot_pack.trim()
+      ? c.clause_snapshot_pack.trim()
+      : "";
+  const generatedAt =
+    typeof c.clause_snapshot_generated_at === "string" &&
+    c.clause_snapshot_generated_at.trim()
+      ? c.clause_snapshot_generated_at.trim()
+      : "";
+  const sha =
+    typeof c.clause_snapshot_sha256 === "string" && c.clause_snapshot_sha256.trim()
+      ? c.clause_snapshot_sha256.trim()
+      : "";
+  const snapshot = parseClauseSnapshotRowsFromCompliance(c.clause_snapshot);
+
+  if (!pack && !generatedAt && !sha && snapshot.length === 0) return "";
+
+  const L = complianceAuditLabels(lang);
+  const langs = new Set<ReportLanguage>();
+  for (const row of snapshot) langs.add(row.language);
+  const langsDisplay =
+    langs.size === 0
+      ? "—"
+      : [...langs].sort((a, b) => a.localeCompare(b)).map((x) => x.toUpperCase()).join(" + ");
+
+  const needBilingual = shouldFetchQuebecFrenchParallel(
+    cover.conformite_juridiction,
+    lang,
+  );
+  const hasEn = langs.has("en");
+  const hasFr = langs.has("fr");
+  const bilingualOk = !needBilingual || (hasEn && hasFr);
+  const hasSnapshot = snapshot.length > 0;
+
+  const pass = hasSnapshot && bilingualOk;
+  const statusClass = pass ? "qc-audit-pass" : "qc-audit-warn";
+  const statusTitle = pass ? L.passTitle : L.partialTitle;
+
+  const bullets: string[] = [];
+  bullets.push(`<li>${esc(L.bulletSystems)}</li>`);
+  if (needBilingual) {
+    bullets.push(
+      `<li>${esc(bilingualOk ? L.bulletClausesBilingual : L.bulletBilingualGap)}</li>`,
+    );
+  } else {
+    bullets.push(`<li>${esc(L.bulletClausesMono)}</li>`);
+  }
+  bullets.push(
+    `<li>${esc(hasSnapshot ? L.bulletSnapshotOk : L.bulletSnapshotMissing)}</li>`,
+  );
+
+  const snapLines: string[] = [];
+  if (pack) {
+    snapLines.push(
+      `<div><strong>${esc(L.packLabel)}</strong> — ${esc(pack)}</div>`,
+    );
+  }
+  if (generatedAt) {
+    snapLines.push(
+      `<div><strong>${esc(L.genLabel)}</strong> — ${esc(generatedAt)}</div>`,
+    );
+  }
+  snapLines.push(
+    `<div><strong>${esc(L.langLabel)}</strong> — ${esc(langsDisplay)}</div>`,
+  );
+  if (sha) {
+    snapLines.push(
+      `<div style="margin-top:0.35em;word-break:break-all"><strong>${esc(L.shaLabel)}</strong> — ${esc(sha)}</div>`,
+    );
+  } else if (hasSnapshot) {
+    snapLines.push(
+      `<div class="qc-muted" style="margin-top:0.35em">${esc(L.shaLegacy)}</div>`,
+    );
+  }
+
+  return `
+<section class="qc-audit-wrap" aria-label="${esc(L.sectionTitle)}">
+  <h3 style="font-size:13px;margin:0 0 0.45em;color:#0f172a">${esc(L.sectionTitle)}</h3>
+  <p class="${statusClass}" style="margin:0 0 0.5em;font-size:13px">${esc(statusTitle)}</p>
+  <ul style="margin:0;padding-left:1.2em">${bullets.join("")}</ul>
+  <div class="qc-audit-snap">
+    <div style="font-weight:600;margin-bottom:0.35em;color:#0f172a">${esc(L.snapTitle)}</div>
+    ${snapLines.join("")}
+  </div>
+  <p class="qc-muted" style="margin:0.65em 0 0;font-size:10px;line-height:1.35">${esc(L.disclaimer)}</p>
 </section>`.trim();
 }
 
@@ -765,8 +973,10 @@ export function buildQc2027HtmlFromPayload(
     language: ReportLanguage;
     basePrintCss: string;
     defaultTitle: string;
-    /** Clauses `qc_legal_clauses` (CA + province), injectées dans le PDF */
+    /** Clauses (langue du rapport), injectées dans le PDF */
     legalClauseRows?: QcLegalClauseRow[];
+    /** QC + rapport EN : texte français des mêmes clauses (référence légale). */
+    legalClauseRowsFrForQc?: QcLegalClauseRow[];
   },
 ): string | null {
   const sections = sectionsRaw.filter((x) => x && typeof x === "object") as SectionRow[];
@@ -801,8 +1011,17 @@ export function buildQc2027HtmlFromPayload(
   parts.push(photoCoverageBlock(payload, lang));
   parts.push(criticalObservationsBlock(sections, entries, lang));
   parts.push(generalRecoBlock(payload, lang));
-  parts.push(legalClausesBlock(cover, payload, lang, opts.legalClauseRows));
+  parts.push(
+    legalClausesBlock(
+      cover,
+      payload,
+      lang,
+      opts.legalClauseRows,
+      opts.legalClauseRowsFrForQc,
+    ),
+  );
   parts.push(signatureBlock(cover, profile, lang));
+  parts.push(complianceAuditSectionHtml(cover, payload, lang));
 
   parts.push(
     `<div class="footer" style="margin-top:2em;font-size:12px;color:#64748b">Inspect<strong>Flow</strong> — ${

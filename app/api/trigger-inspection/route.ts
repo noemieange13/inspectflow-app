@@ -86,32 +86,9 @@ export async function POST(req: Request) {
       return Response.json({ success: false, error: ensured.error }, { status: 400 });
     }
 
-<<<<<<< HEAD
-    const tInvoke = Date.now();
-    const res = await invokeReportsPdf(report_id);
-    // #region agent log
-    fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
-      body: JSON.stringify({
-        sessionId: "26655f",
-        location: "trigger-inspection/route.ts:POST",
-        message: "after invokeReportsPdf",
-        data: {
-          status: res.status,
-          invokeMs: Date.now() - tInvoke,
-          totalMs: Date.now() - t0,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "D",
-      }),
-    }).catch(() => {});
-    // #endregion
-=======
     const res = await invokeReportsPdf(report_id, {
       htmlForPdf: ensured.builtHtml,
     });
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     const text = await res.text();
     let parsed: unknown = text;
     try {

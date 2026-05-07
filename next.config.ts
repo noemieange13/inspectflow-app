@@ -9,6 +9,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: projectRoot,
   },
+  allowedDevOrigins: ['127.0.0.1'],
+  // Désactiver le proxy pour éviter les erreurs 503
+  async rewrites() {
+    return [];
+  },
 };
 
 export default nextConfig;

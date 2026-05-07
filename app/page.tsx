@@ -19,22 +19,34 @@ export default function HomePage() {
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link
-            href="/dashboard"
+            href="/dashboard/simple"
             className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
           >
-            Tableau de bord
+            🏠 Tableau de bord simple
           </Link>
           <Link
-            href="/report"
+            href="/smart-inspection"
+            className="inline-flex items-center justify-center rounded-lg bg-green-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700"
+          >
+            🧠 Inspection IA (recommandé)
+          </Link>
+          <Link
+            href="/inspection/new"
+            className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          >
+            ⚡ Inspection rapide
+          </Link>
+          <Link
+            href="/dashboard"
             className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
           >
-            Accéder à un rapport
+            📊 Tableau de bord complet
           </Link>
           <Link
             href="/rapport/couverture"
             className="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-5 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-100"
           >
-            Nouveau — formulaire couverture
+            📝 Formulaire détaillé
           </Link>
         </div>
 

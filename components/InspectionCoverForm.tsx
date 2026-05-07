@@ -1,10 +1,5 @@
 "use client";
 
-<<<<<<< HEAD
-import { useCallback, useEffect, useMemo, useState } from "react";
-
-import {
-=======
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -13,31 +8,17 @@ import {
   COMPLIANCE_JURISDICTIONS,
   COMPLIANCE_LABELS,
   COMPLIANCE_TEMPLATE_VERSION,
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   defaultComplianceNote,
   defaultCoverPayloadV1,
   formatFrDateTime,
   loadInspectorProfile,
-<<<<<<< HEAD
-  saveInspectorProfile,
-=======
   parseCoverV1FromUnknown,
   saveInspectorProfile,
   type ComplianceJurisdiction,
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   type FacadeOrientation,
   type InspectionCoverPayloadV1,
   type InspectorProfileV1,
 } from "@/lib/inspectionCoverPayload";
-<<<<<<< HEAD
-import { fetchWeatherOpenMeteo, geolocationPosition } from "@/lib/weatherOpenMeteo";
-
-const DRAFT_KEY = "inspectflow:cover_form_draft_v1";
-
-const inputClass =
-  "mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
-const labelClass = "block text-sm font-medium text-slate-700";
-=======
 import { effectiveDescriptionNarrative } from "@/lib/coverResumeFormat";
 import { evaluateCoverReadiness } from "@/lib/reportReadiness";
 import type { ReadinessIssue } from "@/lib/reportReadiness";
@@ -75,7 +56,7 @@ export type InspectionCoverFormProps = {
 
 const DRAFT_KEY = "inspectflow:cover_form_draft_v1";
 
-/** Contexte texte envoyé à `/api/inspection-assist` (pas d’images). */
+/** Contexte texte envoyé à `/api/inspection-assist` (pas d'images). */
 function compactCoverContext(d: InspectionCoverPayloadV1): Record<string, string> {
   const out: Record<string, string> = {};
   const t = (s: string) => s.trim();
@@ -143,7 +124,6 @@ function buildTerrainDescriptionFromResult(r: InspectionResult): string {
     .join("")
     .trim();
 }
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -153,10 +133,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-<<<<<<< HEAD
-export default function InspectionCoverForm() {
-  const [data, setData] = useState<InspectionCoverPayloadV1>(defaultCoverPayloadV1);
-=======
 export default function InspectionCoverForm({
   reportId,
   viewerToken,
@@ -169,38 +145,10 @@ export default function InspectionCoverForm({
     date_heure_affichage: "",
     date_heure_iso: null,
   }));
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const [profile, setProfile] = useState<InspectorProfileV1 | null>(null);
   const [iaMessage, setIaMessage] = useState<string | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [errors, setErrors] = useState<{ requerants?: string; adresse?: string }>({});
-<<<<<<< HEAD
-
-  useEffect(() => {
-    const p = loadInspectorProfile();
-    setProfile(p);
-    if (p) {
-      setData((d) => ({
-        ...d,
-        inspecteur_nom: p.nom,
-        inspecteur_numero_certification: p.numero_certification,
-        compagnie: p.compagnie,
-      }));
-    }
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as InspectionCoverPayloadV1;
-        if (parsed?.schema_version === 1) {
-          setData({ ...defaultCoverPayloadV1(), ...parsed });
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-=======
   const [remoteSaving, setRemoteSaving] = useState(false);
   const [dvLoading, setDvLoading] = useState(false);
   const [descriptionExtracting, setDescriptionExtracting] = useState(false);
@@ -208,7 +156,7 @@ export default function InspectionCoverForm({
   const [terrainInspectionResult, setTerrainInspectionResult] = useState<InspectionResult | null>(
     null,
   );
-  /** Incrémenté à chaque sélection sur l’input « photos description » (lanceur 1 bouton). */
+  /** Incrémenté à chaque sélection sur l'input « photos description » (lanceur 1 bouton). */
   const [descriptionFilesTick, setDescriptionFilesTick] = useState(0);
   const [conditionSynthesizing, setConditionSynthesizing] = useState(false);
   const [notesSubmitting, setNotesSubmitting] = useState(false);
@@ -315,7 +263,6 @@ export default function InspectionCoverForm({
     return () => window.clearTimeout(t);
   }, [data, linkedToReport]);
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const update = useCallback(<K extends keyof InspectionCoverPayloadV1>(
     key: K,
     value: InspectionCoverPayloadV1[K],
@@ -362,12 +309,6 @@ export default function InspectionCoverForm({
         pos.coords.longitude,
       );
       update("conditions_meteo", w.line_fr);
-<<<<<<< HEAD
-    } catch (e) {
-      setIaMessage(
-        e instanceof Error
-          ? e.message
-=======
       setWeatherFilledByGps(true);
     } catch (e) {
       const address = data.propriete.adresse.trim();
@@ -378,7 +319,7 @@ export default function InspectionCoverForm({
           update("conditions_meteo", w.line_fr);
           setWeatherFilledByGps(false);
           setIaMessage(
-            `Position bloquée, météo remplie via l’adresse (« ${geo.label} »).`,
+            `Position bloquée, météo remplie via l'adresse (« ${geo.label} »).`,
           );
           return;
         } catch (fallbackErr) {
@@ -392,17 +333,12 @@ export default function InspectionCoverForm({
       setIaMessage(
         e instanceof Error
           ? `${e.message} Ajoutez une adresse de propriété puis relancez « Remplir via position / adresse ».`
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           : "Impossible de récupérer la météo (permission lieu refusée ou réseau).",
       );
     } finally {
       setWeatherLoading(false);
     }
-<<<<<<< HEAD
-  }, [update]);
-=======
   }, [data.propriete.adresse, update]);
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 
   const persistProfile = useCallback(() => {
     const p: InspectorProfileV1 = {
@@ -411,14 +347,10 @@ export default function InspectionCoverForm({
       compagnie: data.compagnie.trim(),
       logo_data_url: profile?.logo_data_url ?? null,
     };
-<<<<<<< HEAD
-    saveInspectorProfile(p);
-    setProfile(p);
-=======
     if (!saveInspectorProfile(p)) {
       setProfileSaveHint(null);
       setIaMessage(
-        "Impossible d’enregistrer le profil dans ce navigateur (stockage plein, mode privé ou données bloquées). Réessayez après avoir réduit la taille du logo ou vidé un peu l’espace local.",
+        "Impossible d'enregistrer le profil dans ce navigateur (stockage plein, mode privé ou données bloquées). Réessayez après avoir réduit la taille du logo ou vidé un peu l'espace local.",
       );
       return;
     }
@@ -427,7 +359,6 @@ export default function InspectionCoverForm({
     setIaMessage(
       "Profil inspecteur enregistré dans ce navigateur — nom, certification, compagnie et logo (si présent). Pensez à « Enregistrer sur le rapport » pour le PDF.",
     );
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   }, [data.inspecteur_nom, data.inspecteur_numero_certification, data.compagnie, profile?.logo_data_url]);
 
   const onLogo = useCallback((file: File | null) => {
@@ -448,22 +379,9 @@ export default function InspectionCoverForm({
         compagnie: data.compagnie.trim() || prev?.compagnie || "",
         logo_data_url: url,
       }));
-<<<<<<< HEAD
-      setIaMessage("Logo enregistré localement (aperçu page couverture — export PDF à brancher).");
-    };
-    reader.readAsDataURL(file);
-  }, [data.inspecteur_nom, data.inspecteur_numero_certification, data.compagnie]);
-
-  const stubIa = useCallback((label: string) => {
-    setIaMessage(
-      `${label} — intégration IA / OCR prévue : brancher une Edge Function (vision) + pipeline photos. Les champs restent éditables manuellement.`,
-    );
-  }, []);
-
-=======
       setIaMessage(
         linkedToReport
-          ? "Logo mis à jour — cliquez « Enregistrer sur le rapport » pour l’inclure au payload et au PDF."
+          ? "Logo mis à jour — cliquez « Enregistrer sur le rapport » pour l'inclure au payload et au PDF."
           : "Logo enregistré dans le profil navigateur. Ouvrez la couverture depuis un rapport (lien avec jeton) et enregistrez-y pour que le logo parte dans le HTML/PDF.",
       );
     };
@@ -485,7 +403,7 @@ export default function InspectionCoverForm({
       return;
     }
 
-    // iOS 13+ (Safari) : sans cette permission, aucun événement `deviceorientation` n’est émis.
+    // iOS 13+ (Safari) : sans cette permission, aucun événement `deviceorientation` n'est émis.
     const OrientationCtor = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
       requestPermission?: () => Promise<"granted" | "denied" | "default">;
     };
@@ -494,13 +412,13 @@ export default function InspectionCoverForm({
         const perm = await OrientationCtor.requestPermission();
         if (perm !== "granted") {
           setIaMessage(
-            "Accès à la boussole refusé — indiquez l’orientation à la main (Nord / Sud / Est / Ouest).",
+            "Accès à la boussole refusé — indiquez l'orientation à la main (Nord / Sud / Est / Ouest).",
           );
           return;
         }
       } catch {
         setIaMessage(
-          "Impossible d’activer la boussole — choisissez l’orientation manuellement.",
+          "Impossible d'activer la boussole — choisissez l'orientation manuellement.",
         );
         return;
       }
@@ -608,7 +526,7 @@ export default function InspectionCoverForm({
       );
     } catch (err) {
       setIaMessage(
-        err instanceof Error ? err.message : "Échec de l’extraction DV.",
+        err instanceof Error ? err.message : "Échec de l'extraction DV.",
       );
     } finally {
       setDvLoading(false);
@@ -619,7 +537,7 @@ export default function InspectionCoverForm({
     const input = descriptionFileInputRef.current;
     const list = input?.files;
     if (!list?.length) {
-      setIaMessage("Sélectionne d’abord une ou plusieurs photos du bâtiment.");
+      setIaMessage("Sélectionne d'abord une ou plusieurs photos du bâtiment.");
       return;
     }
     setDescriptionExtracting(true);
@@ -641,7 +559,7 @@ export default function InspectionCoverForm({
       const parsed = coerceInspectionResult(await res.json());
       if (!parsed) {
         setTerrainInspectionResult(null);
-        setIaMessage("Réponse d’analyse invalide. Réessaie.");
+        setIaMessage("Réponse d'analyse invalide. Réessaie.");
         return;
       }
 
@@ -678,7 +596,7 @@ export default function InspectionCoverForm({
     } catch (err) {
       setTerrainInspectionResult(null);
       setIaMessage(
-        err instanceof Error ? err.message : "Échec de l’analyse des photos.",
+        err instanceof Error ? err.message : "Échec de l'analyse des photos.",
       );
     } finally {
       setDescriptionExtracting(false);
@@ -806,14 +724,13 @@ export default function InspectionCoverForm({
       if (j.ok && j.message) {
         setIaMessage(j.message);
       } else {
-        setIaMessage(j.message ?? "L’assistant n’a pas renvoyé de texte utilisable.");
+        setIaMessage(j.message ?? "L'assistant n'a pas renvoyé de texte utilisable.");
       }
     } catch {
       setIaMessage("Erreur réseau. Vérifie la connexion et réessaie.");
     }
   }, [data]);
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const validate = useCallback(() => {
     const next: typeof errors = {};
     if (!data.requerants.trim()) next.requerants = "Champ obligatoire.";
@@ -836,11 +753,6 @@ export default function InspectionCoverForm({
 
   const saveDraft = useCallback(() => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
-<<<<<<< HEAD
-    setIaMessage("Brouillon enregistré dans le navigateur.");
-  }, [data]);
-
-=======
     setDraftSaveHint(
       `Brouillon enregistré manuellement — ${new Date().toLocaleTimeString("fr-CA")}`,
     );
@@ -850,7 +762,7 @@ export default function InspectionCoverForm({
   const saveToReport = useCallback(async () => {
     if (!reportId || !viewerToken) return;
     if (!validate()) {
-      setIaMessage("Corrigez les champs obligatoires avant d’enregistrer sur le rapport.");
+      setIaMessage("Corrigez les champs obligatoires avant d'enregistrer sur le rapport.");
       return;
     }
     setRemoteSaving(true);
@@ -896,25 +808,11 @@ export default function InspectionCoverForm({
     validate,
   ]);
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
   const complianceNote = useMemo(
     () => defaultComplianceNote(data.conformite_juridiction),
     [data.conformite_juridiction],
   );
 
-<<<<<<< HEAD
-  return (
-    <div className="space-y-10">
-      <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
-        <p className="font-medium">Prototype formulaire couverture</p>
-        <p className="mt-1 text-amber-900/90">
-          Tous les champs visibles sur tes captures Word sont présents ci-dessous. Les fonctions « IA » sont
-          câblées en bouton explicite : la prochaine étape est de les relier à des Edge Functions (vision / OCR /
-          audio) sans retirer la saisie manuelle.
-        </p>
-      </div>
-
-=======
   const onJurisdictionSelect = useCallback((v: ComplianceJurisdiction) => {
     if (!COMPLIANCE_JURISDICTIONS.includes(v)) return;
     const defs = defaultComplianceNote(v);
@@ -973,7 +871,7 @@ export default function InspectionCoverForm({
         }));
         setIaMessage("Description reformulée — relisez le bloc.");
       } else {
-        setIaMessage(j.message ?? "L’assistant n’a pas pu reformuler.");
+        setIaMessage(j.message ?? "L'assistant n'a pas pu reformuler.");
       }
     } catch {
       setIaMessage("Erreur réseau.");
@@ -1005,7 +903,7 @@ export default function InspectionCoverForm({
         }));
         setIaMessage("Condition générale reformulée — relisez.");
       } else {
-        setIaMessage(j.message ?? "L’assistant n’a pas pu reformuler.");
+        setIaMessage(j.message ?? "L'assistant n'a pas pu reformuler.");
       }
     } catch {
       setIaMessage("Erreur réseau.");
@@ -1143,7 +1041,6 @@ export default function InspectionCoverForm({
         </div>
       ) : null}
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
       {iaMessage ? (
         <div
           className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800"
@@ -1153,9 +1050,6 @@ export default function InspectionCoverForm({
         </div>
       ) : null}
 
-<<<<<<< HEAD
-      <section className="space-y-4">
-=======
       {terrainInspectionResult ? (
         <div
           className={`rounded-xl border px-4 py-3 text-sm shadow-sm ${
@@ -1303,7 +1197,6 @@ export default function InspectionCoverForm({
       />
 
       <section className="space-y-4" id="resume-entete-inspection">
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <SectionTitle>Entête — requérant & inspection</SectionTitle>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2">
@@ -1311,11 +1204,7 @@ export default function InspectionCoverForm({
               REQUÉRANT(S) <span className="text-red-600">*</span>
             </label>
             <input
-<<<<<<< HEAD
-              className={inputClass}
-=======
               className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.requerants}
               onChange={(e) => update("requerants", e.target.value)}
               placeholder="ex. 9354-3650 Québec Inc."
@@ -1329,18 +1218,6 @@ export default function InspectionCoverForm({
             <input
               className={inputClass}
               value={data.conditions_meteo}
-<<<<<<< HEAD
-              onChange={(e) => update("conditions_meteo", e.target.value)}
-              placeholder="ex. 19°C, soleil"
-            />
-            <button
-              type="button"
-              className="mt-2 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-              onClick={() => void fillWeather()}
-              disabled={weatherLoading}
-            >
-              {weatherLoading ? "Météo…" : "Remplir via position + Open-Meteo"}
-=======
               onChange={(e) => {
                 update("conditions_meteo", e.target.value);
                 setWeatherFilledByGps(false);
@@ -1355,7 +1232,6 @@ export default function InspectionCoverForm({
               disabled={weatherLoading}
             >
               {weatherLoading ? "Météo…" : "Remplir via position / adresse + Open-Meteo"}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
             </button>
           </div>
           <div>
@@ -1371,11 +1247,7 @@ export default function InspectionCoverForm({
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
-<<<<<<< HEAD
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
-=======
                 className={actionSecondaryClass}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
                 onClick={fillNow}
               >
                 Maintenant (navigateur)
@@ -1422,11 +1294,7 @@ export default function InspectionCoverForm({
             />
           </div>
           <div className="md:col-span-2">
-<<<<<<< HEAD
-            <label className={labelClass}>Logo (aperçu local)</label>
-=======
             <label className={labelClass}>Logo (profil inspecteur + rapport)</label>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
             <input
               type="file"
               accept="image/*"
@@ -1443,21 +1311,14 @@ export default function InspectionCoverForm({
             ) : null}
             <button
               type="button"
-<<<<<<< HEAD
-              className="mt-2 rounded-md border border-slate-300 px-3 py-1.5 text-xs"
-=======
               className={`mt-2 ${actionSecondaryClass}`}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               onClick={persistProfile}
             >
               Enregistrer le profil inspecteur (navigateur)
             </button>
-<<<<<<< HEAD
-=======
             {profileSaveHint ? (
               <p className="mt-1 text-xs font-medium text-emerald-700">{profileSaveHint}</p>
             ) : null}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           </div>
           <div className="md:col-span-2">
             <label className={labelClass}>INTERVENANTS SUR PLACE</label>
@@ -1471,32 +1332,11 @@ export default function InspectionCoverForm({
         </div>
       </section>
 
-<<<<<<< HEAD
-      <section className="space-y-4">
-=======
       <section className="space-y-4" id="terrain-propriete-fields">
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <SectionTitle>
           Propriété inspectée <span className="text-red-600">*</span>
         </SectionTitle>
         <p className="text-sm text-slate-600">
-<<<<<<< HEAD
-          Tu peux remplir manuellement ou importer une photo de déclaration du vendeur — l&apos;OCR sera branché
-          côté serveur.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-dashed border-slate-300 px-3 py-2 text-sm">
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={() => stubIa("Analyse photo DV")}
-            />
-            <span>Importer photo DV (OCR — à brancher)</span>
-          </label>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-=======
           Saisie libre possible. Le scan DV (photo ou PDF) remplit les champs ci-dessous ; tout reste éditable.
         </p>
         {data.ia_hints?.dv_photo_imported ? (
@@ -1520,17 +1360,12 @@ export default function InspectionCoverForm({
               : ""
           }`}
         >
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           <div className="md:col-span-2">
             <label className={labelClass}>
               ADRESSE <span className="text-red-600">*</span>
             </label>
             <input
-<<<<<<< HEAD
-              className={inputClass}
-=======
               className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.adresse}
               onChange={(e) => updatePropriete("adresse", e.target.value)}
               placeholder="ex. 182 Lamarche, Gatineau, Québec"
@@ -1542,11 +1377,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>TYPE DE PROPRIÉTÉ</label>
             <input
-<<<<<<< HEAD
-              className={inputClass}
-=======
               className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.type_propriete}
               onChange={(e) => updatePropriete("type_propriete", e.target.value)}
               placeholder="ex. 8 plex"
@@ -1555,11 +1386,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>ANNÉE DE CONSTRUCTION</label>
             <input
-<<<<<<< HEAD
-              className={inputClass}
-=======
               className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.annee_construction}
               onChange={(e) => updatePropriete("annee_construction", e.target.value)}
               placeholder="ex. 1986"
@@ -1568,11 +1395,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>Nom du client (optionnel)</label>
             <input
-<<<<<<< HEAD
-              className={inputClass}
-=======
               className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.client_nom}
               onChange={(e) => updatePropriete("client_nom", e.target.value)}
             />
@@ -1580,11 +1403,7 @@ export default function InspectionCoverForm({
           <div>
             <label className={labelClass}>Téléphone (optionnel)</label>
             <input
-<<<<<<< HEAD
-              className={inputClass}
-=======
               className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               value={data.propriete.client_telephone}
               onChange={(e) => updatePropriete("client_telephone", e.target.value)}
               inputMode="tel"
@@ -1593,11 +1412,7 @@ export default function InspectionCoverForm({
           <div className="md:col-span-2">
             <label className={labelClass}>Courriel (optionnel)</label>
             <input
-<<<<<<< HEAD
-              className={inputClass}
-=======
               className={terrainAutoFieldClass(!!data.ia_hints?.dv_photo_imported)}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
               type="email"
               value={data.propriete.client_courriel}
               onChange={(e) => updatePropriete("client_courriel", e.target.value)}
@@ -1608,35 +1423,6 @@ export default function InspectionCoverForm({
 
       <section className="space-y-4">
         <SectionTitle>Description sommaire du bâtiment</SectionTitle>
-<<<<<<< HEAD
-        <div className="flex flex-wrap gap-3 text-sm">
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="radio"
-              checked={data.description_sommaire.mode === "manuel"}
-              onChange={() => updateDescription("mode", "manuel")}
-            />
-            Saisie libre
-          </label>
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="radio"
-              checked={data.description_sommaire.mode === "photos_ia"}
-              onChange={() => updateDescription("mode", "photos_ia")}
-            />
-            Photos → IA (à brancher)
-          </label>
-        </div>
-        {data.description_sommaire.mode === "photos_ia" ? (
-          <div>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              className="text-sm"
-              onChange={() => stubIa("Analyse photos description sommaire")}
-            />
-=======
         <TerrainDescriptionModePills
           modeManuel={data.description_sommaire.mode === "manuel"}
           onManuel={() => updateDescription("mode", "manuel")}
@@ -1655,7 +1441,7 @@ export default function InspectionCoverForm({
                 Choisir des photos…
               </label>
               <p className="mt-1 text-xs text-slate-500">
-                Façades, toiture, fondations visibles, etc. Puis lance l’analyse — tu peux corriger chaque champ
+                Façades, toiture, fondations visibles, etc. Puis lance l'analyse — tu peux corriger chaque champ
                 après coup.
               </p>
             </div>
@@ -1667,7 +1453,6 @@ export default function InspectionCoverForm({
             >
               {descriptionExtracting ? "Analyse…" : "Analyser les photos sélectionnées"}
             </button>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           </div>
         ) : null}
         <div className="grid gap-4 md:grid-cols-2">
@@ -1704,15 +1489,6 @@ export default function InspectionCoverForm({
           onChange={(e) => update("condition_generale", e.target.value)}
           placeholder="Texte type : le bâtiment est généralement en bonne condition…"
         />
-<<<<<<< HEAD
-        <button
-          type="button"
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium"
-          onClick={() => stubIa("Synthèse condition générale depuis lot de photos")}
-        >
-          Générer depuis les photos (IA — à brancher)
-        </button>
-=======
         <div className="flex flex-wrap gap-2">
           {linkedToReport ? (
             <button
@@ -1736,22 +1512,19 @@ export default function InspectionCoverForm({
         </div>
         {linkedToReport ? (
           <p className="text-xs text-slate-500">
-            La synthèse utilise les photos déjà liées à l’inspection de ce rapport (analyses existantes ou
+            La synthèse utilise les photos déjà liées à l'inspection de ce rapport (analyses existantes ou
             lecture des fichiers). Ajoute des photos depuis la page rapport si le résultat est vide.
           </p>
         ) : (
           <p className="text-xs text-slate-500">
             Lie ce formulaire à un rapport pour générer la condition générale à partir du lot de photos
-            d’inspection.
+            d'inspection.
           </p>
         )}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
       </section>
 
       <section className="space-y-4">
         <SectionTitle>Orientation de la façade</SectionTitle>
-<<<<<<< HEAD
-=======
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -1762,7 +1535,6 @@ export default function InspectionCoverForm({
             {compassSampling ? "Cap…" : "Estimer avec la boussole (appareil)"}
           </button>
         </div>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <div className="flex flex-wrap gap-4 text-sm">
           {(["nord", "sud", "est", "ouest"] as const).map((dir) => (
             <label key={dir} className="inline-flex items-center gap-2 capitalize">
@@ -1788,23 +1560,13 @@ export default function InspectionCoverForm({
         <button
           type="button"
           className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium"
-<<<<<<< HEAD
-          onClick={() => stubIa("Orientation façade (vision / plan)")}
-        >
-          Estimer automatiquement (IA — à brancher)
-        </button>
-      </section>
-
-      <section className="space-y-4">
-=======
           onClick={() => void runCoverAssistant("Orientation façade (vision / plan)")}
         >
-          Conseils pour l’orientation (pas de vision auto)
+          Conseils pour l'orientation (pas de vision auto)
         </button>
       </section>
 
       <section className="space-y-4" id="resume-conformite">
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
         <SectionTitle>Conformité & juridiction</SectionTitle>
         <div className="grid gap-4 md:grid-cols-2">
           <div>
@@ -1813,15 +1575,6 @@ export default function InspectionCoverForm({
               className={inputClass}
               value={data.conformite_juridiction}
               onChange={(e) => {
-<<<<<<< HEAD
-                const v = e.target.value === "ca_qc" ? "ca_qc" : "ca_general";
-                update("conformite_juridiction", v);
-                update("notes_conformite", defaultComplianceNote(v));
-              }}
-            >
-              <option value="ca_qc">Québec (incl. rappel norme de pratique)</option>
-              <option value="ca_general">Canada (général)</option>
-=======
                 const v = e.target.value as ComplianceJurisdiction;
                 if (!COMPLIANCE_JURISDICTIONS.includes(v)) return;
                 const defs = defaultComplianceNote(v);
@@ -1843,40 +1596,12 @@ export default function InspectionCoverForm({
                   {COMPLIANCE_LABELS[code]}
                 </option>
               ))}
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
             </select>
           </div>
         </div>
         <textarea
           className={`${inputClass} min-h-24 font-sans`}
           value={data.notes_conformite}
-<<<<<<< HEAD
-          onChange={(e) => update("notes_conformite", e.target.value)}
-        />
-        <p className="text-xs text-slate-500">{complianceNote}</p>
-      </section>
-
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-        <SectionTitle>Notes terrain (pistes produit)</SectionTitle>
-        <ul className="list-inside list-disc space-y-1 text-sm text-slate-700">
-          <li>Manuscrit : photo → OCR (Edge `process-notes` déjà présent dans le dépôt).</li>
-          <li>Vocal : Web Speech API ou upload audio → transcription.</li>
-          <li>Photos : import en lot + sélection IA des meilleures par constat.</li>
-        </ul>
-      </section>
-
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
-          onClick={exportJson}
-        >
-          Exporter JSON (cover_v1)
-        </button>
-        <button
-          type="button"
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800"
-=======
           onChange={(e) => {
             const t = e.target.value;
             setData((prev) => {
@@ -1955,7 +1680,7 @@ export default function InspectionCoverForm({
         ) : (
           <p className="text-sm text-slate-600">
             Ouvre ce formulaire depuis un rapport (lien avec jeton) pour envoyer des notes terrain vers le service
-            d’analyse — elles seront stockées dans le rapport avec classification suggérée.
+            d'analyse — elles seront stockées dans le rapport avec classification suggérée.
           </p>
         )}
       </section>
@@ -1998,14 +1723,11 @@ export default function InspectionCoverForm({
         <button
           type="button"
           className="inline-flex min-h-12 items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800"
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
           onClick={saveDraft}
         >
           Sauver brouillon local
         </button>
       </div>
-<<<<<<< HEAD
-=======
       {!linkedToReport && draftSaveHint ? (
         <p className="text-xs text-slate-500" role="status">
           {draftSaveHint}
@@ -2017,7 +1739,6 @@ export default function InspectionCoverForm({
         obligations professionnelles avant remise au client. Traçabilité des mises à jour : enregistrez la
         couverture sur le rapport après modification.
       </p>
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
     </div>
   );
 }

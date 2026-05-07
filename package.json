@@ -16,24 +16,28 @@
     "supabase:qc-events:migrate": "node scripts/run-qc-events-migrations.mjs",
     "find:reports-writer": "node scripts/find-reports-writer.mjs",
     "smoke:e2e": "node scripts/e2e-smoke.mjs",
-    "test:all": "tsx test-all.ts"
+    "test:all": "tsx test-all.ts",
+    "test:compliance": "tsx --test test/compliance-integrity.test.ts",
+    "ci:compliance": "node scripts/run-compliance-ci.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^1.8.0",
     "next": "16.2.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.10.0"
   },
   "devDependencies": {
-    "dotenv": "^16.4.7",
-    "puppeteer": "^24.6.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^16.4.7",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "puppeteer": "^24.6.0",
     "tailwindcss": "^4",
     "tsx": "^4.19.3",
     "typescript": "^5"

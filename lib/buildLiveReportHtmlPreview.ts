@@ -3,11 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildHtmlFromReportPayload,
 } from "@/lib/buildInspectionReportHtml";
-import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
-import {
-  fetchLegalClausesForCoverJurisdiction,
-  filterLegalClausesByReportContext,
-} from "@/lib/qcLegalClauses";
+import { loadLegalClausesForReportPayload } from "@/lib/loadLegalClausesForReportPayload";
 
 /**
  * HTML « comme PDF » pour aperçu live (sans persistance ni garde readiness).
@@ -17,27 +13,23 @@ export async function buildLiveReportHtmlPreview(
   payload: Record<string, unknown>,
 ): Promise<string | null> {
   let legalClauseRows: Awaited<
-    ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
-  > | undefined;
-  const coverForClauses = parseCoverV1FromUnknown(payload.cover_v1);
-  if (coverForClauses) {
-    try {
-      legalClauseRows = await fetchLegalClausesForCoverJurisdiction(
-        supabase,
-        coverForClauses.conformite_juridiction,
-      );
-    } catch {
-      legalClauseRows = undefined;
-    }
-  }
-  if (legalClauseRows && legalClauseRows.length > 0) {
-    legalClauseRows = filterLegalClausesByReportContext(
-      legalClauseRows,
-      payload,
-    );
+    ReturnType<typeof loadLegalClausesForReportPayload>
+  >["legalClauseRows"];
+  let legalClauseRowsFrForQc: Awaited<
+    ReturnType<typeof loadLegalClausesForReportPayload>
+  >["legalClauseRowsFrForQc"];
+
+  try {
+    const bundle = await loadLegalClausesForReportPayload(supabase, payload);
+    legalClauseRows = bundle.legalClauseRows;
+    legalClauseRowsFrForQc = bundle.legalClauseRowsFrForQc;
+  } catch {
+    legalClauseRows = undefined;
+    legalClauseRowsFrForQc = undefined;
   }
 
   return buildHtmlFromReportPayload(payload, {
     legalClauseRows,
+    legalClauseRowsFrForQc,
   });
 }

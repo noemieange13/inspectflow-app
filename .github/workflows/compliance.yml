@@ -1,0 +1,21 @@
+name: Compliance
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    env:
+      LEGAL_CLAUSES_STRICT_EN: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run test:compliance

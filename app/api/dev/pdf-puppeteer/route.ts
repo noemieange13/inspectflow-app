@@ -3,14 +3,10 @@
  * Ne remplace pas Edge `reports-pdf` (production).
  */
 import { buildHtmlFromReportPayload } from "@/lib/buildInspectionReportHtml";
-import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
 import { evaluatePdfExportReadiness } from "@/lib/pdfExportReadiness";
 import { buildProInspectionHtmlFromPayload } from "@/lib/pdf/proInspectionTemplateHtml";
 import { generatePdfWithPuppeteer } from "@/lib/pdf/generatePdfPuppeteer";
-import {
-  fetchLegalClausesForCoverJurisdiction,
-  filterLegalClausesByReportContext,
-} from "@/lib/qcLegalClauses";
+import { loadLegalClausesForReportPayload } from "@/lib/loadLegalClausesForReportPayload";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export async function POST(req: Request) {
@@ -68,28 +64,23 @@ export async function POST(req: Request) {
     }
 
     let legalClauseRows: Awaited<
-      ReturnType<typeof fetchLegalClausesForCoverJurisdiction>
-    > | undefined;
-    const cover = parseCoverV1FromUnknown(payload.cover_v1);
-    if (cover) {
-      try {
-        legalClauseRows = await fetchLegalClausesForCoverJurisdiction(
-          supabase,
-          cover.conformite_juridiction,
-        );
-      } catch {
-        legalClauseRows = undefined;
-      }
-    }
-    if (legalClauseRows && legalClauseRows.length > 0) {
-      legalClauseRows = filterLegalClausesByReportContext(
-        legalClauseRows,
-        payload,
-      );
+      ReturnType<typeof loadLegalClausesForReportPayload>
+    >["legalClauseRows"];
+    let legalClauseRowsFrForQc: Awaited<
+      ReturnType<typeof loadLegalClausesForReportPayload>
+    >["legalClauseRowsFrForQc"];
+    try {
+      const bundle = await loadLegalClausesForReportPayload(supabase, payload);
+      legalClauseRows = bundle.legalClauseRows;
+      legalClauseRowsFrForQc = bundle.legalClauseRowsFrForQc;
+    } catch {
+      legalClauseRows = undefined;
+      legalClauseRowsFrForQc = undefined;
     }
     if (template === "canonical") {
       const built = buildHtmlFromReportPayload(payload, {
         legalClauseRows,
+        legalClauseRowsFrForQc,
       });
       if (!built) {
         return Response.json(
