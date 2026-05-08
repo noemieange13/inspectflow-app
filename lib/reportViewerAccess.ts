@@ -1,4 +1,4 @@
-import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { validateReportAccessToken } from "@/lib/reportAccessToken";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
@@ -24,14 +24,13 @@ export async function assertReportViewerAccess(
   }
 
   const rec = report as Record<string, unknown>;
-  const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
+  const tokenGate = validateReportAccessToken({
+    accessTokenRaw,
+    dbTokenRaw: rec.access_token,
+    tokenExpiresAt: rec.token_expires_at,
+  });
 
-  if (!dbToken) {
-    return { ok: true };
-  }
-
-  const raw = typeof accessTokenRaw === "string" ? accessTokenRaw : "";
-  if (!reportAccessTokensMatch(raw, dbToken)) {
+  if (!tokenGate.ok && tokenGate.reason === "invalid") {
     return {
       ok: false,
       status: 403,
@@ -39,11 +38,7 @@ export async function assertReportViewerAccess(
     };
   }
 
-  if (
-    rec.token_expires_at != null &&
-    String(rec.token_expires_at) !== "" &&
-    new Date(String(rec.token_expires_at)) < new Date()
-  ) {
+  if (!tokenGate.ok && tokenGate.reason === "expired") {
     return {
       ok: false,
       status: 403,

@@ -17,7 +17,7 @@
     "find:reports-writer": "node scripts/find-reports-writer.mjs",
     "smoke:e2e": "node scripts/e2e-smoke.mjs",
     "test:all": "tsx test-all.ts",
-    "test:compliance": "tsx --test test/compliance-integrity.test.ts",
+    "test:compliance": "tsx --test test/*.test.ts",
     "ci:compliance": "node scripts/run-compliance-ci.mjs"
   },
   "dependencies": {
