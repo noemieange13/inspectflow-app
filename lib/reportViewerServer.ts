@@ -22,6 +22,25 @@ function delay<T>(ms: number, value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
 
+export function reportViewerTokenAccepted(
+  rec: Record<string, unknown>,
+  viewerToken: string | undefined,
+): boolean {
+  const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
+  if (!dbToken) return true;
+
+  const rawViewerToken = viewerToken?.trim() ?? "";
+  if (!rawViewerToken || !reportAccessTokensMatch(rawViewerToken, dbToken)) {
+    return false;
+  }
+
+  return !(
+    rec.token_expires_at != null &&
+    String(rec.token_expires_at) !== "" &&
+    new Date(String(rec.token_expires_at)) < new Date()
+  );
+}
+
 /**
  * Charge une ligne `reports` avec les mêmes règles que la page viewer `/report/[id]?token=`.
  */
@@ -81,36 +100,16 @@ export async function loadReportForViewer(
     }
 
     const rec = report as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
+    if (!reportViewerTokenAccepted(rec, viewerToken)) {
+      return {
+        id: reportId,
+        status: null,
+        title: null,
+        payload: null,
+        hasPdf: false,
+        pdfSignedUrl: null,
+        accessDenied: true,
+      };
     }
 
     const payload =

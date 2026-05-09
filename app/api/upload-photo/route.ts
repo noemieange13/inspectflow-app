@@ -1,4 +1,5 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
+    const accessTokenRaw = String(formData.get("access_token") ?? "");
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
       langRaw === "en" || langRaw === "fr" ? langRaw : "fr";
@@ -29,6 +31,7 @@ export async function POST(req: Request) {
     if (!reportId?.trim()) {
       return Response.json({ error: "Missing report_id" }, { status: 400 });
     }
+    const reportIdTrimmed = reportId.trim();
     if (file.size > MAX_SIZE_BYTES) {
       return Response.json(
         { error: `File too large (max ${MAX_SIZE_BYTES / 1024 / 1024} MB)` },
@@ -40,8 +43,8 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
-      .eq("id", reportId.trim())
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
+      .eq("id", reportIdTrimmed)
       .maybeSingle();
 
     if (reportErr) {
@@ -51,9 +54,34 @@ export async function POST(req: Request) {
       return Response.json({ error: "Report not found" }, { status: 404 });
     }
 
+    const gate = await assertReportAccessWithOptionalSession(
+      req,
+      reportIdTrimmed,
+      accessTokenRaw,
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { error: gate.error, code: gate.code },
+        { status: gate.status },
+      );
+    }
+
+    const requestedInspectionId = inspectionId?.trim() || "";
+    const reportInspectionId =
+      typeof report.inspection_id === "string" ? report.inspection_id.trim() : "";
+    if (
+      requestedInspectionId &&
+      reportInspectionId &&
+      requestedInspectionId !== reportInspectionId
+    ) {
+      return Response.json(
+        { error: "inspection_id does not match report", code: "inspection_mismatch" },
+        { status: 400 },
+      );
+    }
     const effectiveInspectionId =
-      inspectionId?.trim() ||
-      (typeof report.inspection_id === "string" ? report.inspection_id : null);
+      reportInspectionId || requestedInspectionId || null;
     const ownerId =
       typeof report.user_id === "string" ? report.user_id : "anonymous";
 
@@ -151,7 +179,7 @@ export async function POST(req: Request) {
       if (photoId && process.env.OPENAI_API_KEY?.trim()) {
         const mime = file.type?.trim() || "image/jpeg";
         const b64 = buffer.toString("base64");
-        const rid = reportId.trim();
+        const rid = reportIdTrimmed;
         const pid = photoId;
         void (async () => {
           try {
