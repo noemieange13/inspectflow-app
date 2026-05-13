@@ -22,6 +22,45 @@ function delay<T>(ms: number, value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
 
+function accessDenied(reportId: string): ReportServerData {
+  return {
+    id: reportId,
+    status: null,
+    title: null,
+    payload: null,
+    hasPdf: false,
+    pdfSignedUrl: null,
+    accessDenied: true,
+  };
+}
+
+export function validateReportViewerToken(
+  reportId: string,
+  row: Record<string, unknown>,
+  viewerToken: string | undefined,
+): ReportServerData | null {
+  const dbToken = typeof row.access_token === "string"
+    ? row.access_token.trim()
+    : "";
+  const providedToken = typeof viewerToken === "string"
+    ? viewerToken.trim()
+    : "";
+
+  if (!dbToken || !providedToken || !reportAccessTokensMatch(providedToken, dbToken)) {
+    return accessDenied(reportId);
+  }
+
+  if (
+    row.token_expires_at != null &&
+    String(row.token_expires_at) !== "" &&
+    new Date(String(row.token_expires_at)) < new Date()
+  ) {
+    return accessDenied(reportId);
+  }
+
+  return null;
+}
+
 /**
  * Charge une ligne `reports` avec les mêmes règles que la page viewer `/report/[id]?token=`.
  */
@@ -81,37 +120,8 @@ export async function loadReportForViewer(
     }
 
     const rec = report as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-    }
+    const accessFailure = validateReportViewerToken(reportId, rec, viewerToken);
+    if (accessFailure) return accessFailure;
 
     const payload =
       rec.payload && typeof rec.payload === "object"

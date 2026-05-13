@@ -12,10 +12,12 @@ export default function QuickInspectionForm() {
     language: "fr",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setSubmitError(null);
     
     try {
       // Créer une nouvelle inspection avec les données de base
@@ -28,9 +30,18 @@ export default function QuickInspectionForm() {
       if (response.ok) {
         const { reportId } = await response.json();
         router.push(`/report/${reportId}`);
+        return;
       }
+
+      const body = await response.json().catch(() => null) as { error?: unknown } | null;
+      setSubmitError(
+        typeof body?.error === "string"
+          ? body.error
+          : "Impossible de créer l'inspection avec ce formulaire.",
+      );
     } catch (error) {
       console.error("Erreur création inspection:", error);
+      setSubmitError("Erreur réseau pendant la création de l'inspection.");
     } finally {
       setIsSubmitting(false);
     }
@@ -44,6 +55,12 @@ export default function QuickInspectionForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {submitError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {submitError}
+          </div>
+        ) : null}
+
         {/* Client */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
