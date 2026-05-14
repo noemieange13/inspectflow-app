@@ -1,26 +1,13 @@
 import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
+import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
+import { isTriggerSecretAuthorized } from "@/lib/triggerSecretAuth";
 
 /** Génération PDF + appel Edge : peut dépasser le défaut Vercel (60s). */
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin = (origin && host && new URL(origin).host === host)
-      || (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
-      );
-    }
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -47,6 +34,14 @@ export async function POST(req: Request) {
     );
   }
 
+  const accessTokenRaw =
+    typeof body === "object" &&
+    body !== null &&
+    "access_token" in body &&
+    typeof (body as { access_token: unknown }).access_token === "string"
+      ? (body as { access_token: string }).access_token
+      : "";
+
   const t0 = Date.now();
   // #region agent log
   fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
@@ -63,6 +58,17 @@ export async function POST(req: Request) {
   }).catch(() => {});
   // #endregion
   try {
+    if (!isTriggerSecretAuthorized(req)) {
+      const supabase = await createServiceRoleClient();
+      const gate = await assertReportViewerAccess(supabase, report_id, accessTokenRaw);
+      if (!gate.ok) {
+        return Response.json(
+          { success: false, ...gate.body },
+          { status: gate.status },
+        );
+      }
+    }
+
     const ensured = await ensureReportPayloadHtml(report_id);
     // #region agent log
     fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
