@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireInternalApiSecret } from "@/lib/internalApiSecret";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export async function POST(request: NextRequest) {
+  const gate = requireInternalApiSecret(request);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: gate.error, code: gate.code },
+      { status: gate.status },
+    );
+  }
+
   try {
     const { clientName, address, inspectionType, language } = await request.json();
 

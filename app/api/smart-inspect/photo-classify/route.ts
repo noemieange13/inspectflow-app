@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { requireInternalApiSecret } from "@/lib/internalApiSecret";
 
 // Classification vision + JSON volumineux : laisser de la marge (Vercel/self-host selon plan).
 export const maxDuration = 120;
@@ -47,6 +48,14 @@ function tryParseJsonObject(raw: string): Record<string, unknown> | null {
  * Called once globally with the top-10 best photos instead of per-section calls.
  */
 export async function POST(req: NextRequest) {
+  const gate = requireInternalApiSecret(req);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { ok: false, error: gate.error, code: gate.code, results: [] },
+      { status: gate.status },
+    );
+  }
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json(
