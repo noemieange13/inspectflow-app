@@ -12,25 +12,36 @@ export default function QuickInspectionForm() {
     language: "fr",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setErrorMessage(null);
     
     try {
-      // Créer une nouvelle inspection avec les données de base
       const response = await fetch("/api/create-inspection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
+      const result = await response.json().catch(() => null);
       
       if (response.ok) {
-        const { reportId } = await response.json();
-        router.push(`/report/${reportId}`);
+        const reportUrl =
+          typeof result?.reportUrl === "string" ? result.reportUrl : "";
+        const reportId = typeof result?.reportId === "string" ? result.reportId : "";
+        router.push(reportUrl || `/report/${reportId}`);
+      } else {
+        const message =
+          typeof result?.error === "string"
+            ? result.error
+            : "Impossible de créer l'inspection.";
+        setErrorMessage(message);
       }
     } catch (error) {
       console.error("Erreur création inspection:", error);
+      setErrorMessage("Erreur réseau lors de la création de l'inspection.");
     } finally {
       setIsSubmitting(false);
     }
@@ -42,6 +53,12 @@ export default function QuickInspectionForm() {
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Nouvelle inspection</h1>
         <p className="text-gray-600">Commencez une inspection en quelques secondes</p>
       </div>
+
+      {errorMessage ? (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {errorMessage}
+        </div>
+      ) : null}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Client */}

@@ -3,8 +3,10 @@
  * `npm run test:compliance`
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { describe, it } from "node:test";
 
+import { buildCreateReportPayloadFromInspectionRequest } from "@/lib/createInspectionRequest";
 import { defaultCoverPayloadV1 } from "@/lib/inspectionCoverPayload";
 import {
   buildClauseSnapshots,
@@ -244,5 +246,77 @@ describe("QC 2027 EN + clauses FR parallèles (HTML)", () => {
       html!,
       /Clauses de référence — texte français \(Québec\)/,
     );
+  });
+});
+
+describe("create-inspection route guardrails", () => {
+  const userId = "11111111-1111-4111-8111-111111111111";
+  const inspectionId = "22222222-2222-4222-8222-222222222222";
+
+  it("rejette les anciennes créations sans user_id ni inspection/job", () => {
+    const result = buildCreateReportPayloadFromInspectionRequest({
+      clientName: "Jean Dupont",
+      address: "123 rue Test",
+      inspectionType: "residential",
+      language: "fr",
+    });
+
+    if (result.ok) assert.fail("expected validation failure");
+    assert.equal(result.status, 400);
+    assert.match(result.error, /user_id/);
+  });
+
+  it("exige inspection_id ou job_id pour éviter les rapports orphelins", () => {
+    const result = buildCreateReportPayloadFromInspectionRequest({
+      user_id: userId,
+      clientName: "Jean Dupont",
+    });
+
+    if (result.ok) assert.fail("expected validation failure");
+    assert.equal(result.status, 400);
+    assert.match(result.error, /inspection_id.*job_id/);
+  });
+
+  it("mappe les champs rapides vers le writer create-report gardé", () => {
+    const result = buildCreateReportPayloadFromInspectionRequest({
+      user_id: userId,
+      inspection_id: inspectionId,
+      clientName: " Jean Dupont ",
+      address: " 123 rue Test ",
+      inspectionType: "residential",
+      language: "fr",
+    });
+
+    if (!result.ok) assert.fail(result.error);
+    assert.equal(result.payload.user_id, userId);
+    assert.equal(result.payload.inspection_id, inspectionId);
+    assert.equal(result.payload.client, "Jean Dupont");
+    assert.equal(result.payload.adresse, "123 rue Test");
+    const payload = result.payload.payload as Record<string, unknown>;
+    const cover = payload.cover_v1 as Record<string, unknown>;
+    assert.equal(cover.client_name, "Jean Dupont");
+    assert.equal(cover.address, "123 rue Test");
+    assert.equal(cover.inspection_type, "residential");
+    assert.equal(cover.language, "fr");
+  });
+
+  it("ne réintroduit pas d'insert reports direct avec service role", () => {
+    const routeSource = fs.readFileSync(
+      "app/api/create-inspection/route.ts",
+      "utf8",
+    );
+
+    assert.doesNotMatch(routeSource, /createServiceRoleClient/);
+    assert.doesNotMatch(routeSource, /\.from\(["']reports["']\)\s*\.insert/s);
+  });
+});
+
+describe("repository merge hygiene", () => {
+  it("ne laisse pas de marqueurs de conflit dans le smoke test PDF", () => {
+    const smoke = fs.readFileSync("scripts/e2e-smoke.mjs", "utf8");
+
+    assert.doesNotMatch(smoke, /^<<<<<<< /m);
+    assert.doesNotMatch(smoke, /^=======/m);
+    assert.doesNotMatch(smoke, /^>>>>>>> /m);
   });
 });
