@@ -307,7 +307,10 @@ describe("create-inspection route guardrails", () => {
     );
 
     assert.doesNotMatch(routeSource, /createServiceRoleClient/);
-    assert.doesNotMatch(routeSource, /\.from\(["']reports["']\)\s*\.insert/s);
+    assert.doesNotMatch(
+      routeSource,
+      /\.from\(["']reports["']\)[\s\S]*?\.insert/,
+    );
   });
 });
 
