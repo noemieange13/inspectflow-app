@@ -18,6 +18,31 @@ export type ReportServerData = {
 
 const REPORT_QUERY_MS = 20_000;
 
+export function validateReportViewerAccessRow(
+  rec: Record<string, unknown>,
+  viewerToken: string | undefined,
+): { ok: true } | { ok: false } {
+  const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
+
+  if (!dbToken) {
+    return { ok: true };
+  }
+
+  if (!reportAccessTokensMatch(viewerToken ?? "", dbToken)) {
+    return { ok: false };
+  }
+
+  if (
+    rec.token_expires_at != null &&
+    String(rec.token_expires_at) !== "" &&
+    new Date(String(rec.token_expires_at)) < new Date()
+  ) {
+    return { ok: false };
+  }
+
+  return { ok: true };
+}
+
 function delay<T>(ms: number, value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
@@ -81,36 +106,17 @@ export async function loadReportForViewer(
     }
 
     const rec = report as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
 
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
+    if (!validateReportViewerAccessRow(rec, viewerToken).ok) {
+      return {
+        id: reportId,
+        status: null,
+        title: null,
+        payload: null,
+        hasPdf: false,
+        pdfSignedUrl: null,
+        accessDenied: true,
+      };
     }
 
     const payload =
