@@ -1,7 +1,7 @@
 /**
  * Ingestion batch d’événements QC (Edge) — même schéma que POST /api/qc-events.
  * Secrets : SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
- * Header : x-ingest-secret doit égaler INGEST_QC_EVENTS_SECRET (optionnel ; si absent, secret requis vide = refus).
+ * Header : x-ingest-secret doit égaler INGEST_QC_EVENTS_SECRET.
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -30,7 +30,7 @@ Deno.serve(async (req: Request) => {
 
   const secret = Deno.env.get("INGEST_QC_EVENTS_SECRET");
   const hdr = req.headers.get("x-ingest-secret") ?? "";
-  if (secret != null && secret !== "" && hdr !== secret) {
+  if (!secret || hdr !== secret) {
     return json({ ok: false, error: "Unauthorized" }, 401);
   }
 
@@ -72,7 +72,7 @@ Deno.serve(async (req: Request) => {
 
   const { error } = await supabase.from("qc_events").insert(rows);
   if (error) {
-    return json({ ok: false, error: error.message }, { status: 500 });
+    return json({ ok: false, error: error.message }, 500);
   }
   return json({ ok: true, inserted: rows.length }, 200);
 });
