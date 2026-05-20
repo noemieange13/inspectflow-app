@@ -1,0 +1,15 @@
+{
+  "description": "Optionnel — copier vers photos-manifest.json pour ordre ou notes de test.",
+  "inspection_label": "DEMO 2026",
+  "files": [
+    "DSCF9056.JPG",
+    "DSCF9057.JPG"
+  ],
+  "entries": [
+    {
+      "file": "DSCF9056.JPG",
+      "qc_system": "exterieur",
+      "note": "Façade avant — exemple"
+    }
+  ]
+}

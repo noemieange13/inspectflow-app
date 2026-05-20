@@ -29,7 +29,7 @@ export function useResolvedPhotoUrls(
   supabase: SupabaseClient,
   photos: DisplayPhoto[],
 ): Record<string, string> {
-  const key = stablePhotosKey(photos);
+  const photosKey = stablePhotosKey(photos);
   const useSigned = shouldUseSignedPhotoUrls();
 
   const syncMap = useMemo(() => {
@@ -41,16 +41,17 @@ export function useResolvedPhotoUrls(
       if (u) m[p.id] = u;
     }
     return m;
-  }, [supabase, key, useSigned]);
+  }, [supabase, photos, useSigned]);
 
-  const [signedMap, setSignedMap] = useState<Record<string, string>>({});
+  const [signedState, setSignedState] = useState<{
+    photosKey: string;
+    map: Record<string, string>;
+  }>({ photosKey: "", map: {} });
 
   useEffect(() => {
-    if (!useSigned || photos.length === 0) {
-      setSignedMap({});
-      return;
-    }
+    if (!useSigned || photos.length === 0) return;
 
+    const effectKey = photosKey;
     let cancelled = false;
     void (async () => {
       const entries = await Promise.all(
@@ -60,17 +61,23 @@ export function useResolvedPhotoUrls(
         }),
       );
       if (cancelled) return;
-      const m: Record<string, string> = Object.fromEntries(entries);
-      setSignedMap(m);
+      const m: Record<string, string> = Object.fromEntries(
+        entries.filter(([, u]) => u),
+      );
+      setSignedState({ photosKey: effectKey, map: m });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [supabase, useSigned, key, photos]);
+  }, [supabase, useSigned, photosKey, photos]);
 
   return useMemo(() => {
     if (!useSigned) return syncMap;
+    const signedMap =
+      photos.length > 0 && signedState.photosKey === photosKey
+        ? signedState.map
+        : {};
     return { ...syncMap, ...signedMap };
-  }, [syncMap, signedMap, useSigned]);
+  }, [syncMap, signedState, photosKey, photos.length, useSigned]);
 }

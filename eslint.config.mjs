@@ -13,6 +13,10 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "scripts/**/*.cjs",
+    "scripts/**/*.mjs",
+    "test-data/**",
+    "inspectflow-ui/**",
+    "log des actions.txt",
   ]),
 ]);
 

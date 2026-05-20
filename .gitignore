@@ -82,6 +82,16 @@ Thumbs.db
 *.temp
 .cache/
 
+# Données terrain démo (photos réelles — garder README + exemples)
+test-data/inspection-demo/*.JPG
+test-data/inspection-demo/*.jpg
+test-data/inspection-demo/*.jpeg
+test-data/inspection-demo/*.png
+test-data/inspection-demo/*.webp
+test-data/inspection-demo/run-log.*
+!test-data/inspection-demo/README.md
+!test-data/inspection-demo/photos-manifest.example.json
+
 # Sensitive files (auto-detected)
 .env.example
 .env.local

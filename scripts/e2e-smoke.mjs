@@ -5,11 +5,8 @@
  *
  * Usage : depuis la racine du projet
  *   npm run smoke:e2e
-<<<<<<< HEAD
-=======
  *
  * Options : SMOKE_SKIP_TRIGGER, SMOKE_SKIP_REPORT_COVER (1 = ne pas appeler report-cover).
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -102,7 +99,7 @@ const supabase = canUseDirectEdge
 
 console.log("Cible API :", base, `(timeout ${FETCH_TIMEOUT_MS / 1000}s)`);
 console.log(
-  "Si Next.js affiche un autre port (ex. 3001), ajoute dans .env.local : SMOKE_BASE_URL=http://localhost:3001",
+  "Cible : SMOKE_BASE_URL dans .env.local (ex. http://localhost:3001 ou https://votre-app.vercel.app).",
 );
 console.log(
   "SMOKE_USER_ID:",
@@ -227,8 +224,6 @@ const htmlPayload =
   "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Smoke</title></head><body>" +
   "<p>Smoke test HTML content for PDF pipeline verification.</p></body></html>";
 
-<<<<<<< HEAD
-=======
 /** Couverture minimale pour valider POST /api/report-cover + fusion PDF (cover + html custom). */
 function smokeCoverV1() {
   const now = new Date();
@@ -270,7 +265,6 @@ function smokeCoverV1() {
   };
 }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 let userId;
 let inspectionId;
 try {
@@ -299,10 +293,17 @@ try {
   });
   t1 = await r1.text();
 } catch (err) {
-  console.error("Échec réseau vers /api/create-report :", err?.cause ?? err);
-  console.error(
-    "Cause fréquente : SMOKE_BASE_URL ne correspond pas au port de `npm run dev` (voir la ligne « Local: http://localhost:XXXX »).",
-  );
+  const cause = err?.cause ?? err;
+  console.error("Échec réseau vers /api/create-report :", cause);
+  if (cause?.code === "ENOTFOUND" && cause?.hostname) {
+    console.error(
+      `Hôte introuvable : ${cause.hostname} — mets à jour NEXT_PUBLIC_SUPABASE_URL (et redéploie Vercel).`,
+    );
+  } else {
+    console.error(
+      "Cause fréquente : SMOKE_BASE_URL ne correspond pas au port de `npm run dev` (voir « Local: http://localhost:XXXX »).",
+    );
+  }
   process.exit(1);
 }
 let j1;
@@ -313,6 +314,15 @@ try {
 }
 if (!r1.ok) {
   console.error("create-report HTTP", r1.status, t1);
+  if (
+    r1.status === 500 &&
+    typeof t1 === "string" &&
+    t1.includes("fetch failed")
+  ) {
+    console.error(
+      "Cause fréquente : NEXT_PUBLIC_SUPABASE_URL invalide ou projet Supabase supprimé/pausé (DNS ENOTFOUND). Vérifie le ref dans le dashboard Supabase et les variables Vercel.",
+    );
+  }
   if (r1.status === 401 && canUseDirectEdge) {
     console.log("Repli vers Edge create-report direct (secret local non aligné).");
     const { res, parsed } = await createReportViaEdge(createBody);
@@ -341,8 +351,6 @@ if (process.env.SMOKE_SKIP_TRIGGER === "1") {
   process.exit(0);
 }
 
-<<<<<<< HEAD
-=======
 const accessToken =
   typeof j1?.access_token === "string" ? j1.access_token.trim() : "";
 if (process.env.SMOKE_SKIP_REPORT_COVER === "1") {
@@ -389,7 +397,6 @@ if (process.env.SMOKE_SKIP_REPORT_COVER === "1") {
   );
 }
 
->>>>>>> b65d71e3f50a98d131b2aca2629e6513dcf8a05c
 let r2;
 let t2;
 try {
