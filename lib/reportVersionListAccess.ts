@@ -85,7 +85,10 @@ export function requireReportVersionListAccess(input: {
   env?: AuthEnv;
   maxVersions: number;
 }): ReportVersionListAccessResult {
-  const env = input.env ?? process.env;
+  const env = input.env ?? {
+    DASHBOARD_USER: process.env.DASHBOARD_USER,
+    DASHBOARD_PASS: process.env.DASHBOARD_PASS,
+  };
   const dbToken =
     typeof input.report.access_token === "string" ? input.report.access_token.trim() : "";
   const rawToken = typeof input.accessTokenRaw === "string" ? input.accessTokenRaw : "";
