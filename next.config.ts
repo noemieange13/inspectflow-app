@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  /** Puppeteer = dev local uniquement ; évite bundling / install Chromium sur Vercel. */
+  serverExternalPackages: ["puppeteer", "puppeteer-core", "@puppeteer/browsers"],
   turbopack: {
     root: projectRoot,
   },
