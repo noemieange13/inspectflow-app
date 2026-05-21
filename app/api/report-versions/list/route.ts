@@ -1,27 +1,9 @@
-import { createClient } from "@supabase/supabase-js"
-
-function parseBasicAuth(req: Request): { user: string; pass: string } | null {
-  const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
-  if (!auth) return null
-
-  const [scheme, encoded] = auth.split(" ")
-  if (!scheme || scheme.toLowerCase() !== "basic" || !encoded) return null
-
-  let decoded: string
-  try {
-    decoded = Buffer.from(encoded, "base64").toString("utf8")
-  } catch {
-    return null
-  }
-
-  const idx = decoded.indexOf(":")
-  if (idx === -1) return null
-
-  return { user: decoded.slice(0, idx), pass: decoded.slice(idx + 1) }
-}
+import { requireReportVersionListAccess } from "@/lib/reportVersionListAccess";
+import { listReportVersions, MAX_REPORT_VERSIONS } from "@/lib/reportVersions";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export async function POST(req: Request) {
-  const MAX_VERSIONS = 50
+  const MAX_VERSIONS = MAX_REPORT_VERSIONS
 
   try {
     const body = await req.json()
@@ -35,50 +17,43 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
-      const creds = parseBasicAuth(req)
+    const supabase = await createServiceRoleClient()
 
-      if (!creds) {
-        return Response.json(
-          { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: MAX_VERSIONS } },
-          { status: 401 }
-        )
-      }
+    const { data: report, error: reportError } = await supabase
+      .from("reports")
+      .select("access_token, token_expires_at")
+      .eq("id", report_id)
+      .maybeSingle()
 
-      const expectedUser = process.env.DASHBOARD_USER
-      const expectedPass = process.env.DASHBOARD_PASS
-
-      // Config server manquante => 500 (car ce n’est pas un problème auth client)
-      if (!expectedUser || !expectedPass) {
-        throw new Error("MISSING_DASHBOARD_AUTH_ENV")
-      }
-
-      const ok = creds.user === expectedUser && creds.pass === expectedPass
-      if (!ok) {
-        return Response.json(
-          { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: MAX_VERSIONS } },
-          { status: 403 }
-        )
-      }
+    if (reportError) {
+      console.error("REPORT ACCESS DB ERROR:", reportError)
+      return Response.json(
+        { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+        { status: 500 }
+      )
     }
 
-    // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    if (!report) {
+      return Response.json(
+        { data: [], error: "REPORT_NOT_FOUND", meta: { max_versions: MAX_VERSIONS } },
+        { status: 404 }
+      )
+    }
 
-    const { data, error } = await supabase
-      .from("report_versions")
-      .select("*")
-      .eq("report_id", report_id)
-      .order("created_at", { ascending: false })
+    const gate = requireReportVersionListAccess({
+      report,
+      accessTokenRaw: typeof access_token === "string" ? access_token : "",
+      authHeader: req.headers.get("authorization") ?? req.headers.get("Authorization"),
+      maxVersions: MAX_VERSIONS,
+    })
+    if (!gate.ok) {
+      return Response.json(gate.body, { status: gate.status })
+    }
 
-    if (error) {
-      console.error("DB ERROR:", error)
+    const versions = await listReportVersions(supabase, report_id, MAX_VERSIONS)
+
+    if ("error" in versions) {
+      console.error("DB ERROR:", versions.error)
       return Response.json(
         { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
         { status: 500 }
@@ -86,7 +61,7 @@ export async function POST(req: Request) {
     }
 
     return Response.json({
-      data: Array.isArray(data) ? data : [],
+      data: versions.rows,
       error: null,
       meta: { max_versions: MAX_VERSIONS },
     })
