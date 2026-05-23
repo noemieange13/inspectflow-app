@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js"
+import { assertReportViewerAccess } from "@/lib/reportViewerAccess"
+import { createServiceRoleClient } from "@/lib/supabaseServer"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -66,15 +67,26 @@ export async function POST(req: Request) {
     }
 
     // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    const supabase = await createServiceRoleClient()
+
+    if (!isLegacy) {
+      const gate = await assertReportViewerAccess(
+        supabase,
+        String(report_id).trim(),
+        typeof access_token === "string" ? access_token : ""
+      )
+      if (!gate.ok) {
+        return Response.json(
+          { data: [], error: gate.body.error, meta: { max_versions: MAX_VERSIONS } },
+          { status: gate.status }
+        )
+      }
+    }
 
     const { data, error } = await supabase
       .from("report_versions")
       .select("*")
-      .eq("report_id", report_id)
+      .eq("report_id", String(report_id).trim())
       .order("created_at", { ascending: false })
 
     if (error) {
