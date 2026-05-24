@@ -1,5 +1,5 @@
-import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
+import { validateReportViewerAccessRecord } from "@/lib/reportViewerAccess";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export type ReportServerData = {
@@ -81,36 +81,22 @@ export async function loadReportForViewer(
     }
 
     const rec = report as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
+    const access = validateReportViewerAccessRecord(rec, viewerToken);
+    if (!access.ok) {
+      return {
+        id: reportId,
+        status: null,
+        title: null,
+        payload: null,
+        hasPdf: false,
+        pdfSignedUrl: null,
+        accessDenied: access.status === 403,
+        notFound: access.status === 404,
+        serverError:
+          access.status >= 500 && typeof access.body.error === "string"
+            ? access.body.error
+            : undefined,
+      };
     }
 
     const payload =
