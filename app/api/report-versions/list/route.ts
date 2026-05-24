@@ -1,4 +1,6 @@
-import { createClient } from "@supabase/supabase-js"
+import { listReportVersions, MAX_REPORT_VERSIONS } from "@/lib/reportVersions"
+import { validateReportViewerAccessRecord } from "@/lib/reportViewerAccess"
+import { createServiceRoleClient } from "@/lib/supabaseServer"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -21,7 +23,7 @@ function parseBasicAuth(req: Request): { user: string; pass: string } | null {
 }
 
 export async function POST(req: Request) {
-  const MAX_VERSIONS = 50
+  const MAX_VERSIONS = MAX_REPORT_VERSIONS
 
   try {
     const body = await req.json()
@@ -35,10 +37,38 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
+    const supabase = await createServiceRoleClient()
+
+    const { data: report, error: reportErr } = await supabase
+      .from("reports")
+      .select("access_token, token_expires_at")
+      .eq("id", report_id)
+      .maybeSingle()
+
+    if (reportErr) {
+      console.error("REPORT ACCESS DB ERROR:", reportErr)
+      return Response.json(
+        { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+        { status: 500 }
+      )
+    }
+
+    const dbToken =
+      report && typeof report.access_token === "string"
+        ? report.access_token.trim()
+        : ""
+
+    if (dbToken) {
+      const gate = validateReportViewerAccessRecord(report, access_token)
+      if (!gate.ok) {
+        const error =
+          typeof gate.body.error === "string" ? gate.body.error : "ACCESS_DENIED"
+        return Response.json(
+          { data: [], error, meta: { max_versions: MAX_VERSIONS } },
+          { status: gate.status }
+        )
+      }
+    } else {
       const creds = parseBasicAuth(req)
 
       if (!creds) {
@@ -65,20 +95,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    const list = await listReportVersions(supabase, report_id, MAX_VERSIONS)
 
-    const { data, error } = await supabase
-      .from("report_versions")
-      .select("*")
-      .eq("report_id", report_id)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("DB ERROR:", error)
+    if ("error" in list) {
+      console.error("DB ERROR:", list.error)
       return Response.json(
         { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
         { status: 500 }
@@ -86,7 +106,7 @@ export async function POST(req: Request) {
     }
 
     return Response.json({
-      data: Array.isArray(data) ? data : [],
+      data: list.rows,
       error: null,
       meta: { max_versions: MAX_VERSIONS },
     })
