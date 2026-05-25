@@ -1,4 +1,6 @@
 import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
+import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
 
 /** Génération PDF + appel Edge : peut dépasser le défaut Vercel (60s). */
@@ -6,20 +8,7 @@ export const maxDuration = 120;
 
 export async function POST(req: Request) {
   const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin = (origin && host && new URL(origin).host === host)
-      || (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
-      );
-    }
-  }
+  const hasValidSecret = Boolean(secret && req.headers.get("x-trigger-secret") === secret);
 
   let body: unknown;
   try {
@@ -45,6 +34,22 @@ export async function POST(req: Request) {
       { success: false, error: "Missing report_id" },
       { status: 400 },
     );
+  }
+
+  const accessToken =
+    typeof body === "object" &&
+    body !== null &&
+    "access_token" in body &&
+    typeof (body as { access_token: unknown }).access_token === "string"
+      ? (body as { access_token: string }).access_token
+      : "";
+
+  if (!hasValidSecret) {
+    const supabase = await createServiceRoleClient();
+    const gate = await assertReportViewerAccess(supabase, report_id, accessToken);
+    if (!gate.ok) {
+      return Response.json(gate.body, { status: gate.status });
+    }
   }
 
   const t0 = Date.now();
