@@ -1,24 +1,19 @@
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-/**
- * Vérifie le jeton viewer (`reports.access_token`) si la ligne en définit un.
- * Si aucun jeton en base, l’accès reste autorisé (comportement historique).
- */
-export async function assertReportViewerAccess(
-  supabase: SupabaseClient,
-  reportId: string,
-  accessTokenRaw: string | null | undefined,
-): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
-  const { data: report, error } = await supabase
-    .from("reports")
-    .select("access_token, token_expires_at")
-    .eq("id", reportId)
-    .maybeSingle();
+export type ReportViewerAccessRecord = {
+  access_token?: unknown;
+  token_expires_at?: unknown;
+};
 
-  if (error) {
-    return { ok: false, status: 500, body: { error: error.message } };
-  }
+export type ReportViewerAccessValidation =
+  | { ok: true; tokenRequired: boolean }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+export function validateReportViewerAccessRecord(
+  report: ReportViewerAccessRecord | null,
+  accessTokenRaw: string | null | undefined,
+): ReportViewerAccessValidation {
   if (!report) {
     return { ok: false, status: 404, body: { error: "Report not found" } };
   }
@@ -27,7 +22,7 @@ export async function assertReportViewerAccess(
   const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
 
   if (!dbToken) {
-    return { ok: true };
+    return { ok: true, tokenRequired: false };
   }
 
   const raw = typeof accessTokenRaw === "string" ? accessTokenRaw : "";
@@ -50,6 +45,34 @@ export async function assertReportViewerAccess(
       body: { error: "Access token expired", code: "access_denied" },
     };
   }
+
+  return { ok: true, tokenRequired: true };
+}
+
+/**
+ * Vérifie le jeton viewer (`reports.access_token`) si la ligne en définit un.
+ * Si aucun jeton en base, l’accès reste autorisé (comportement historique).
+ */
+export async function assertReportViewerAccess(
+  supabase: SupabaseClient,
+  reportId: string,
+  accessTokenRaw: string | null | undefined,
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
+  const { data: report, error } = await supabase
+    .from("reports")
+    .select("access_token, token_expires_at")
+    .eq("id", reportId)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, status: 500, body: { error: error.message } };
+  }
+  if (!report) {
+    return { ok: false, status: 404, body: { error: "Report not found" } };
+  }
+
+  const gate = validateReportViewerAccessRecord(report, accessTokenRaw);
+  if (!gate.ok) return gate;
 
   return { ok: true };
 }
