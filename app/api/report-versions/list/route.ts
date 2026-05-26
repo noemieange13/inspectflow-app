@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js"
+import { validateReportViewerAccessRecord } from "@/lib/reportViewerAccess"
+import { createServiceRoleClient } from "@/lib/supabaseServer"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -20,6 +21,35 @@ function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   return { user: decoded.slice(0, idx), pass: decoded.slice(idx + 1) }
 }
 
+function requireAdminAuth(req: Request): Response | null {
+  const creds = parseBasicAuth(req)
+
+  if (!creds) {
+    return Response.json(
+      { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: 50 } },
+      { status: 401 }
+    )
+  }
+
+  const expectedUser = process.env.DASHBOARD_USER
+  const expectedPass = process.env.DASHBOARD_PASS
+
+  // Config server manquante => 500 (car ce n’est pas un problème auth client)
+  if (!expectedUser || !expectedPass) {
+    throw new Error("MISSING_DASHBOARD_AUTH_ENV")
+  }
+
+  const ok = creds.user === expectedUser && creds.pass === expectedPass
+  if (!ok) {
+    return Response.json(
+      { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: 50 } },
+      { status: 403 }
+    )
+  }
+
+  return null
+}
+
 export async function POST(req: Request) {
   const MAX_VERSIONS = 50
 
@@ -35,41 +65,39 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
-      const creds = parseBasicAuth(req)
+    const supabase = await createServiceRoleClient()
+    const accessTokenRaw = typeof access_token === "string" ? access_token.trim() : ""
 
-      if (!creds) {
+    if (accessTokenRaw) {
+      const { data: report, error: reportError } = await supabase
+        .from("reports")
+        .select("access_token, token_expires_at")
+        .eq("id", report_id)
+        .maybeSingle()
+
+      if (reportError) {
         return Response.json(
-          { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: MAX_VERSIONS } },
-          { status: 401 }
+          { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+          { status: 500 }
         )
       }
 
-      const expectedUser = process.env.DASHBOARD_USER
-      const expectedPass = process.env.DASHBOARD_PASS
-
-      // Config server manquante => 500 (car ce n’est pas un problème auth client)
-      if (!expectedUser || !expectedPass) {
-        throw new Error("MISSING_DASHBOARD_AUTH_ENV")
-      }
-
-      const ok = creds.user === expectedUser && creds.pass === expectedPass
-      if (!ok) {
+      const gate = validateReportViewerAccessRecord(report, accessTokenRaw)
+      if (!gate.ok) {
         return Response.json(
-          { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: MAX_VERSIONS } },
-          { status: 403 }
+          { data: [], ...gate.body, meta: { max_versions: MAX_VERSIONS } },
+          { status: gate.status }
         )
       }
+
+      if (!gate.tokenRequired) {
+        const adminError = requireAdminAuth(req)
+        if (adminError) return adminError
+      }
+    } else {
+      const adminError = requireAdminAuth(req)
+      if (adminError) return adminError
     }
-
-    // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
 
     const { data, error } = await supabase
       .from("report_versions")
