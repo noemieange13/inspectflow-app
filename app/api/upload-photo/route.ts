@@ -1,4 +1,5 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -18,6 +19,7 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
+    const accessTokenRaw = formData.get("access_token") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
@@ -37,6 +39,14 @@ export async function POST(req: Request) {
     }
 
     const supabase = await createServiceRoleClient();
+    const gate = await assertReportViewerAccess(
+      supabase,
+      reportId.trim(),
+      accessTokenRaw,
+    );
+    if (!gate.ok) {
+      return Response.json(gate.body, { status: gate.status });
+    }
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
