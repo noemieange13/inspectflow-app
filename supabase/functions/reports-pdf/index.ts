@@ -365,14 +365,14 @@ async function fetchPhotoAnalysesForReport(
     inspectionId = links?.inspection_id ?? null;
   }
 
-  if (links?.photo_id && (!wanted || wanted.size === 0)) {
+  if (!inspectionId && links?.photo_id && (!wanted || wanted.size === 0)) {
     const { data: row, error } = await supabase
       .from("photos")
-      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .select("inspection_id")
       .eq("id", links.photo_id)
       .maybeSingle();
-    if (!error && row) {
-      return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id" };
+    if (!error && row?.inspection_id) {
+      inspectionId = String(row.inspection_id);
     }
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_report_photo_id_failed", {
@@ -400,14 +400,14 @@ async function fetchPhotoAnalysesForReport(
       if (!inspectionId && job?.inspection_id) {
         inspectionId = String(job.inspection_id);
       }
-      if (job?.photo_id) {
+      if (!inspectionId && job?.photo_id) {
         const { data: row, error } = await supabase
           .from("photos")
-          .select("id, analysis, inspection_id, photo_number, storage_path")
+          .select("inspection_id")
           .eq("id", job.photo_id)
           .maybeSingle();
-        if (!error && row) {
-          return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id" };
+        if (!error && row?.inspection_id) {
+          inspectionId = String(row.inspection_id);
         }
         if (error) {
           logStructured("warn", "ai_photo_lookup_by_job_photo_id_failed", {
@@ -449,6 +449,56 @@ async function fetchPhotoAnalysesForReport(
         report_id: reportId,
         inspection_id: inspectionId,
         err: error.message,
+      });
+    }
+  }
+
+  if (links?.photo_id && (!wanted || wanted.size === 0)) {
+    const { data: row, error } = await supabase
+      .from("photos")
+      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .eq("id", links.photo_id)
+      .maybeSingle();
+    if (!error && row) {
+      return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id_only" };
+    }
+    if (error) {
+      logStructured("warn", "ai_photo_lookup_by_report_photo_id_failed", {
+        report_id: reportId,
+        photo_id: links.photo_id,
+        err: error.message,
+      });
+    }
+  }
+
+  if (links?.job_id && (!wanted || wanted.size === 0)) {
+    const { data: job, error: jobErr } = await supabase
+      .from("jobs")
+      .select("photo_id")
+      .eq("id", links.job_id)
+      .maybeSingle();
+    if (!jobErr && job?.photo_id) {
+      const { data: row, error } = await supabase
+        .from("photos")
+        .select("id, analysis, inspection_id, photo_number, storage_path")
+        .eq("id", job.photo_id)
+        .maybeSingle();
+      if (!error && row) {
+        return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id_only" };
+      }
+      if (error) {
+        logStructured("warn", "ai_photo_lookup_by_job_photo_id_failed", {
+          report_id: reportId,
+          job_id: links.job_id,
+          photo_id: String(job.photo_id),
+          err: error.message,
+        });
+      }
+    } else if (jobErr) {
+      logStructured("warn", "ai_job_lookup_failed", {
+        report_id: reportId,
+        job_id: links.job_id,
+        err: jobErr.message,
       });
     }
   }

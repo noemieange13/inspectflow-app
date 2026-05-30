@@ -227,11 +227,11 @@ async function uploadOne(filePath, reportId, inspectionId, accessToken) {
   return { ok: res.ok, status: res.status, body: parsed, fileName: name };
 }
 
-async function triggerPdf(reportId) {
+async function triggerPdf(reportId, accessToken = "") {
   const res = await fetchApi("/api/trigger-inspection", {
     method: "POST",
     headers: apiHeaders(true),
-    body: JSON.stringify({ report_id: reportId }),
+    body: JSON.stringify({ report_id: reportId, access_token: accessToken }),
   });
   const text = await res.text();
   let parsed;
@@ -275,7 +275,7 @@ let accessToken = process.env.DEMO_ACCESS_TOKEN?.trim() ?? "";
 
 if (opts.triggerPdf && !opts.uploadOnly && isUuid(reportId)) {
   console.log("--trigger-pdf seul (sans ré-upload).");
-  const pdf = await triggerPdf(reportId);
+  const pdf = await triggerPdf(reportId, accessToken);
   console.log("trigger-inspection", pdf.status, JSON.stringify(pdf.body, null, 2));
   process.exit(pdf.ok ? 0 : 1);
 }
@@ -308,16 +308,17 @@ for (let i = 0; i < batch.length; i++) {
   process.stdout.write(`[${i + 1}/${batch.length}] ${fileName} … `);
   try {
     const result = await uploadOne(filePath, reportId, inspectionId, accessToken);
+    const uploadOk = result.ok && Boolean(result.body?.photo_id);
     const entry = {
       at: new Date().toISOString(),
       file: fileName,
-      ok: result.ok,
+      ok: uploadOk,
       status: result.status,
       photo_id: result.body?.photo_id ?? null,
-      error: result.ok ? null : result.body,
+      error: uploadOk ? null : result.body,
     };
     appendLog(entry);
-    if (result.ok) {
+    if (uploadOk) {
       ok++;
       console.log("OK", result.body?.photo_id ? `photo_id=${result.body.photo_id}` : "");
     } else {
@@ -342,7 +343,7 @@ console.log("\nRésumé:", { ok, fail, report_id: reportId, started_at: startedA
 
 if (opts.triggerPdf && ok > 0) {
   console.log("Déclenchement PDF…");
-  const pdf = await triggerPdf(reportId);
+  const pdf = await triggerPdf(reportId, accessToken);
   console.log("trigger-inspection", pdf.status, JSON.stringify(pdf.body, null, 2));
   appendLog({
     at: new Date().toISOString(),

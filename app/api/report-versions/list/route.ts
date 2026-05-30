@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { assertReportViewerAccess } from "@/lib/reportViewerAccess"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json()
     const report_id = body?.report_id
-    const access_token = body?.access_token
+    const access_token = typeof body?.access_token === "string" ? body.access_token : ""
 
     if (!report_id) {
       return Response.json(
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
 
     // 🔒 Gate admin legacy (ajuste si ta règle est différente)
     // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
+    const isLegacy = !access_token.trim()
     if (isLegacy) {
       const creds = parseBasicAuth(req)
 
@@ -70,6 +71,16 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
+
+    if (!isLegacy) {
+      const gate = await assertReportViewerAccess(supabase, report_id, access_token)
+      if (!gate.ok) {
+        return Response.json(
+          { data: [], error: gate.body.error ?? "ACCESS_DENIED", meta: { max_versions: MAX_VERSIONS } },
+          { status: gate.status }
+        )
+      }
+    }
 
     const { data, error } = await supabase
       .from("report_versions")

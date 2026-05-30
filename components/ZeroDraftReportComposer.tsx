@@ -1475,6 +1475,9 @@ export default function ZeroDraftReportComposer({
       const form = new FormData();
       form.append("file", file);
       form.append("report_id", reportId);
+      if (viewerToken?.trim()) {
+        form.append("access_token", viewerToken.trim());
+      }
       form.append("language", language);
       try {
         const res = await fetch("/api/upload-photo", { method: "POST", body: form });
@@ -1541,7 +1544,7 @@ export default function ZeroDraftReportComposer({
         return false;
       }
     },
-    [reportId, language],
+    [reportId, viewerToken, language],
   );
 
   const schedulePhotoAnalysisRefresh = useCallback(() => {
@@ -2260,7 +2263,7 @@ export default function ZeroDraftReportComposer({
         fetch("/api/trigger-inspection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ report_id: reportId }),
+          body: JSON.stringify({ report_id: reportId, access_token: viewerToken ?? "" }),
         }),
         180_000,
         "trigger-inspection",
@@ -2298,7 +2301,7 @@ export default function ZeroDraftReportComposer({
       );
     }
     return pdfBody.signed_url ?? pdfBody.pdf_url ?? null;
-  }, [reportId]);
+  }, [reportId, viewerToken]);
 
   const refreshPdfUrl = useCallback(async () => {
     if (!viewerToken) return;
