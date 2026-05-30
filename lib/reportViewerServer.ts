@@ -1,4 +1,4 @@
-import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { validateReportAccessRow } from "@/lib/assertReportAccessForApi";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
@@ -20,6 +20,27 @@ const REPORT_QUERY_MS = 20_000;
 
 function delay<T>(ms: number, value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
+
+function accessDeniedReport(reportId: string): ReportServerData {
+  return {
+    id: reportId,
+    status: null,
+    title: null,
+    payload: null,
+    hasPdf: false,
+    pdfSignedUrl: null,
+    accessDenied: true,
+  };
+}
+
+export function validateReportViewerRecordAccess(
+  reportId: string,
+  viewerToken: string | undefined,
+  record: Record<string, unknown>,
+): ReportServerData | null {
+  const gate = validateReportAccessRow(reportId, viewerToken ?? "", record);
+  return gate.ok ? null : accessDeniedReport(reportId);
 }
 
 /**
@@ -81,37 +102,8 @@ export async function loadReportForViewer(
     }
 
     const rec = report as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-    }
+    const accessDenied = validateReportViewerRecordAccess(reportId, viewerToken, rec);
+    if (accessDenied) return accessDenied;
 
     const payload =
       rec.payload && typeof rec.payload === "object"
