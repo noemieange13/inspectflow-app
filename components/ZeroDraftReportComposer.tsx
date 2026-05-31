@@ -1476,8 +1476,12 @@ export default function ZeroDraftReportComposer({
       form.append("file", file);
       form.append("report_id", reportId);
       form.append("language", language);
+      const rt = viewerToken?.trim() ?? "";
+      if (rt) form.append("access_token", rt);
+      const jwt = supabaseAccessToken?.trim() ?? "";
+      const headers: HeadersInit = jwt ? { Authorization: `Bearer ${jwt}` } : {};
       try {
-        const res = await fetch("/api/upload-photo", { method: "POST", body: form });
+        const res = await fetch("/api/upload-photo", { method: "POST", headers, body: form });
         const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         const suggested =
           typeof body.suggested_inspector_note === "string" && body.suggested_inspector_note.trim()
@@ -1541,7 +1545,7 @@ export default function ZeroDraftReportComposer({
         return false;
       }
     },
-    [reportId, language],
+    [reportId, language, viewerToken, supabaseAccessToken],
   );
 
   const schedulePhotoAnalysisRefresh = useCallback(() => {
@@ -3204,6 +3208,8 @@ export default function ZeroDraftReportComposer({
               reportId={reportId}
               language={language}
               disabled={loading || uploadingPhoto}
+              viewerToken={viewerToken}
+              authToken={supabaseAccessToken ?? undefined}
               guideHint={
                 terrainStepLive?.kind === "photo"
                   ? language === "en"
