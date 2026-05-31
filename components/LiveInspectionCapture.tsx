@@ -8,6 +8,8 @@ type Props = {
   reportId: string;
   language: "fr" | "en";
   disabled?: boolean;
+  viewerToken?: string;
+  authToken?: string;
   /** Indication du guide terrain (ex. panneau électrique). */
   guideHint?: string;
   onPhotoUploaded?: () => void;
@@ -20,6 +22,8 @@ export default function LiveInspectionCapture({
   reportId,
   language,
   disabled,
+  viewerToken,
+  authToken,
   guideHint,
   onPhotoUploaded,
 }: Props) {
@@ -92,8 +96,12 @@ export default function LiveInspectionCapture({
       form.append("file", file);
       form.append("report_id", reportId);
       form.append("language", language);
+      const rt = viewerToken?.trim() ?? "";
+      if (rt) form.append("access_token", rt);
+      const jwt = authToken?.trim() ?? "";
+      const headers: HeadersInit = jwt ? { Authorization: `Bearer ${jwt}` } : {};
       emitProductEvent("live_inspection_capture_upload", { report_id: reportId });
-      const res = await fetch("/api/upload-photo", { method: "POST", body: form });
+      const res = await fetch("/api/upload-photo", { method: "POST", headers, body: form });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -104,7 +112,7 @@ export default function LiveInspectionCapture({
     } finally {
       setBusy(false);
     }
-  }, [reportId, language, onPhotoUploaded]);
+  }, [reportId, language, viewerToken, authToken, onPhotoUploaded]);
 
   const labels =
     language === "en"

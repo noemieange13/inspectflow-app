@@ -9,6 +9,8 @@ export type UploadPhotoParams = {
   reportId: string;
   inspectionId?: string;
   language?: "en" | "fr";
+  accessToken?: string;
+  authToken?: string;
 };
 
 /** Contrat aligné sur `app/api/upload-photo` — validation runtime ci-dessous. */
@@ -66,9 +68,16 @@ export async function uploadPhotoViaApi(
   if (params.language) {
     form.append("language", params.language);
   }
+  if (params.accessToken?.trim()) {
+    form.append("access_token", params.accessToken.trim());
+  }
+  const headers: HeadersInit = params.authToken?.trim()
+    ? { Authorization: `Bearer ${params.authToken.trim()}` }
+    : {};
 
   const res = await fetch("/api/upload-photo", {
     method: "POST",
+    headers,
     body: form,
   });
 

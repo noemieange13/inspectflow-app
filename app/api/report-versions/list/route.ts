@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { validateReportAccessRow } from "@/lib/assertReportAccessForApi"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -26,7 +27,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.json()
     const report_id = body?.report_id
-    const access_token = body?.access_token
+    const access_token =
+      typeof body?.access_token === "string" ? body.access_token.trim() : ""
 
     if (!report_id) {
       return Response.json(
@@ -35,12 +37,14 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
-      const creds = parseBasicAuth(req)
+    // 🧠 Init Supabase avant la gate token pour vérifier le jeton réel du rapport.
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
 
+    const requireAdmin = () => {
+      const creds = parseBasicAuth(req)
       if (!creds) {
         return Response.json(
           { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: MAX_VERSIONS } },
@@ -63,13 +67,43 @@ export async function POST(req: Request) {
           { status: 403 }
         )
       }
+      return null
     }
 
-    // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    if (access_token) {
+      const { data: report, error: reportErr } = await supabase
+        .from("reports")
+        .select("access_token, token_expires_at, user_id")
+        .eq("id", report_id)
+        .maybeSingle()
+
+      if (reportErr) {
+        console.error("REPORT TOKEN DB ERROR:", reportErr)
+        return Response.json(
+          { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+          { status: 500 }
+        )
+      }
+
+      const rec = report as Record<string, unknown> | null
+      const hasReportToken =
+        typeof rec?.access_token === "string" && rec.access_token.trim().length > 0
+      if (!hasReportToken) {
+        const adminResponse = requireAdmin()
+        if (adminResponse) return adminResponse
+      } else {
+        const gate = validateReportAccessRow(report_id, access_token, rec)
+        if (!gate.ok) {
+          return Response.json(
+            { data: [], error: gate.error, code: gate.code, meta: { max_versions: MAX_VERSIONS } },
+            { status: gate.status }
+          )
+        }
+      }
+    } else {
+      const adminResponse = requireAdmin()
+      if (adminResponse) return adminResponse
+    }
 
     const { data, error } = await supabase
       .from("report_versions")
