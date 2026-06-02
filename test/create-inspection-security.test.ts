@@ -44,6 +44,6 @@ describe("/api/create-inspection security", () => {
     );
 
     assert.doesNotMatch(source, /createServiceRoleClient/);
-    assert.doesNotMatch(source, /\.from\(["']reports["']\)\s*\.insert/s);
+    assert.doesNotMatch(source, /\.from\(["']reports["']\)[\s\S]*\.insert/);
   });
 });
