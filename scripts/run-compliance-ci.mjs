@@ -17,3 +17,4 @@ function run(cmd, args) {
 
 run("npx", ["tsc", "--noEmit"]);
 run("npm", ["run", "test:compliance"]);
+run("npm", ["run", "test:security"]);
