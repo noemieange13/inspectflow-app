@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js"
+import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -25,8 +26,8 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const report_id = body?.report_id
-    const access_token = body?.access_token
+    const report_id = typeof body?.report_id === "string" ? body.report_id.trim() : ""
+    const access_token = typeof body?.access_token === "string" ? body.access_token : ""
 
     if (!report_id) {
       return Response.json(
@@ -66,16 +67,26 @@ export async function POST(req: Request) {
     }
 
     // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    const supabase = await createServiceRoleClient()
+
+    if (!isLegacy) {
+      const gate = await assertReportViewerAccess(supabase, report_id, access_token)
+      if (!gate.ok) {
+        const gateError =
+          typeof gate.body.error === "string" ? gate.body.error : "ACCESS_DENIED"
+        return Response.json(
+          { data: [], error: gateError, meta: { max_versions: MAX_VERSIONS } },
+          { status: gate.status }
+        )
+      }
+    }
 
     const { data, error } = await supabase
       .from("report_versions")
       .select("*")
       .eq("report_id", report_id)
       .order("created_at", { ascending: false })
+      .limit(MAX_VERSIONS)
 
     if (error) {
       console.error("DB ERROR:", error)
