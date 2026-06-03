@@ -8,6 +8,7 @@ export type UploadPhotoParams = {
   file: File;
   reportId: string;
   inspectionId?: string;
+  accessToken?: string;
   language?: "en" | "fr";
 };
 
@@ -17,8 +18,7 @@ export type UploadPhotoApiSuccess = {
   storage_path: string;
   url: string | null;
   file_hash: string;
-  /** Peut être null si l’insert `photos` n’a pas abouti (ex. sans inspection_id). */
-  photo_id: string | null;
+  photo_id: string;
   file_name: string;
   file_size: number;
   photo_analysis: null;
@@ -37,7 +37,7 @@ function parseUploadSuccess(data: unknown): UploadPhotoApiSuccess | null {
     return null;
   }
   if (typeof o.file_hash !== "string") return null;
-  if (o.photo_id != null && typeof o.photo_id !== "string") return null;
+  if (typeof o.photo_id !== "string" || o.photo_id.length === 0) return null;
   if (typeof o.file_name !== "string") return null;
   if (typeof o.file_size !== "number") return null;
 
@@ -46,7 +46,7 @@ function parseUploadSuccess(data: unknown): UploadPhotoApiSuccess | null {
     storage_path: o.storage_path,
     url: typeof o.url === "string" || o.url === null ? (o.url as string | null) : null,
     file_hash: o.file_hash,
-    photo_id: o.photo_id == null ? null : String(o.photo_id),
+    photo_id: o.photo_id,
     file_name: o.file_name,
     file_size: o.file_size,
     photo_analysis: null,
@@ -62,6 +62,9 @@ export async function uploadPhotoViaApi(
   form.append("report_id", params.reportId);
   if (params.inspectionId) {
     form.append("inspection_id", params.inspectionId);
+  }
+  if (params.accessToken?.trim()) {
+    form.append("access_token", params.accessToken.trim());
   }
   if (params.language) {
     form.append("language", params.language);
