@@ -1,4 +1,5 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { validateReportViewerAccessRow } from "@/lib/reportViewerAccess";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -18,6 +19,7 @@ export async function POST(req: Request) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
+    const accessToken = formData.get("access_token") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
@@ -40,7 +42,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -49,6 +51,14 @@ export async function POST(req: Request) {
     }
     if (!report) {
       return Response.json({ error: "Report not found" }, { status: 404 });
+    }
+
+    const access = validateReportViewerAccessRow(
+      report as Record<string, unknown>,
+      accessToken,
+    );
+    if (!access.ok) {
+      return Response.json(access.body, { status: access.status });
     }
 
     const effectiveInspectionId =
