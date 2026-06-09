@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js"
+import { validateReportViewerAccessRecord } from "@/lib/reportViewerAccess"
+import { createServiceRoleClient } from "@/lib/supabaseServer"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -20,13 +21,81 @@ function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   return { user: decoded.slice(0, idx), pass: decoded.slice(idx + 1) }
 }
 
+function requireAdminAuth(req: Request, maxVersions: number): Response | null {
+  const creds = parseBasicAuth(req)
+
+  if (!creds) {
+    return Response.json(
+      { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: maxVersions } },
+      { status: 401 }
+    )
+  }
+
+  const expectedUser = process.env.DASHBOARD_USER
+  const expectedPass = process.env.DASHBOARD_PASS
+
+  // Config server manquante => 500 (car ce n’est pas un problème auth client)
+  if (!expectedUser || !expectedPass) {
+    throw new Error("MISSING_DASHBOARD_AUTH_ENV")
+  }
+
+  const ok = creds.user === expectedUser && creds.pass === expectedPass
+  if (!ok) {
+    return Response.json(
+      { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: maxVersions } },
+      { status: 403 }
+    )
+  }
+
+  return null
+}
+
+type ReportVersionsAccessRow = {
+  access_token?: unknown
+  token_expires_at?: unknown
+}
+
+export function authorizeReportVersionsList(
+  req: Request,
+  accessTokenRaw: string,
+  report: ReportVersionsAccessRow | null,
+  maxVersions: number,
+): Response | null {
+  if (!report) {
+    return Response.json(
+      { data: [], error: "REPORT_NOT_FOUND", meta: { max_versions: maxVersions } },
+      { status: 404 }
+    )
+  }
+
+  const dbToken =
+    typeof report.access_token === "string" ? report.access_token.trim() : ""
+
+  if (accessTokenRaw && dbToken) {
+    const gate = validateReportViewerAccessRecord(accessTokenRaw, report)
+    if (!gate.ok) {
+      return Response.json(
+        {
+          data: [],
+          error: typeof gate.body.error === "string" ? gate.body.error : "ACCESS_DENIED",
+          meta: { max_versions: maxVersions },
+        },
+        { status: gate.status }
+      )
+    }
+    return null
+  }
+
+  return requireAdminAuth(req, maxVersions)
+}
+
 export async function POST(req: Request) {
   const MAX_VERSIONS = 50
 
   try {
     const body = await req.json()
-    const report_id = body?.report_id
-    const access_token = body?.access_token
+    const report_id = typeof body?.report_id === "string" ? body.report_id.trim() : ""
+    const access_token = typeof body?.access_token === "string" ? body.access_token.trim() : ""
 
     if (!report_id) {
       return Response.json(
@@ -35,41 +104,29 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
-      const creds = parseBasicAuth(req)
+    const supabase = await createServiceRoleClient()
 
-      if (!creds) {
-        return Response.json(
-          { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: MAX_VERSIONS } },
-          { status: 401 }
-        )
-      }
+    const { data: report, error: reportError } = await supabase
+      .from("reports")
+      .select("access_token, token_expires_at")
+      .eq("id", report_id)
+      .maybeSingle()
 
-      const expectedUser = process.env.DASHBOARD_USER
-      const expectedPass = process.env.DASHBOARD_PASS
-
-      // Config server manquante => 500 (car ce n’est pas un problème auth client)
-      if (!expectedUser || !expectedPass) {
-        throw new Error("MISSING_DASHBOARD_AUTH_ENV")
-      }
-
-      const ok = creds.user === expectedUser && creds.pass === expectedPass
-      if (!ok) {
-        return Response.json(
-          { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: MAX_VERSIONS } },
-          { status: 403 }
-        )
-      }
+    if (reportError) {
+      console.error("DB REPORT ERROR:", reportError)
+      return Response.json(
+        { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+        { status: 500 }
+      )
     }
 
-    // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    const authResponse = authorizeReportVersionsList(
+      req,
+      access_token,
+      report as ReportVersionsAccessRow | null,
+      MAX_VERSIONS,
     )
+    if (authResponse) return authResponse
 
     const { data, error } = await supabase
       .from("report_versions")
