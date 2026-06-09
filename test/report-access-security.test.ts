@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
-import { authorizeReportVersionsList } from "@/app/api/report-versions/list/route";
 import { validateReportViewerAccessRecord } from "@/lib/reportViewerAccess";
+import { authorizeReportVersionsList } from "@/lib/reportVersionsListAccess";
 
 const originalDashboardUser = process.env.DASHBOARD_USER;
 const originalDashboardPass = process.env.DASHBOARD_PASS;
