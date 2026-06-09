@@ -1,24 +1,23 @@
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+type ReportViewerAccessRecord = {
+  access_token?: unknown;
+  token_expires_at?: unknown;
+};
+
+export type ReportViewerAccessResult =
+  | { ok: true }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
 /**
  * Vérifie le jeton viewer (`reports.access_token`) si la ligne en définit un.
  * Si aucun jeton en base, l’accès reste autorisé (comportement historique).
  */
-export async function assertReportViewerAccess(
-  supabase: SupabaseClient,
-  reportId: string,
+export function validateReportViewerAccessRecord(
   accessTokenRaw: string | null | undefined,
-): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
-  const { data: report, error } = await supabase
-    .from("reports")
-    .select("access_token, token_expires_at")
-    .eq("id", reportId)
-    .maybeSingle();
-
-  if (error) {
-    return { ok: false, status: 500, body: { error: error.message } };
-  }
+  report: ReportViewerAccessRecord | null,
+): ReportViewerAccessResult {
   if (!report) {
     return { ok: false, status: 404, body: { error: "Report not found" } };
   }
@@ -52,4 +51,25 @@ export async function assertReportViewerAccess(
   }
 
   return { ok: true };
+}
+
+export async function assertReportViewerAccess(
+  supabase: SupabaseClient,
+  reportId: string,
+  accessTokenRaw: string | null | undefined,
+): Promise<ReportViewerAccessResult> {
+  const { data: report, error } = await supabase
+    .from("reports")
+    .select("access_token, token_expires_at")
+    .eq("id", reportId)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, status: 500, body: { error: error.message } };
+  }
+  if (!report) {
+    return { ok: false, status: 404, body: { error: "Report not found" } };
+  }
+
+  return validateReportViewerAccessRecord(accessTokenRaw, report);
 }
