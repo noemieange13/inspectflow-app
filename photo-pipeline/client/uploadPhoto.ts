@@ -8,6 +8,8 @@ export type UploadPhotoParams = {
   file: File;
   reportId: string;
   inspectionId?: string;
+  accessToken?: string;
+  authorizationBearer?: string | null;
   language?: "en" | "fr";
 };
 
@@ -63,13 +65,21 @@ export async function uploadPhotoViaApi(
   if (params.inspectionId) {
     form.append("inspection_id", params.inspectionId);
   }
+  if (params.accessToken?.trim()) {
+    form.append("access_token", params.accessToken.trim());
+  }
   if (params.language) {
     form.append("language", params.language);
   }
 
+  const jwt = params.authorizationBearer?.trim() ?? "";
+  const headers: Record<string, string> = {};
+  if (jwt) headers.Authorization = `Bearer ${jwt}`;
+
   const res = await fetch("/api/upload-photo", {
     method: "POST",
     body: form,
+    headers,
   });
 
   let body: unknown;
