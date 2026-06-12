@@ -1,4 +1,5 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -19,9 +20,12 @@ export async function POST(req: Request) {
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
+    const accessTokenRaw = formData.get("access_token");
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
       langRaw === "en" || langRaw === "fr" ? langRaw : "fr";
+    const accessToken =
+      typeof accessTokenRaw === "string" ? accessTokenRaw : "";
 
     if (!file || !(file instanceof File)) {
       return Response.json({ error: "Missing file" }, { status: 400 });
@@ -40,7 +44,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -49,6 +53,19 @@ export async function POST(req: Request) {
     }
     if (!report) {
       return Response.json({ error: "Report not found" }, { status: 404 });
+    }
+
+    const gate = await assertReportAccessWithOptionalSession(
+      req,
+      reportId.trim(),
+      accessToken,
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { error: gate.error, code: gate.code },
+        { status: gate.status },
+      );
     }
 
     const effectiveInspectionId =
