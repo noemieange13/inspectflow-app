@@ -1475,6 +1475,9 @@ export default function ZeroDraftReportComposer({
       const form = new FormData();
       form.append("file", file);
       form.append("report_id", reportId);
+      if (viewerToken?.trim()) {
+        form.append("access_token", viewerToken.trim());
+      }
       form.append("language", language);
       try {
         const res = await fetch("/api/upload-photo", { method: "POST", body: form });
@@ -3203,6 +3206,7 @@ export default function ZeroDraftReportComposer({
             <LiveInspectionCapture
               reportId={reportId}
               language={language}
+              viewerToken={viewerToken}
               disabled={loading || uploadingPhoto}
               guideHint={
                 terrainStepLive?.kind === "photo"
