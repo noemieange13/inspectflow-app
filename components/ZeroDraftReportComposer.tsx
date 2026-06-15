@@ -1544,7 +1544,7 @@ export default function ZeroDraftReportComposer({
         return false;
       }
     },
-    [reportId, language],
+    [reportId, viewerToken, language],
   );
 
   const schedulePhotoAnalysisRefresh = useCallback(() => {
