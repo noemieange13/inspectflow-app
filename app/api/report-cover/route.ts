@@ -145,9 +145,7 @@ export async function POST(req: Request) {
       source: "cover_save",
     });
 
-    /** Jeton URL valide = même confiance qu’un éditeur autorisé : déverrouiller même si INSPECTFLOW_DEV_UNLOCK_REPORT=0. */
-    const allowUnlock =
-      allowReportPayloadUnlock(req) || Boolean(dbToken);
+    const allowUnlock = allowReportPayloadUnlock(req);
 
     const lockErr = (m: string) =>
       /P0001|Finalized|locked|prevent_report/i.test(m);
