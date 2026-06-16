@@ -1,28 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { buildCreateInspectionInsert } from "@/lib/createInspectionReport";
 
 export async function POST(request: NextRequest) {
   try {
-    const { clientName, address, inspectionType, language } = await request.json();
+    const body = await request.json();
+    const insertRow = buildCreateInspectionInsert(body);
 
     const supabase = await createServiceRoleClient();
 
-    // Créer une nouvelle inspection avec les données de base
+    // Legacy quick-start writer: keep rows private by URL token even when no owner exists yet.
     const { data, error } = await supabase
       .from("reports")
-      .insert({
-        payload: {
-          cover_v1: {
-            client_name: clientName,
-            address: address,
-            inspection_type: inspectionType,
-            language: language,
-            created_at: new Date().toISOString(),
-          },
-        },
-        created_at: new Date().toISOString(),
-      })
-      .select()
+      .insert(insertRow)
+      .select("id")
       .single();
 
     if (error) {
@@ -33,7 +24,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ reportId: data.id });
+    return NextResponse.json({
+      reportId: data.id,
+      access_token: insertRow.access_token,
+    });
   } catch (error) {
     console.error("Erreur API création inspection:", error);
     return NextResponse.json(
