@@ -1,4 +1,6 @@
-import { createClient } from "@supabase/supabase-js"
+import { validateReportAccessRow } from "@/lib/assertReportAccessForApi"
+import { MAX_REPORT_VERSIONS, listReportVersions } from "@/lib/reportVersions"
+import { createServiceRoleClient } from "@/lib/supabaseServer"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -21,29 +23,57 @@ function parseBasicAuth(req: Request): { user: string; pass: string } | null {
 }
 
 export async function POST(req: Request) {
-  const MAX_VERSIONS = 50
-
   try {
     const body = await req.json()
     const report_id = body?.report_id
-    const access_token = body?.access_token
+    const access_token = typeof body?.access_token === "string" ? body.access_token.trim() : ""
 
     if (!report_id) {
       return Response.json(
-        { data: [], error: "MISSING_REPORT_ID", meta: { max_versions: MAX_VERSIONS } },
+        { data: [], error: "MISSING_REPORT_ID", meta: { max_versions: MAX_REPORT_VERSIONS } },
         { status: 400 }
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
+    const supabase = await createServiceRoleClient()
+
+    const { data: report, error: reportError } = await supabase
+      .from("reports")
+      .select("id, access_token, token_expires_at, user_id")
+      .eq("id", String(report_id).trim())
+      .maybeSingle()
+
+    if (reportError) {
+      return Response.json(
+        { data: [], error: "DB_ERROR", meta: { max_versions: MAX_REPORT_VERSIONS } },
+        { status: 500 }
+      )
+    }
+    if (!report) {
+      return Response.json(
+        { data: [], error: "REPORT_NOT_FOUND", meta: { max_versions: MAX_REPORT_VERSIONS } },
+        { status: 404 }
+      )
+    }
+
+    const rec = report as Record<string, unknown>
+    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : ""
+
+    if (dbToken && access_token) {
+      const access = validateReportAccessRow(String(report_id), access_token, report)
+      if (!access.ok) {
+        return Response.json(
+          { data: [], error: access.code ?? "ACCESS_DENIED", meta: { max_versions: MAX_REPORT_VERSIONS } },
+          { status: access.status }
+        )
+      }
+    } else {
+      // Tokenless legacy reports expose version history only through the admin gate.
       const creds = parseBasicAuth(req)
 
       if (!creds) {
         return Response.json(
-          { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: MAX_VERSIONS } },
+          { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: MAX_REPORT_VERSIONS } },
           { status: 401 }
         )
       }
@@ -59,42 +89,30 @@ export async function POST(req: Request) {
       const ok = creds.user === expectedUser && creds.pass === expectedPass
       if (!ok) {
         return Response.json(
-          { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: MAX_VERSIONS } },
+          { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: MAX_REPORT_VERSIONS } },
           { status: 403 }
         )
       }
     }
 
-    // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-
-    const { data, error } = await supabase
-      .from("report_versions")
-      .select("*")
-      .eq("report_id", report_id)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("DB ERROR:", error)
+    const versions = await listReportVersions(supabase, String(report_id).trim(), MAX_REPORT_VERSIONS)
+    if ("error" in versions) {
       return Response.json(
-        { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+        { data: [], error: "DB_ERROR", meta: { max_versions: MAX_REPORT_VERSIONS } },
         { status: 500 }
       )
     }
 
     return Response.json({
-      data: Array.isArray(data) ? data : [],
+      data: versions.rows,
       error: null,
-      meta: { max_versions: MAX_VERSIONS },
+      meta: { max_versions: MAX_REPORT_VERSIONS },
     })
   } catch (err) {
     console.error("SERVER ERROR:", err)
 
     return Response.json(
-      { data: [], error: "SERVER_ERROR", meta: { max_versions: MAX_VERSIONS } },
+      { data: [], error: "SERVER_ERROR", meta: { max_versions: MAX_REPORT_VERSIONS } },
       { status: 500 }
     )
   }

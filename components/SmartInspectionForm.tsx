@@ -152,8 +152,11 @@ export default function SmartInspectionForm() {
       });
       
       if (response.ok) {
-        const { reportId } = await response.json();
-        router.push(`/inspection/${reportId}/mobile`);
+        const { reportId, access_token } = await response.json();
+        const token = typeof access_token === "string" ? access_token.trim() : "";
+        router.push(
+          `/inspection/${encodeURIComponent(reportId)}/mobile${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+        );
       }
     } catch (error) {
       console.error("Erreur création inspection:", error);
@@ -324,13 +327,13 @@ export default function SmartInspectionForm() {
         <div className="border rounded-xl p-6">
           <div className="flex items-center gap-2 mb-4">
             <Calendar className="w-5 h-5 text-blue-600" />
-            <h2 className="text-xl font-semibold">Conditions d'inspection</h2>
+            <h2 className="text-xl font-semibold">Conditions d&apos;inspection</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Date et heure de l'inspection
+                Date et heure de l&apos;inspection
               </label>
               <input
                 type="text"
@@ -355,7 +358,7 @@ export default function SmartInspectionForm() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Durée de l'inspection
+                Durée de l&apos;inspection
               </label>
               <input
                 type="text"
@@ -396,7 +399,7 @@ export default function SmartInspectionForm() {
             <div className="text-center">
               <Camera className="w-12 h-12 text-gray-400 mx-auto mb-2" />
               <p className="text-sm text-gray-600 mb-2">
-                Prenez des photos du bâtiment pour l'analyse IA
+                Prenez des photos du bâtiment pour l&apos;analyse IA
               </p>
               <input
                 type="file"
@@ -456,7 +459,12 @@ export default function SmartInspectionForm() {
                   type="radio"
                   value="manuel"
                   checked={formData.description_mode === "manuel"}
-                  onChange={(e) => setFormData(prev => ({ ...prev, description_mode: e.target.value as any }))}
+                  onChange={(e) =>
+                    setFormData(prev => ({
+                      ...prev,
+                      description_mode: e.target.value === "photos_ia" ? "photos_ia" : "manuel",
+                    }))
+                  }
                   className="mr-2"
                 />
                 <span>Rédaction manuelle</span>
@@ -466,7 +474,12 @@ export default function SmartInspectionForm() {
                   type="radio"
                   value="photos_ia"
                   checked={formData.description_mode === "photos_ia"}
-                  onChange={(e) => setFormData(prev => ({ ...prev, description_mode: e.target.value as any }))}
+                  onChange={(e) =>
+                    setFormData(prev => ({
+                      ...prev,
+                      description_mode: e.target.value === "photos_ia" ? "photos_ia" : "manuel",
+                    }))
+                  }
                   className="mr-2"
                 />
                 <span>Généré par IA (photos)</span>
@@ -518,7 +531,7 @@ export default function SmartInspectionForm() {
             ) : (
               <>
                 <CheckCircle className="w-5 h-5" />
-                Créer l'inspection intelligente
+                Créer l&apos;inspection intelligente
               </>
             )}
           </button>
