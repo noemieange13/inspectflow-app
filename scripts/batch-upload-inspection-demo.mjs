@@ -227,11 +227,14 @@ async function uploadOne(filePath, reportId, inspectionId, accessToken) {
   return { ok: res.ok, status: res.status, body: parsed, fileName: name };
 }
 
-async function triggerPdf(reportId) {
+async function triggerPdf(reportId, accessToken) {
   const res = await fetchApi("/api/trigger-inspection", {
     method: "POST",
     headers: apiHeaders(true),
-    body: JSON.stringify({ report_id: reportId }),
+    body: JSON.stringify({
+      report_id: reportId,
+      access_token: typeof accessToken === "string" ? accessToken.trim() : "",
+    }),
   });
   const text = await res.text();
   let parsed;
@@ -275,7 +278,7 @@ let accessToken = process.env.DEMO_ACCESS_TOKEN?.trim() ?? "";
 
 if (opts.triggerPdf && !opts.uploadOnly && isUuid(reportId)) {
   console.log("--trigger-pdf seul (sans ré-upload).");
-  const pdf = await triggerPdf(reportId);
+  const pdf = await triggerPdf(reportId, accessToken);
   console.log("trigger-inspection", pdf.status, JSON.stringify(pdf.body, null, 2));
   process.exit(pdf.ok ? 0 : 1);
 }
@@ -342,7 +345,7 @@ console.log("\nRésumé:", { ok, fail, report_id: reportId, started_at: startedA
 
 if (opts.triggerPdf && ok > 0) {
   console.log("Déclenchement PDF…");
-  const pdf = await triggerPdf(reportId);
+  const pdf = await triggerPdf(reportId, accessToken);
   console.log("trigger-inspection", pdf.status, JSON.stringify(pdf.body, null, 2));
   appendLog({
     at: new Date().toISOString(),
