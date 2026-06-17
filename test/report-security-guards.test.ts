@@ -95,12 +95,13 @@ describe("upload-photo inspection binding", () => {
 
 describe("locked report writes", () => {
   it("does not allow production unlocks without the explicit dev/local unlock guard", () => {
+    const env = process.env as Record<string, string | undefined>;
     const oldVercel = process.env.VERCEL;
     const oldNodeEnv = process.env.NODE_ENV;
     const oldUnlock = process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
     try {
       process.env.VERCEL = "1";
-      process.env.NODE_ENV = "production";
+      env.NODE_ENV = "production";
       process.env.INSPECTFLOW_DEV_UNLOCK_REPORT = "0";
 
       const req = new Request("https://inspectflow.example/api/report-content", {
@@ -114,8 +115,8 @@ describe("locked report writes", () => {
     } finally {
       if (oldVercel === undefined) delete process.env.VERCEL;
       else process.env.VERCEL = oldVercel;
-      if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = oldNodeEnv;
+      if (oldNodeEnv === undefined) delete env.NODE_ENV;
+      else env.NODE_ENV = oldNodeEnv;
       if (oldUnlock === undefined) delete process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
       else process.env.INSPECTFLOW_DEV_UNLOCK_REPORT = oldUnlock;
     }
