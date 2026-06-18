@@ -27,7 +27,7 @@ describe("locked report payload updates", () => {
     for (const route of writeRoutes) {
       const source = readWorkspaceFile(route);
       const allowUnlockAssignments = source.matchAll(
-        /const\s+allowUnlock\s*=\s*([^;]+);/gs,
+        /const\s+allowUnlock\s*=\s*([\s\S]*?);/g,
       );
       for (const match of allowUnlockAssignments) {
         const expression = match[1] ?? "";
@@ -47,10 +47,12 @@ describe("locked report payload updates", () => {
       unlock: process.env.INSPECTFLOW_DEV_UNLOCK_REPORT,
     };
 
+    const mutableEnv = process.env as Record<string, string | undefined>;
+
     try {
-      process.env.NODE_ENV = "production";
-      process.env.VERCEL = "1";
-      delete process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
+      mutableEnv.NODE_ENV = "production";
+      mutableEnv.VERCEL = "1";
+      delete mutableEnv.INSPECTFLOW_DEV_UNLOCK_REPORT;
 
       const req = new Request("https://inspectflow-app.vercel.app/api/report-content", {
         headers: { host: "inspectflow-app.vercel.app" },
@@ -58,11 +60,11 @@ describe("locked report payload updates", () => {
 
       assert.equal(allowReportPayloadUnlock(req), false);
     } finally {
-      process.env.NODE_ENV = previous.nodeEnv;
-      if (previous.vercel === undefined) delete process.env.VERCEL;
-      else process.env.VERCEL = previous.vercel;
-      if (previous.unlock === undefined) delete process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
-      else process.env.INSPECTFLOW_DEV_UNLOCK_REPORT = previous.unlock;
+      mutableEnv.NODE_ENV = previous.nodeEnv;
+      if (previous.vercel === undefined) delete mutableEnv.VERCEL;
+      else mutableEnv.VERCEL = previous.vercel;
+      if (previous.unlock === undefined) delete mutableEnv.INSPECTFLOW_DEV_UNLOCK_REPORT;
+      else mutableEnv.INSPECTFLOW_DEV_UNLOCK_REPORT = previous.unlock;
     }
   });
 });
