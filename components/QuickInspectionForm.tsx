@@ -26,8 +26,12 @@ export default function QuickInspectionForm() {
       });
       
       if (response.ok) {
-        const { reportId } = await response.json();
-        router.push(`/report/${reportId}`);
+        const { reportId, access_token: accessToken } = await response.json();
+        const tokenQuery =
+          typeof accessToken === "string" && accessToken.trim()
+            ? `?token=${encodeURIComponent(accessToken.trim())}`
+            : "";
+        router.push(`/report/${reportId}${tokenQuery}`);
       }
     } catch (error) {
       console.error("Erreur création inspection:", error);
@@ -62,7 +66,7 @@ export default function QuickInspectionForm() {
         {/* Adresse */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Adresse de l'inspection
+            Adresse de l&apos;inspection
           </label>
           <input
             type="text"
@@ -77,7 +81,7 @@ export default function QuickInspectionForm() {
         {/* Type d'inspection */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Type d'inspection
+            Type d&apos;inspection
           </label>
           <select
             value={formData.inspectionType}

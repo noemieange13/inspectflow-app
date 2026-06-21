@@ -29,28 +29,32 @@ function optUuid(v: unknown): string | null {
   return isUuid(t) ? t : null;
 }
 
-async function photoExists(
+async function photoBelongsToInspection(
   supabase: ReturnType<typeof createClient>,
   id: string,
+  inspectionId: string,
 ): Promise<boolean> {
   const { data, error } = await supabase
     .from("photos")
-    .select("id")
+    .select("id, inspection_id")
     .eq("id", id)
     .maybeSingle();
   if (error) {
     console.warn("create-report photos lookup:", error.message);
     return false;
   }
-  return !!data?.id;
+  return !!data?.id && String(data.inspection_id ?? "") === inspectionId;
 }
 
 async function resolvePhotoId(
   supabase: ReturnType<typeof createClient>,
   candidate: string | null,
+  inspectionId: string | null,
 ): Promise<string | null> {
-  if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  if (!candidate || !isUuid(candidate) || !inspectionId) return null;
+  return (await photoBelongsToInspection(supabase, candidate, inspectionId))
+    ? candidate
+    : null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -118,7 +122,7 @@ Deno.serve(async (req: Request) => {
         inspectionId = jobInsp;
       }
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = await resolvePhotoId(supabase, jobPhoto, inspectionId);
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -156,13 +160,13 @@ Deno.serve(async (req: Request) => {
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = await resolvePhotoId(supabase, jobPhoto, inspectionId);
       }
     }
 
     if (body.photo_id !== undefined && body.photo_id !== null) {
       const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
+      photoId = explicit ? await resolvePhotoId(supabase, explicit, inspectionId) : null;
     }
 
     if (!inspectionId) {

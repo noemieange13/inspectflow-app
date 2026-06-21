@@ -134,7 +134,7 @@ export async function ensureReportPayloadHtml(
     payload: nextPayload,
     source: "ensure-report-payload-html",
     clearPdfPath: true,
-    allowUnlock: true,
+    allowUnlock: false,
   });
   if (rpcErr) return { ok: false, error: rpcErr.message };
   return { ok: true, builtHtml: built };

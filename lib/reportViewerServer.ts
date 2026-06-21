@@ -1,4 +1,4 @@
-import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { validateReportAccessRow } from "@/lib/assertReportAccessForApi";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
@@ -35,7 +35,7 @@ export async function loadReportForViewer(
     const rowResult = await Promise.race([
       supabase
         .from("reports")
-        .select("id, status, payload, access_token, token_expires_at, pdf_path, pdf_url, file_url")
+        .select("id, status, payload, access_token, token_expires_at, pdf_path, pdf_url, file_url, user_id")
         .eq("id", reportId)
         .maybeSingle()
         .then((r) => ({ kind: "row" as const, r })),
@@ -81,36 +81,19 @@ export async function loadReportForViewer(
     }
 
     const rec = report as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
-
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
+    const gate = validateReportAccessRow(reportId, viewerToken ?? "", rec);
+    if (!gate.ok) {
+      return {
+        id: reportId,
+        status: null,
+        title: null,
+        payload: null,
+        hasPdf: false,
+        pdfSignedUrl: null,
+        accessDenied: gate.status === 403,
+        notFound: gate.status === 404,
+        serverError: gate.status >= 500 ? gate.error : undefined,
+      };
     }
 
     const payload =

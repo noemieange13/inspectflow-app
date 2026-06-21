@@ -6,6 +6,7 @@ import { emitProductEvent } from "@/lib/productTelemetry";
 
 type Props = {
   reportId: string;
+  viewerToken?: string;
   language: "fr" | "en";
   disabled?: boolean;
   /** Indication du guide terrain (ex. panneau électrique). */
@@ -18,6 +19,7 @@ type Props = {
  */
 export default function LiveInspectionCapture({
   reportId,
+  viewerToken,
   language,
   disabled,
   guideHint,
@@ -92,6 +94,9 @@ export default function LiveInspectionCapture({
       form.append("file", file);
       form.append("report_id", reportId);
       form.append("language", language);
+      if (viewerToken?.trim()) {
+        form.append("access_token", viewerToken.trim());
+      }
       emitProductEvent("live_inspection_capture_upload", { report_id: reportId });
       const res = await fetch("/api/upload-photo", { method: "POST", body: form });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -104,7 +109,7 @@ export default function LiveInspectionCapture({
     } finally {
       setBusy(false);
     }
-  }, [reportId, language, onPhotoUploaded]);
+  }, [reportId, viewerToken, language, onPhotoUploaded]);
 
   const labels =
     language === "en"
