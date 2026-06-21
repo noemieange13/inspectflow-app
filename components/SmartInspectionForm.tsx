@@ -152,8 +152,12 @@ export default function SmartInspectionForm() {
       });
       
       if (response.ok) {
-        const { reportId } = await response.json();
-        router.push(`/inspection/${reportId}/mobile`);
+        const { reportId, access_token: accessToken } = await response.json();
+        const tokenQuery =
+          typeof accessToken === "string" && accessToken.trim()
+            ? `?token=${encodeURIComponent(accessToken.trim())}`
+            : "";
+        router.push(`/inspection/${reportId}/mobile${tokenQuery}`);
       }
     } catch (error) {
       console.error("Erreur création inspection:", error);

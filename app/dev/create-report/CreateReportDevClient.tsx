@@ -107,6 +107,7 @@ export function CreateReportDevClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           report_id: newReportId,
+          access_token: accessToken,
           title: "Rapport de test — dev",
           inspector_note: "Créé depuis la page dev/create-report",
           entries: [
@@ -129,7 +130,7 @@ export function CreateReportDevClient() {
       const r3 = await fetch("/api/trigger-inspection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ report_id: newReportId }),
+        body: JSON.stringify({ report_id: newReportId, access_token: accessToken }),
       });
       const j3 = await r3.json().catch(() => null);
 
