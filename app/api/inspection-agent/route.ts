@@ -1,5 +1,6 @@
 import { runInspectionAgent } from "@/lib/inspectionAgent/runInspectionAgent";
 import type { AgentAutonomyLevel } from "@/lib/inspectionAgent/types";
+import { assertTriggerSecret } from "@/lib/triggerSecretAuth";
 
 export const maxDuration = 120;
 
@@ -9,18 +10,9 @@ function parseAutonomy(raw: unknown): AgentAutonomyLevel {
 }
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin =
-      (origin && host && new URL(origin).host === host) ||
-      (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+  const unauthorized = assertTriggerSecret(req);
+  if (unauthorized) {
+    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
   let body: unknown;
