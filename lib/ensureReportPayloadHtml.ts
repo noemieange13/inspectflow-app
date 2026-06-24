@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { rpcUpdateReportPayloadWithUnlock } from "@/lib/rpcUpdateReportPayload";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   buildHtmlFromReportPayload,
@@ -14,6 +15,15 @@ import {
 } from "@/lib/qcLegalClauseSnapshot";
 import { loadLegalClausesForReportPayload } from "@/lib/loadLegalClausesForReportPayload";
 
+export type EnsureReportPayloadHtmlOptions = {
+  /**
+   * Locked/finalized reports must not be reopened as a side effect of PDF generation.
+   * Callers that intentionally reopen a report must opt in explicitly.
+   */
+  allowUnlock?: boolean;
+  supabaseClient?: SupabaseClient;
+};
+
 /**
  * Garantit `reports.payload.html` avant l’appel à `reports-pdf` : génération côté serveur
  * (sections / défauts / observations) avec texte échappé, puis mise à jour en base.
@@ -21,12 +31,13 @@ import { loadLegalClausesForReportPayload } from "@/lib/loadLegalClausesForRepor
  */
 export async function ensureReportPayloadHtml(
   reportId: string,
+  options: EnsureReportPayloadHtmlOptions = {},
 ): Promise<
   { ok: true; builtHtml: string } | { ok: false; error: string }
 > {
-  let supabase;
+  let supabase: SupabaseClient;
   try {
-    supabase = await createServiceRoleClient();
+    supabase = options.supabaseClient ?? await createServiceRoleClient();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, error: message };
@@ -134,7 +145,7 @@ export async function ensureReportPayloadHtml(
     payload: nextPayload,
     source: "ensure-report-payload-html",
     clearPdfPath: true,
-    allowUnlock: true,
+    allowUnlock: options.allowUnlock === true,
   });
   if (rpcErr) return { ok: false, error: rpcErr.message };
   return { ok: true, builtHtml: built };
