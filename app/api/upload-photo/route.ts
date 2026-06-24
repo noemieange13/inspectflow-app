@@ -1,4 +1,6 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
+import { extractReportUploadAccessToken } from "@/lib/reportUploadAccessToken";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -40,7 +42,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -49,6 +51,37 @@ export async function POST(req: Request) {
     }
     if (!report) {
       return Response.json({ error: "Report not found" }, { status: 404 });
+    }
+
+    const accessTokenRaw = extractReportUploadAccessToken(
+      req,
+      formData,
+      reportId.trim(),
+    );
+    const gate = await assertReportAccessWithOptionalSession(
+      req,
+      reportId.trim(),
+      accessTokenRaw,
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { error: gate.error, code: gate.code },
+        { status: gate.status },
+      );
+    }
+
+    const dbToken =
+      typeof report.access_token === "string" ? report.access_token.trim() : "";
+    if (!dbToken && !gate.userId) {
+      return Response.json(
+        {
+          error:
+            "Photo upload requires a report access token or the report owner's session.",
+          code: "access_denied",
+        },
+        { status: 403 },
+      );
     }
 
     const effectiveInspectionId =
