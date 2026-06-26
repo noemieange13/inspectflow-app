@@ -1375,7 +1375,7 @@ export default function ZeroDraftReportComposer({
 
   useEffect(() => {
     ensureSessionStart(reportId);
-  }, [reportId]);
+  }, [reportId, viewerToken]);
 
   useEffect(() => {
     setHostInfo(window.location.host);
