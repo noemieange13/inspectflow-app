@@ -1,25 +1,15 @@
 import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
+import { validatePrivilegedReportActionAccess } from "@/lib/reportActionAccess";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { verifyBearerMatchesReportOwner } from "@/lib/supabaseAuthFromRequest";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
+import { validateTriggerSecretHeader } from "@/lib/triggerSecretAuth";
 
 /** Génération PDF + appel Edge : peut dépasser le défaut Vercel (60s). */
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin = (origin && host && new URL(origin).host === host)
-      || (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
-      );
-    }
-  }
+  const hasTriggerSecret = validateTriggerSecretHeader(req);
 
   let body: unknown;
   try {
@@ -45,6 +35,49 @@ export async function POST(req: Request) {
       { success: false, error: "Missing report_id" },
       { status: 400 },
     );
+  }
+
+  if (!hasTriggerSecret) {
+    const accessTokenRaw =
+      typeof body === "object" &&
+      body !== null &&
+      "access_token" in body &&
+      typeof (body as { access_token: unknown }).access_token === "string"
+        ? (body as { access_token: string }).access_token
+        : "";
+    const supabase = await createServiceRoleClient();
+    const { data: report, error: readError } = await supabase
+      .from("reports")
+      .select("access_token, token_expires_at, user_id")
+      .eq("id", report_id)
+      .maybeSingle();
+    if (readError) {
+      return Response.json(
+        { success: false, error: readError.message },
+        { status: 500 },
+      );
+    }
+    if (!report) {
+      return Response.json(
+        { success: false, error: "Report not found" },
+        { status: 404 },
+      );
+    }
+
+    const rec = report as Record<string, unknown>;
+    const ownerSessionOk = await verifyBearerMatchesReportOwner(req, rec.user_id);
+    const gate = validatePrivilegedReportActionAccess(
+      report_id,
+      accessTokenRaw,
+      rec,
+      ownerSessionOk,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { success: false, error: gate.error, code: gate.code ?? "access_denied" },
+        { status: gate.status },
+      );
+    }
   }
 
   const t0 = Date.now();

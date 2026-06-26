@@ -1,5 +1,7 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { validatePrivilegedReportActionAccess } from "@/lib/reportActionAccess";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { verifyBearerMatchesReportOwner } from "@/lib/supabaseAuthFromRequest";
 import { createHash } from "crypto";
 
 const BUCKET = "user-uploads";
@@ -19,6 +21,7 @@ export async function POST(req: Request) {
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
+    const accessTokenRaw = formData.get("access_token") as string | null;
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
       langRaw === "en" || langRaw === "fr" ? langRaw : "fr";
@@ -40,7 +43,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -51,9 +54,39 @@ export async function POST(req: Request) {
       return Response.json({ error: "Report not found" }, { status: 404 });
     }
 
+    const reportRecord = report as Record<string, unknown>;
+    const ownerSessionOk = await verifyBearerMatchesReportOwner(req, reportRecord.user_id);
+    const gate = validatePrivilegedReportActionAccess(
+      reportId.trim(),
+      accessTokenRaw ?? "",
+      reportRecord,
+      ownerSessionOk,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { error: gate.error, code: gate.code ?? "access_denied" },
+        { status: gate.status },
+      );
+    }
+
+    const reportInspectionId =
+      typeof report.inspection_id === "string" && report.inspection_id.trim()
+        ? report.inspection_id.trim()
+        : null;
+    const requestedInspectionId = inspectionId?.trim() || null;
+    if (
+      requestedInspectionId &&
+      reportInspectionId &&
+      requestedInspectionId !== reportInspectionId
+    ) {
+      return Response.json(
+        { error: "inspection_id does not match report", code: "inspection_mismatch" },
+        { status: 403 },
+      );
+    }
+
     const effectiveInspectionId =
-      inspectionId?.trim() ||
-      (typeof report.inspection_id === "string" ? report.inspection_id : null);
+      reportInspectionId || (ownerSessionOk ? requestedInspectionId : null);
     const ownerId =
       typeof report.user_id === "string" ? report.user_id : "anonymous";
 

@@ -7,6 +7,7 @@
 export type UploadPhotoParams = {
   file: File;
   reportId: string;
+  accessToken?: string;
   inspectionId?: string;
   language?: "en" | "fr";
 };
@@ -60,6 +61,9 @@ export async function uploadPhotoViaApi(
   const form = new FormData();
   form.append("file", params.file);
   form.append("report_id", params.reportId);
+  if (params.accessToken?.trim()) {
+    form.append("access_token", params.accessToken);
+  }
   if (params.inspectionId) {
     form.append("inspection_id", params.inspectionId);
   }

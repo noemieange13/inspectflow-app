@@ -19,6 +19,7 @@
     "test:inspection-demo": "node scripts/batch-upload-inspection-demo.mjs",
     "test:inspection-demo:all": "node scripts/batch-upload-inspection-demo.mjs --all",
     "test:all": "tsx test-all.ts",
+    "test:security": "tsx --test test/report-access-security.test.ts",
     "test:compliance": "tsx --test test/compliance-integrity.test.ts",
     "ci:compliance": "node scripts/run-compliance-ci.mjs"
   },
