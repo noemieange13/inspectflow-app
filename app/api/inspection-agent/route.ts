@@ -1,5 +1,6 @@
 import { runInspectionAgent } from "@/lib/inspectionAgent/runInspectionAgent";
 import type { AgentAutonomyLevel } from "@/lib/inspectionAgent/types";
+import { authorizeTriggerSecretOrReportAccess } from "@/lib/authorizeReportServiceRoute";
 
 export const maxDuration = 120;
 
@@ -9,20 +10,6 @@ function parseAutonomy(raw: unknown): AgentAutonomyLevel {
 }
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin =
-      (origin && host && new URL(origin).host === host) ||
-      (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -36,6 +23,14 @@ export async function POST(req: Request) {
   if (!report_id) {
     return Response.json({ ok: false, error: "Missing report_id" }, { status: 400 });
   }
+  const accessTokenRaw =
+    typeof o.access_token === "string" ? o.access_token : "";
+  const auth = await authorizeTriggerSecretOrReportAccess(
+    req,
+    report_id,
+    accessTokenRaw,
+  );
+  if (!auth.ok) return auth.response;
 
   const autonomy = parseAutonomy(o.autonomy);
   const execute = o.execute === true;
