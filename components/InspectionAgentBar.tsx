@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { emitProductEvent } from "@/lib/productTelemetry";
+import { useSupabaseAccessToken } from "@/lib/useSupabaseAccessToken";
 import type {
   AgentAutonomyLevel,
   InspectionAgentRunResult,
@@ -14,15 +15,17 @@ const STORAGE_LLM = "inspectflow:inspection-agent:use-llm";
 
 type Props = {
   reportId: string;
+  viewerToken?: string;
 };
 
-export default function InspectionAgentBar({ reportId }: Props) {
+export default function InspectionAgentBar({ reportId, viewerToken }: Props) {
   const [agentMode, setAgentMode] = useState<"manual" | "agent">("manual");
   const [autonomy, setAutonomy] = useState<AgentAutonomyLevel>("semi");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<InspectionAgentRunResult | null>(null);
   const [useLlmDecider, setUseLlmDecider] = useState(false);
+  const supabaseAccessToken = useSupabaseAccessToken();
 
   useEffect(() => {
     try {
@@ -74,11 +77,16 @@ export default function InspectionAgentBar({ reportId }: Props) {
         use_llm: useLlmDecider,
       });
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (supabaseAccessToken?.trim()) {
+          headers.Authorization = `Bearer ${supabaseAccessToken.trim()}`;
+        }
         const res = await fetch("/api/inspection-agent", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             report_id: reportId,
+            access_token: viewerToken?.trim() ?? "",
             autonomy,
             execute,
             use_llm: useLlmDecider,
@@ -100,7 +108,7 @@ export default function InspectionAgentBar({ reportId }: Props) {
         setLoading(false);
       }
     },
-    [reportId, autonomy, useLlmDecider],
+    [reportId, viewerToken, supabaseAccessToken, autonomy, useLlmDecider],
   );
 
   const summary = useMemo(() => {

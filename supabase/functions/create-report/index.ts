@@ -32,25 +32,36 @@ function optUuid(v: unknown): string | null {
 async function photoExists(
   supabase: ReturnType<typeof createClient>,
   id: string,
-): Promise<boolean> {
+  expectedInspectionId: string | null,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const { data, error } = await supabase
     .from("photos")
-    .select("id")
+    .select("id, inspection_id")
     .eq("id", id)
     .maybeSingle();
   if (error) {
     console.warn("create-report photos lookup:", error.message);
-    return false;
+    return { ok: false, reason: "lookup_failed" };
   }
-  return !!data?.id;
+  if (!data?.id) return { ok: false, reason: "not_found" };
+  const photoInspectionId =
+    data.inspection_id != null && String(data.inspection_id).trim()
+      ? String(data.inspection_id).trim()
+      : null;
+  if (expectedInspectionId && photoInspectionId !== expectedInspectionId) {
+    return { ok: false, reason: "inspection_mismatch" };
+  }
+  return { ok: true };
 }
 
 async function resolvePhotoId(
   supabase: ReturnType<typeof createClient>,
   candidate: string | null,
+  expectedInspectionId: string | null,
 ): Promise<string | null> {
   if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  const result = await photoExists(supabase, candidate, expectedInspectionId);
+  return result.ok ? candidate : null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -118,7 +129,7 @@ Deno.serve(async (req: Request) => {
         inspectionId = jobInsp;
       }
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = await resolvePhotoId(supabase, jobPhoto, inspectionId);
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -156,13 +167,28 @@ Deno.serve(async (req: Request) => {
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = await resolvePhotoId(supabase, jobPhoto, inspectionId);
       }
     }
 
     if (body.photo_id !== undefined && body.photo_id !== null) {
       const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
+      if (explicit) {
+        const result = await photoExists(supabase, explicit, inspectionId);
+        if (!result.ok) {
+          return json(
+            {
+              error: "photo_id is not valid for this inspection",
+              photo_id: explicit,
+              reason: result.reason,
+            },
+            result.reason === "lookup_failed" ? 502 : 400,
+          );
+        }
+        photoId = explicit;
+      } else {
+        photoId = null;
+      }
     }
 
     if (!inspectionId) {
