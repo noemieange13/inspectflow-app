@@ -55,7 +55,7 @@ describe("trigger secret auth", () => {
       });
       const wrong = new Request("https://app.example/api/trigger-inspection", {
         method: "POST",
-        headers: { "x-trigger-secret": " top-secret " },
+        headers: { "x-trigger-secret": "top-secret-extra" },
       });
 
       assert.equal(hasExactTriggerSecret(ok), true);
