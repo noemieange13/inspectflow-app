@@ -595,7 +595,7 @@ export default function ZeroDraftReportComposer({
       window.clearTimeout(manualSaveDebounceTimerRef.current);
       manualSaveDebounceTimerRef.current = null;
     }
-  }, [reportId]);
+  }, [reportId, viewerToken]);
 
   useEffect(() => {
     if (!showEditor) return;
