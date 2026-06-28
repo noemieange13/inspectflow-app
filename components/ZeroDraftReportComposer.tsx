@@ -595,7 +595,7 @@ export default function ZeroDraftReportComposer({
       window.clearTimeout(manualSaveDebounceTimerRef.current);
       manualSaveDebounceTimerRef.current = null;
     }
-  }, [reportId, viewerToken]);
+  }, [reportId]);
 
   useEffect(() => {
     if (!showEditor) return;
@@ -2304,7 +2304,7 @@ export default function ZeroDraftReportComposer({
       );
     }
     return pdfBody.signed_url ?? pdfBody.pdf_url ?? null;
-  }, [reportId]);
+  }, [reportId, viewerToken]);
 
   const refreshPdfUrl = useCallback(async () => {
     if (!viewerToken) return;
