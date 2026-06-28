@@ -14,9 +14,10 @@ const STORAGE_LLM = "inspectflow:inspection-agent:use-llm";
 
 type Props = {
   reportId: string;
+  viewerToken?: string;
 };
 
-export default function InspectionAgentBar({ reportId }: Props) {
+export default function InspectionAgentBar({ reportId, viewerToken }: Props) {
   const [agentMode, setAgentMode] = useState<"manual" | "agent">("manual");
   const [autonomy, setAutonomy] = useState<AgentAutonomyLevel>("semi");
   const [loading, setLoading] = useState(false);
@@ -79,6 +80,7 @@ export default function InspectionAgentBar({ reportId }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             report_id: reportId,
+            access_token: viewerToken?.trim() ?? "",
             autonomy,
             execute,
             use_llm: useLlmDecider,
@@ -100,7 +102,7 @@ export default function InspectionAgentBar({ reportId }: Props) {
         setLoading(false);
       }
     },
-    [reportId, autonomy, useLlmDecider],
+    [reportId, viewerToken, autonomy, useLlmDecider],
   );
 
   const summary = useMemo(() => {
