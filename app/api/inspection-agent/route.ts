@@ -1,5 +1,8 @@
+import { assertReportTokenOrOwnerAccess } from "@/lib/assertReportAccessForApi";
 import { runInspectionAgent } from "@/lib/inspectionAgent/runInspectionAgent";
 import type { AgentAutonomyLevel } from "@/lib/inspectionAgent/types";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { hasExactTriggerSecret } from "@/lib/triggerSecretAuth";
 
 export const maxDuration = 120;
 
@@ -9,20 +12,6 @@ function parseAutonomy(raw: unknown): AgentAutonomyLevel {
 }
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin =
-      (origin && host && new URL(origin).host === host) ||
-      (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -37,11 +26,38 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "Missing report_id" }, { status: 400 });
   }
 
+  const accessTokenRaw =
+    typeof o.access_token === "string" ? o.access_token : "";
+
   const autonomy = parseAutonomy(o.autonomy);
   const execute = o.execute === true;
   const useLlm = o.use_llm === true;
 
   try {
+    if (!hasExactTriggerSecret(req)) {
+      const supabase = await createServiceRoleClient();
+      const { data: report, error: reportErr } = await supabase
+        .from("reports")
+        .select("id, user_id, access_token, token_expires_at")
+        .eq("id", report_id)
+        .maybeSingle();
+      if (reportErr) {
+        return Response.json({ ok: false, error: reportErr.message }, { status: 500 });
+      }
+      const access = await assertReportTokenOrOwnerAccess(
+        req,
+        report_id,
+        accessTokenRaw,
+        report as Record<string, unknown> | null,
+      );
+      if (!access.ok) {
+        return Response.json(
+          { ok: false, error: access.error, code: access.code },
+          { status: access.status },
+        );
+      }
+    }
+
     const result = await runInspectionAgent({
       reportId: report_id,
       autonomy,

@@ -65,6 +65,33 @@ export function validateReportAccessRow(
 }
 
 /**
+ * Pour les routes qui déclenchent des écritures ou des coûts serveur, un rapport
+ * sans access_token ne doit pas devenir implicitement public par simple UUID.
+ */
+export function validateReportTokenAccessRow(
+  reportId: string,
+  accessTokenRaw: string,
+  row: ReportGateRow | null,
+): AssertReportAccessResult {
+  if (!row) {
+    return { ok: false, status: 404, error: "Report not found" };
+  }
+
+  const dbToken =
+    typeof row.access_token === "string" ? row.access_token.trim() : "";
+  if (!dbToken) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Report access token required",
+      code: "access_token_required",
+    };
+  }
+
+  return validateReportAccessRow(reportId, accessTokenRaw, row);
+}
+
+/**
  * Propriétaire connecté (JWT Supabase = `reports.user_id`) OU jeton d’accès rapport (lien partagé).
  */
 export async function assertReportAccessWithOptionalSession(
@@ -85,4 +112,29 @@ export async function assertReportAccessWithOptionalSession(
     }
   }
   return validateReportAccessRow(reportId, accessTokenRaw, row);
+}
+
+/**
+ * Variante stricte pour les routes de mutation/coût : propriétaire connecté
+ * OU vrai jeton de rapport. Les rapports legacy sans token nécessitent donc
+ * une session propriétaire.
+ */
+export async function assertReportTokenOrOwnerAccess(
+  req: Request,
+  reportId: string,
+  accessTokenRaw: string,
+  row: ReportGateRow | null,
+): Promise<AssertReportAccessResult> {
+  if (!row) {
+    return { ok: false, status: 404, error: "Report not found" };
+  }
+  if (await verifyBearerMatchesReportOwner(req, row.user_id)) {
+    const uid = row.user_id;
+    const userId =
+      typeof uid === "string" && uid.length > 0 ? uid : null;
+    if (userId) {
+      return { ok: true, userId };
+    }
+  }
+  return validateReportTokenAccessRow(reportId, accessTokenRaw, row);
 }
