@@ -1,26 +1,13 @@
+import { assertReportTokenOrOwnerAccess } from "@/lib/assertReportAccessForApi";
 import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
+import { hasExactTriggerSecret } from "@/lib/triggerSecretAuth";
 
 /** Génération PDF + appel Edge : peut dépasser le défaut Vercel (60s). */
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin = (origin && host && new URL(origin).host === host)
-      || (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
-      );
-    }
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -40,6 +27,13 @@ export async function POST(req: Request) {
       : "";
 
   const report_id = raw.trim();
+  const accessTokenRaw =
+    typeof body === "object" &&
+    body !== null &&
+    "access_token" in body &&
+    typeof (body as { access_token: unknown }).access_token === "string"
+      ? (body as { access_token: string }).access_token
+      : "";
   if (!report_id) {
     return Response.json(
       { success: false, error: "Missing report_id" },
@@ -47,41 +41,35 @@ export async function POST(req: Request) {
     );
   }
 
-  const t0 = Date.now();
-  // #region agent log
-  fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
-    body: JSON.stringify({
-      sessionId: "26655f",
-      location: "trigger-inspection/route.ts:POST",
-      message: "server trigger start",
-      data: { report_id },
-      timestamp: Date.now(),
-      hypothesisId: "D",
-    }),
-  }).catch(() => {});
-  // #endregion
   try {
+    if (!hasExactTriggerSecret(req)) {
+      const supabase = await createServiceRoleClient();
+      const { data: report, error: reportErr } = await supabase
+        .from("reports")
+        .select("id, user_id, access_token, token_expires_at")
+        .eq("id", report_id)
+        .maybeSingle();
+      if (reportErr) {
+        return Response.json(
+          { success: false, error: reportErr.message },
+          { status: 500 },
+        );
+      }
+      const access = await assertReportTokenOrOwnerAccess(
+        req,
+        report_id,
+        accessTokenRaw,
+        report as Record<string, unknown> | null,
+      );
+      if (!access.ok) {
+        return Response.json(
+          { success: false, error: access.error, code: access.code },
+          { status: access.status },
+        );
+      }
+    }
+
     const ensured = await ensureReportPayloadHtml(report_id);
-    // #region agent log
-    fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
-      body: JSON.stringify({
-        sessionId: "26655f",
-        location: "trigger-inspection/route.ts:POST",
-        message: "after ensureReportPayloadHtml",
-        data: {
-          ok: ensured.ok,
-          elapsedMs: Date.now() - t0,
-          err: ensured.ok ? undefined : ensured.error,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "C",
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!ensured.ok) {
       return Response.json({ success: false, error: ensured.error }, { status: 400 });
     }
