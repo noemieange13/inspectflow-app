@@ -29,28 +29,63 @@ function optUuid(v: unknown): string | null {
   return isUuid(t) ? t : null;
 }
 
-async function photoExists(
+function requestHasServiceRoleSecret(req: Request, serviceRole: string): boolean {
+  const bearer = req.headers.get("authorization") ?? "";
+  const apiKey = req.headers.get("apikey") ?? "";
+  return bearer === `Bearer ${serviceRole}` || apiKey === serviceRole;
+}
+
+type PhotoLookup =
+  | { ok: true; photoId: string }
+  | {
+    ok: false;
+    reason: "missing" | "inspection_mismatch" | "lookup_failed";
+    inspection_id?: string | null;
+    details?: string;
+  };
+
+async function lookupPhotoForInspection(
   supabase: ReturnType<typeof createClient>,
   id: string,
-): Promise<boolean> {
+  inspectionId: string,
+): Promise<PhotoLookup> {
   const { data, error } = await supabase
     .from("photos")
-    .select("id")
+    .select("id, inspection_id")
     .eq("id", id)
     .maybeSingle();
   if (error) {
-    console.warn("create-report photos lookup:", error.message);
-    return false;
+    return { ok: false, reason: "lookup_failed", details: error.message };
   }
-  return !!data?.id;
+  if (!data?.id) {
+    return { ok: false, reason: "missing" };
+  }
+  const photoInspectionId =
+    data.inspection_id != null ? String(data.inspection_id) : null;
+  if (photoInspectionId !== inspectionId) {
+    return {
+      ok: false,
+      reason: "inspection_mismatch",
+      inspection_id: photoInspectionId,
+    };
+  }
+  return { ok: true, photoId: id };
 }
 
-async function resolvePhotoId(
+async function resolveJobPhotoId(
   supabase: ReturnType<typeof createClient>,
   candidate: string | null,
+  inspectionId: string | null,
 ): Promise<string | null> {
-  if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  if (!candidate || !isUuid(candidate) || !inspectionId) return null;
+  const lookup = await lookupPhotoForInspection(supabase, candidate, inspectionId);
+  if (lookup.ok) return lookup.photoId;
+  console.warn("create-report job photo ignored:", {
+    photo_id: candidate,
+    inspection_id: inspectionId,
+    reason: lookup.reason,
+  });
+  return null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -63,6 +98,9 @@ Deno.serve(async (req: Request) => {
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SERVICE_ROLE) {
       throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    }
+    if (!requestHasServiceRoleSecret(req, SERVICE_ROLE)) {
+      return json({ error: "Unauthorized" }, 401);
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -118,7 +156,7 @@ Deno.serve(async (req: Request) => {
         inspectionId = jobInsp;
       }
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = await resolveJobPhotoId(supabase, jobPhoto, inspectionId);
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -156,13 +194,44 @@ Deno.serve(async (req: Request) => {
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = await resolveJobPhotoId(supabase, jobPhoto, inspectionId);
       }
     }
 
     if (body.photo_id !== undefined && body.photo_id !== null) {
       const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
+      if (!explicit) {
+        return json({ error: "invalid photo_id" }, 400);
+      }
+      if (!inspectionId) {
+        return json(
+          { error: "photo_id requires a resolved inspection_id" },
+          400,
+        );
+      }
+      const lookup = await lookupPhotoForInspection(
+        supabase,
+        explicit,
+        inspectionId,
+      );
+      if (!lookup.ok) {
+        const status = lookup.reason === "lookup_failed" ? 502 : 400;
+        return json(
+          {
+            error: lookup.reason === "inspection_mismatch"
+              ? "photo_id does not belong to inspection_id"
+              : lookup.reason === "missing"
+                ? "photo_id not found"
+                : "photo lookup failed",
+            photo_id: explicit,
+            inspection_id: inspectionId,
+            photo_inspection_id: lookup.inspection_id,
+            details: lookup.reason === "lookup_failed" ? lookup.details : undefined,
+          },
+          status,
+        );
+      }
+      photoId = lookup.photoId;
     }
 
     if (!inspectionId) {
