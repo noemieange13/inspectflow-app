@@ -82,9 +82,10 @@ export async function loadReportForViewer(
 
     const rec = report as Record<string, unknown>;
     const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
+    const rawViewerToken = typeof viewerToken === "string" ? viewerToken : "";
 
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
+    if (dbToken) {
+      if (!reportAccessTokensMatch(rawViewerToken, dbToken)) {
         return {
           id: reportId,
           status: null,

@@ -372,7 +372,17 @@ async function fetchPhotoAnalysesForReport(
       .eq("id", links.photo_id)
       .maybeSingle();
     if (!error && row) {
-      return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id" };
+      const photoRow = row as PhotoAnalysisRow;
+      if (!inspectionId || photoRow.inspection_id !== inspectionId) {
+        logStructured("warn", "ai_photo_ignored_cross_inspection_report_link", {
+          report_id: reportId,
+          photo_id: links.photo_id,
+          inspection_id: inspectionId,
+          photo_inspection_id: photoRow.inspection_id,
+        });
+      } else {
+        return { rows: [photoRow], source: "reports.photo_id" };
+      }
     }
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_report_photo_id_failed", {
@@ -407,7 +417,18 @@ async function fetchPhotoAnalysesForReport(
           .eq("id", job.photo_id)
           .maybeSingle();
         if (!error && row) {
-          return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id" };
+          const photoRow = row as PhotoAnalysisRow;
+          if (!inspectionId || photoRow.inspection_id !== inspectionId) {
+            logStructured("warn", "ai_photo_ignored_cross_inspection_job_link", {
+              report_id: reportId,
+              job_id: links.job_id,
+              photo_id: String(job.photo_id),
+              inspection_id: inspectionId,
+              photo_inspection_id: photoRow.inspection_id,
+            });
+          } else {
+            return { rows: [photoRow], source: "jobs.photo_id" };
+          }
         }
         if (error) {
           logStructured("warn", "ai_photo_lookup_by_job_photo_id_failed", {

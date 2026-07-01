@@ -44,7 +44,8 @@ comment on function public.claim_report_lock(uuid) is
   'claimed = verrou pris ; already_generating = autre exécution en cours ; not_found = rapport absent.';
 
 grant execute on function public.claim_report_lock(uuid) to service_role;
-grant execute on function public.claim_report_lock(uuid) to authenticated;
+revoke execute on function public.claim_report_lock(uuid) from anon;
+revoke execute on function public.claim_report_lock(uuid) from authenticated;
 
 -- Libération après succès ou échec (à appeler depuis la même fonction / finally) :
 -- update public.reports
