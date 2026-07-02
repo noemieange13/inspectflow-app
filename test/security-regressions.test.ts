@@ -69,23 +69,25 @@ describe("trigger secret authentication", () => {
 
 describe("locked report integrity guards", () => {
   it("production Vercel requests do not get dev unlock by default", () => {
+    const mutableEnv = process.env as Record<string, string | undefined>;
     const priorEnv = process.env.NODE_ENV;
     const priorVercel = process.env.VERCEL;
     const priorUnlock = process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
-    process.env.NODE_ENV = "production";
-    process.env.VERCEL = "1";
-    delete process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
+    mutableEnv["NODE_ENV"] = "production";
+    mutableEnv["VERCEL"] = "1";
+    delete mutableEnv["INSPECTFLOW_DEV_UNLOCK_REPORT"];
     try {
       const req = new Request("https://app.example/api/report-content", {
         headers: { host: "app.example" },
       });
       assert.equal(allowReportPayloadUnlock(req), false);
     } finally {
-      process.env.NODE_ENV = priorEnv;
-      if (priorVercel === undefined) delete process.env.VERCEL;
-      else process.env.VERCEL = priorVercel;
-      if (priorUnlock === undefined) delete process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
-      else process.env.INSPECTFLOW_DEV_UNLOCK_REPORT = priorUnlock;
+      if (priorEnv === undefined) delete mutableEnv["NODE_ENV"];
+      else mutableEnv["NODE_ENV"] = priorEnv;
+      if (priorVercel === undefined) delete mutableEnv["VERCEL"];
+      else mutableEnv["VERCEL"] = priorVercel;
+      if (priorUnlock === undefined) delete mutableEnv["INSPECTFLOW_DEV_UNLOCK_REPORT"];
+      else mutableEnv["INSPECTFLOW_DEV_UNLOCK_REPORT"] = priorUnlock;
     }
   });
 
