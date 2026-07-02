@@ -1,4 +1,6 @@
-import { createClient } from "@supabase/supabase-js"
+import { reportAccessTokensMatch } from "@/lib/reportAccessToken"
+import { listReportVersions, MAX_REPORT_VERSIONS } from "@/lib/reportVersions"
+import { createServiceRoleClient } from "@/lib/supabaseServer"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -21,7 +23,7 @@ function parseBasicAuth(req: Request): { user: string; pass: string } | null {
 }
 
 export async function POST(req: Request) {
-  const MAX_VERSIONS = 50
+  const MAX_VERSIONS = MAX_REPORT_VERSIONS
 
   try {
     const body = await req.json()
@@ -35,10 +37,46 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
+    const supabase = await createServiceRoleClient()
+    const { data: report, error: reportErr } = await supabase
+      .from("reports")
+      .select("access_token, token_expires_at")
+      .eq("id", String(report_id).trim())
+      .maybeSingle()
+
+    if (reportErr) {
+      return Response.json(
+        { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+        { status: 500 }
+      )
+    }
+    if (!report) {
+      return Response.json(
+        { data: [], error: "REPORT_NOT_FOUND", meta: { max_versions: MAX_VERSIONS } },
+        { status: 404 }
+      )
+    }
+
+    const rec = report as Record<string, unknown>
+    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : ""
+    if (dbToken) {
+      if (!reportAccessTokensMatch(typeof access_token === "string" ? access_token : "", dbToken)) {
+        return Response.json(
+          { data: [], error: "ACCESS_DENIED", meta: { max_versions: MAX_VERSIONS } },
+          { status: 403 }
+        )
+      }
+      if (
+        rec.token_expires_at != null &&
+        String(rec.token_expires_at) !== "" &&
+        new Date(String(rec.token_expires_at)) < new Date()
+      ) {
+        return Response.json(
+          { data: [], error: "ACCESS_TOKEN_EXPIRED", meta: { max_versions: MAX_VERSIONS } },
+          { status: 403 }
+        )
+      }
+    } else {
       const creds = parseBasicAuth(req)
 
       if (!creds) {
@@ -65,20 +103,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 🧠 Init Supabase après gate admin
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+    const result = await listReportVersions(supabase, String(report_id).trim(), MAX_VERSIONS)
 
-    const { data, error } = await supabase
-      .from("report_versions")
-      .select("*")
-      .eq("report_id", report_id)
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("DB ERROR:", error)
+    if ("error" in result) {
+      console.error("DB ERROR:", result.error)
       return Response.json(
         { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
         { status: 500 }
@@ -86,7 +114,7 @@ export async function POST(req: Request) {
     }
 
     return Response.json({
-      data: Array.isArray(data) ? data : [],
+      data: result.rows,
       error: null,
       meta: { max_versions: MAX_VERSIONS },
     })

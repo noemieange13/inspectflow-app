@@ -45,6 +45,48 @@ async function photoExists(
   return !!data?.id;
 }
 
+async function photoBelongsToInspection(
+  supabase: ReturnType<typeof createClient>,
+  id: string,
+  inspectionId: string,
+): Promise<
+  | { ok: true }
+  | { ok: false; status: number; body: Record<string, unknown> }
+> {
+  const { data, error } = await supabase
+    .from("photos")
+    .select("id, inspection_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    console.error("create-report photos lookup:", error.message);
+    return {
+      ok: false,
+      status: 502,
+      body: { error: "photo lookup failed", details: error.message },
+    };
+  }
+  if (!data?.id) {
+    return { ok: false, status: 400, body: { error: "photo_id not found" } };
+  }
+  const photoInspectionId = data.inspection_id != null
+    ? String(data.inspection_id)
+    : "";
+  if (photoInspectionId !== inspectionId) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "photo_id does not match resolved inspection_id",
+        photo_id: id,
+        photo_inspection_id: photoInspectionId || null,
+        inspection_id: inspectionId,
+      },
+    };
+  }
+  return { ok: true };
+}
+
 async function resolvePhotoId(
   supabase: ReturnType<typeof createClient>,
   candidate: string | null,
@@ -63,6 +105,12 @@ Deno.serve(async (req: Request) => {
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SERVICE_ROLE) {
       throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    }
+
+    const auth = req.headers.get("authorization") ?? "";
+    const apikey = req.headers.get("apikey") ?? "";
+    if (auth !== `Bearer ${SERVICE_ROLE}` || apikey !== SERVICE_ROLE) {
+      return json({ error: "Unauthorized" }, 401);
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -184,6 +232,25 @@ Deno.serve(async (req: Request) => {
         },
         400,
       );
+    }
+
+    if (body.photo_id !== undefined && body.photo_id !== null) {
+      const explicit = optUuid(body.photo_id);
+      if (!explicit) {
+        return json({ error: "Invalid photo_id (uuid)" }, 400);
+      }
+      photoId = explicit;
+    }
+
+    if (photoId) {
+      const photoGate = await photoBelongsToInspection(
+        supabase,
+        photoId,
+        inspectionId,
+      );
+      if (!photoGate.ok) {
+        return json(photoGate.body, photoGate.status);
+      }
     }
 
     const client = String(body.client ?? "À compléter");

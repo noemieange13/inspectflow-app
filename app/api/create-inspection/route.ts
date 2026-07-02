@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  defaultReportTokenExpiresAt,
+  generateReportAccessToken,
+} from "@/lib/reportAccessToken";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export async function POST(request: NextRequest) {
@@ -6,6 +10,7 @@ export async function POST(request: NextRequest) {
     const { clientName, address, inspectionType, language } = await request.json();
 
     const supabase = await createServiceRoleClient();
+    const accessToken = generateReportAccessToken();
 
     // Créer une nouvelle inspection avec les données de base
     const { data, error } = await supabase
@@ -21,6 +26,9 @@ export async function POST(request: NextRequest) {
           },
         },
         created_at: new Date().toISOString(),
+        access_token: accessToken,
+        token_expires_at: defaultReportTokenExpiresAt().toISOString(),
+        status: "draft",
       })
       .select()
       .single();
@@ -33,7 +41,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ reportId: data.id });
+    return NextResponse.json({
+      reportId: data.id,
+      accessToken,
+      reportUrl: `/report/${data.id}?token=${encodeURIComponent(accessToken)}`,
+    });
   } catch (error) {
     console.error("Erreur API création inspection:", error);
     return NextResponse.json(
