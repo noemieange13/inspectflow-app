@@ -2,6 +2,19 @@
  * Structuration JSON via OpenRouter (serveur uniquement).
  */
 
+export function isOpenRouterEnabled(): boolean {
+  const devMode = process.env.NODE_ENV === "development";
+  const flag = process.env.ENABLE_OPENROUTER?.trim().toLowerCase();
+  if (flag === "true" || flag === "1" || flag === "yes") return true;
+  if (flag === "false" || flag === "0" || flag === "off" || flag === "no") return false;
+  if (devMode) return false;
+  return true;
+}
+
+function openRouterModel(): string {
+  return process.env.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini";
+}
+
 function extractMessageText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -39,7 +52,7 @@ async function openRouterCompletionJson(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "mistralai/mistral-7b-instruct",
+      model: openRouterModel(),
       messages,
     }),
   });

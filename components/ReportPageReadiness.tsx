@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import InspectionAgentBar from "@/components/InspectionAgentBar";
+import InspectionHealthPanel from "@/components/InspectionHealthPanel";
 import ReportReadinessCard from "@/components/ReportReadinessCard";
 import QcCertificationStatusPanel from "@/components/QcCertificationStatusPanel";
 import {
@@ -12,9 +13,11 @@ import {
 } from "@/lib/inspectionCoverPayload";
 import type { CoverReadinessResult } from "@/lib/reportReadiness";
 import { evaluateCoverReadiness, REPORT_READINESS_ZONE_ID } from "@/lib/reportReadiness";
+import { parsePhotoObservationLinks } from "@/lib/reportObservationPhotos";
 import { emitProductEvent } from "@/lib/productTelemetry";
 import { incrementSessionStepsResolved } from "@/lib/reportFunnelTiming";
 import { parsePayloadEntries } from "@/lib/qcSystemSections";
+import { parseStructuredEntriesFromPayload } from "@/lib/reportNarrative";
 import { QC_CERTIFICATION_RULESET_ID } from "@/lib/qcCertificationCheck";
 import { generateQcAiSuggestions } from "@/lib/qcAiSuggestions";
 import { flushQcEventQueue, emitQcTelemetry } from "@/lib/qcTelemetry";
@@ -25,6 +28,11 @@ import {
 import type {
   QcAiSuggestionStatsV3Row,
 } from "@/lib/qcSuggestionScoring";
+import type { InspectionPhotoProgress } from "@/lib/inspectionPhotoProgress";
+import {
+  evaluateInspectionHealth,
+  parseComplianceValidationV1,
+} from "@/lib/inspection_health_engine";
 
 /**
  * Bandeau readiness sur `/report/[id]` — même logique que la couverture, liens vers les ancres #resume-*.
@@ -39,6 +47,7 @@ export default function ReportPageReadiness({
   reportSelfHref,
   viewerAccessToken,
   simpleMode = false,
+  reportHasPdf = false,
 }: {
   reportId: string;
   coverRaw: unknown;
@@ -52,6 +61,7 @@ export default function ReportPageReadiness({
   viewerAccessToken?: string;
   /** Mode simplifié: masque les panneaux avancés (agent + QC détaillé). */
   simpleMode?: boolean;
+  reportHasPdf?: boolean;
 }) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -94,20 +104,20 @@ export default function ReportPageReadiness({
   }, [router, pathname, searchParams, reportId, viewerAccessToken]);
 
   /** Recharge le payload serveur (readiness à jour) au retour sur l’onglet / la fenêtre — sans WebSocket. */
-  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshDebounceRef = useRef<number | null>(null);
   /** Dernière entrée en `document.hidden` (sélecteur de fichiers natif, impression, etc.). */
   const tabHiddenAtRef = useRef<number | null>(null);
   /** Jusqu’à quand ignorer un `focus` déclenché juste après une courte disparition (ex. dialogue fichier). */
   const skipFocusRefreshUntilRef = useRef<number>(0);
   const scheduleReadinessRefresh = useCallback(
     (source: "visibilitychange" | "focus") => {
-      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+      if (refreshDebounceRef.current) window.clearTimeout(refreshDebounceRef.current);
       const shouldLogTrigger =
         source === "visibilitychange" || Math.random() < 0.25;
       if (shouldLogTrigger) {
         emitProductEvent("readiness_refresh_triggered", { source });
       }
-      refreshDebounceRef.current = setTimeout(() => {
+      refreshDebounceRef.current = window.setTimeout(() => {
         router.refresh();
         refreshDebounceRef.current = null;
       }, 400);
@@ -116,6 +126,8 @@ export default function ReportPageReadiness({
   );
 
   const [readinessRingPulse, setReadinessRingPulse] = useState(false);
+  const [photoProgress, setPhotoProgress] = useState<InspectionPhotoProgress | null>(null);
+  const [photoProgressLoading, setPhotoProgressLoading] = useState(false);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -147,7 +159,7 @@ export default function ReportPageReadiness({
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onWindowFocus);
-      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+      if (refreshDebounceRef.current) window.clearTimeout(refreshDebounceRef.current);
     };
   }, [scheduleReadinessRefresh]);
 
@@ -155,29 +167,76 @@ export default function ReportPageReadiness({
     const cover = coverRaw != null ? parseCoverV1FromUnknown(coverRaw) : null;
     const ack = cover?.readiness_ack_v1?.acknowledged_at?.trim() ?? null;
     const reportEntries = parsePayloadEntries(reportPayload?.entries);
-    const pcv = reportPayload?.photos_coverage_v1;
-    let photosCoverageByZone: Partial<Record<string, number>> | null = null;
-    if (pcv && typeof pcv === "object" && pcv !== null && "by_zone" in pcv) {
-      const bz = (pcv as { by_zone?: unknown }).by_zone;
-      if (bz && typeof bz === "object" && !Array.isArray(bz)) {
-        const acc: Partial<Record<string, number>> = {};
-        for (const [k, v] of Object.entries(bz as Record<string, unknown>)) {
-          if (typeof v === "number" && v >= 0) acc[k] = v;
-        }
-        photosCoverageByZone = Object.keys(acc).length > 0 ? acc : null;
-      }
-    }
+    const links = parsePhotoObservationLinks(reportPayload?.photo_observation_links);
+    const linkedPhotos =
+      links?.map((l) => ({
+        photo_id: l.photo_id,
+        observation_id: l.observation_id,
+      })) ?? [];
     return {
       result: evaluateCoverReadiness(cover, {
         photoCount: photoCount ?? 0,
         reportEntries,
-        photosCoverageByZone,
+        linkedPhotos,
         reportPayload: reportPayload ?? null,
       }),
       ackAt: ack,
       coverParsed: cover,
     };
   }, [coverRaw, photoCount, reportPayload]);
+
+  useEffect(() => {
+    const token = viewerAccessToken?.trim();
+    if (!token) {
+      setPhotoProgress(null);
+      return;
+    }
+    let cancelled = false;
+    setPhotoProgressLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch("/api/inspection-photo-progress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: reportId,
+            access_token: token,
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          progress?: InspectionPhotoProgress;
+        };
+        if (cancelled) return;
+        if (res.ok && body.success && body.progress) {
+          setPhotoProgress(body.progress);
+        } else {
+          setPhotoProgress(null);
+        }
+      } catch {
+        if (!cancelled) setPhotoProgress(null);
+      } finally {
+        if (!cancelled) setPhotoProgressLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reportId, viewerAccessToken, reportPayload]);
+
+  const inspectionHealth = useMemo(() => {
+    const reportEntries = parseStructuredEntriesFromPayload(reportPayload?.entries);
+
+    return evaluateInspectionHealth({
+      photo_progress: photoProgress,
+      report_entries: reportEntries,
+      compliance_validation_v1: parseComplianceValidationV1(
+        reportPayload?.compliance_validation_v1,
+      ),
+      report_photo_selection: reportPayload?.report_photo_selection_v1 ?? null,
+      pdf_ready: reportHasPdf,
+    });
+  }, [photoProgress, reportPayload, reportHasPdf]);
 
   const qcCertSignature = useMemo(() => {
     const codes = [
@@ -362,6 +421,7 @@ export default function ReportPageReadiness({
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
         État avant export PDF
       </p>
+      <InspectionHealthPanel health={inspectionHealth} loading={photoProgressLoading} />
       <ul className="mb-3 space-y-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800">
         <li className="flex items-start gap-2">
           <span aria-hidden>{result.blocking.some((b) => ["no_cover", "requerant", "adresse", "condition", "description"].includes(b.code)) ? "❌" : "✔"}</span>

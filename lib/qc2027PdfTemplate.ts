@@ -27,6 +27,10 @@ import {
   type QcLegalClauseRow,
 } from "@/lib/qcLegalClauses";
 import { shouldFetchQuebecFrenchParallel } from "@/lib/qcLegalClauseSnapshot";
+import {
+  parseObservationPhotoUrlsFromPayload,
+  renderObservationPhotosHtml,
+} from "@/lib/reportObservationPhotos";
 
 function esc(s: string): string {
   return s
@@ -105,6 +109,7 @@ type ReportLanguage = "fr" | "en";
 type ParsedEntry = { zone: string; severity: string };
 
 type SectionRow = {
+  id?: unknown;
   title?: unknown;
   observation?: unknown;
   analysis?: unknown;
@@ -499,6 +504,7 @@ function systemsBlock(
 ): string {
   const L = labels(lang);
   const titles = lang === "en" ? QC_SYSTEM_TITLE_EN : QC_SYSTEM_TITLE_FR;
+  const observationPhotoUrls = parseObservationPhotoUrlsFromPayload(payload);
 
   const blocks: string[] = [];
   for (const code of QC_SYSTEM_CODES) {
@@ -525,6 +531,11 @@ function systemsBlock(
           const sev =
             typeof sec.severity === "string" ? sec.severity.trim() : "";
           const sevClass = findingSeverityClass(sev || "low");
+          const observationId =
+            typeof sec.id === "string" && sec.id.trim().length > 0 ? sec.id.trim() : "";
+          const photosHtml = observationId
+            ? renderObservationPhotosHtml(observationPhotoUrls[observationId] ?? [])
+            : "";
           return `
 <div class="qc-finding ${sevClass}">
   <h4 style="margin:0 0 0.35em;font-size:14px">${esc(title)}</h4>
@@ -532,6 +543,7 @@ function systemsBlock(
   ${obs ? `<p style="margin:0.35em 0"><strong>${esc(L.anomalies)}</strong> ${esc(obs)}</p>` : ""}
   ${ana ? `<p style="margin:0.35em 0">${esc(ana)}</p>` : ""}
   ${rec ? `<p style="margin:0.35em 0"><strong>${esc(L.reco)}</strong> ${esc(rec)}</p>` : ""}
+  ${photosHtml}
 </div>`;
         })
         .join("");

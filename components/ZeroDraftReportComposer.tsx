@@ -23,7 +23,9 @@ import {
 import type { ReportServerData } from "@/lib/reportViewerServer";
 import BuyerModePanel from "@/components/BuyerModePanel";
 import FirstReportGuidedOnboarding from "@/components/FirstReportGuidedOnboarding";
+import InspectionPhotoGallery from "@/components/InspectionPhotoGallery";
 import LiveInspectionCapture from "@/components/LiveInspectionCapture";
+import PhotoAnalysisDashboardPanel from "@/components/PhotoAnalysisDashboardPanel";
 import NotesCapture from "@/components/NotesCapture";
 import ReportLivePreviewBanner from "@/components/ReportLivePreviewBanner";
 import ReportMissionSummary from "@/components/ReportMissionSummary";
@@ -40,12 +42,27 @@ import {
   ensureSessionStart,
   noteFirstPdfBlocked,
 } from "@/lib/reportFunnelTiming";
+import { MAX_INSPECTION_PHOTOS } from "@/lib/inspectionPhotoLimits";
+import type { InspectionPhotoProgress } from "@/lib/inspectionPhotoProgress";
+import type { InspectionPhotoGalleryItem } from "@/lib/inspectionPhotoGallery";
+import {
+  drainPhotoUploadQueue,
+  queuePhotoForUpload,
+  resumePhotoUploadQueueOnVisible,
+} from "@/lib/photoUploadQueueProcessor";
+import { getPhotoUploadRecord } from "@/lib/photoUploadQueueIdb";
 import { scorePhotoHeuristic } from "@/lib/photoScoring";
 import {
   REPORT_PHOTO_MAX_TOTAL,
-  selectPhotosForReportWithReasons,
   type ReportPhotoTier,
 } from "@/lib/reportPhotoSelection";
+import {
+  collectValidObservationIds,
+  createObservationId,
+  ensureReportEntryIds,
+  isObservationId,
+  resolveUploadTargetObservationId,
+} from "@/lib/observationIds";
 import {
   buildReportPhotoSelectionV1,
   parseReportPhotoSelectionIds,
@@ -53,6 +70,12 @@ import {
   parseReportPhotoSelectionTiers,
 } from "@/lib/reportPhotoSelectionPayload";
 import { computeTerrainGuideStep } from "@/lib/terrainFieldGuide";
+import {
+  buildAIObservationSnapshot,
+  mergeAIObservationSnapshots,
+  parseAIObservationSnapshot,
+  type AIObservationSnapshot,
+} from "@/lib/inspector_feedback_engine";
 import {
   DEFAULT_USER_AGENT_PROFILE,
   loadReportViewMode,
@@ -64,10 +87,10 @@ import {
 } from "@/lib/userAgentProfile";
 import { useSupabaseAccessToken } from "@/lib/useSupabaseAccessToken";
 
-/** Limite « soft » UI — ne pas descendre sous 250 (usage réel 150–300+ photos). */
+/** Limite « soft » UI — alerte au-delà de 250 photos. */
 const MAX_BULK_SOFT = 250;
-/** Plafond dur aligné backend (300–350) ; cohérent avec `upload-photo`. */
-const MAX_BULK_HARD = 320;
+/** Plafond dur aligné backend Phase 2B. */
+const MAX_BULK_HARD = MAX_INSPECTION_PHOTOS;
 /** Paquets séquentiels (~40–60 recommandé ; ici 50). */
 const PHOTO_CHUNK = 50;
 const UPLOAD_CONCURRENCY = 4;
@@ -80,6 +103,7 @@ type Props = {
 
 function defaultEntry(): ReportEntryInput {
   return {
+    id: createObservationId(),
     zone: "salon",
     issue: "water_infiltration",
     severity: "medium",
@@ -159,6 +183,7 @@ type DraftBaselineSnapshot = {
 function serializeEntriesForBaseline(entries: ReportEntryInput[]): string {
   return JSON.stringify(
     entries.map((e) => ({
+      id: e.id,
       zone: e.zone,
       issue: e.issue,
       severity: e.severity,
@@ -205,8 +230,16 @@ export default function ZeroDraftReportComposer({
   const [entries, setEntries] = useState<ReportEntryInput[]>(() => {
     if (!existingPayload) return [defaultEntry()];
     const parsed = parseStructuredEntriesFromPayload(existingPayload.entries);
-    return parsed.length > 0 ? parsed : [defaultEntry()];
+    return ensureReportEntryIds(parsed.length > 0 ? parsed : [defaultEntry()]);
   });
+  const [aiObservationSnapshot, setAiObservationSnapshot] = useState<AIObservationSnapshot | null>(
+    () =>
+      existingPayload
+        ? parseAIObservationSnapshot(
+            (existingPayload as Record<string, unknown>).ai_observation_snapshot_v1,
+          )
+        : null,
+  );
   const [language, setLanguage] = useState<ReportLanguage>(
     existingPayload && (existingPayload.language === "en" || existingPayload.language === "fr")
       ? existingPayload.language as ReportLanguage
@@ -232,24 +265,7 @@ export default function ZeroDraftReportComposer({
   const [simpleFlowMode, setSimpleFlowMode] = useState<"entry" | "live" | "upload">(
     !hasExistingReport || existingSections.length === 0 ? "live" : "entry",
   );
-  const [photos, setPhotos] = useState<
-    {
-      id: string;
-      name: string;
-      url: string | null;
-      uploading: boolean;
-      error?: string;
-      ai_score?: number;
-      selected_for_report?: boolean;
-      report_tier?: ReportPhotoTier;
-      /** ID `photos.id` côté Supabase (pour inférer zones depuis `analysis`). */
-      serverPhotoId?: string | null;
-      /** Zone bâtiment pour couverture photo QC (agrégée dans `photos_coverage_v1`). */
-      linked_zone?: ZoneCode;
-      /** Analyse vision serveur — sert à choisir les meilleures prises par constat. */
-      analysis?: unknown;
-    }[]
-  >([]);
+  const [photos, setPhotos] = useState<InspectionPhotoGalleryItem[]>([]);
   const photosRef = useRef(photos);
   photosRef.current = photos;
   const initialDataRef = useRef(initialData);
@@ -287,10 +303,28 @@ export default function ZeroDraftReportComposer({
   const draftBaselineCapturedRef = useRef(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoUploadProgress, setPhotoUploadProgress] = useState<{ done: number; total: number } | null>(null);
+  const [photoIntelligenceProgress, setPhotoIntelligenceProgress] =
+    useState<InspectionPhotoProgress | null>(null);
+  const [photoProgressRefreshTick, setPhotoProgressRefreshTick] = useState(0);
+  const uploadBatchIdRef = useRef<string | null>(null);
+  const bulkSequenceRef = useRef(0);
+  const [galleryPersistUi, setGalleryPersistUi] = useState<"idle" | "saving" | "saved" | "error">(
+    "idle",
+  );
+  const galleryPersistTimerRef = useRef<number | null>(null);
+  const [cameraCaptureSequence, setCameraCaptureSequence] = useState(0);
+  const photoDirInputRef = useRef<HTMLInputElement>(null);
   const [photoDropHover, setPhotoDropHover] = useState(false);
   const photoDragDepthRef = useRef(0);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  /** Upload de photos rattachées à un constat précis (bouton sur la ligne constat). */
+  const entryPhotoInputRef = useRef<HTMLInputElement>(null);
+  const pendingEntryPhotoObservationIdRef = useRef<string | null>(null);
+  /** Constat actif (focus) — cible auto si plusieurs constats et drop zone générale. */
+  const activeObservationIdRef = useRef<string | null>(null);
   const terrainPresetZoneRef = useRef<ZoneCode | null>(null);
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
   const cloudProfileSaveTimerRef = useRef<number | null>(null);
   const [clientOverride, setClientOverride] = useState<string | null>(null);
   /** Si true, les fusions QC ne réécrasent pas le compte rendu client (texte saisi ou chargé comme personnalisé). */
@@ -439,11 +473,337 @@ export default function ZeroDraftReportComposer({
     return acc;
   }, [photos]);
 
+  const validObservationIds = useMemo(
+    () => collectValidObservationIds(entries),
+    [entries],
+  );
+
+  const isPhotoSelectedForReport = useCallback(
+    (photo: InspectionPhotoGalleryItem) => {
+      const hasValidObs =
+        !!photo.observation_id && validObservationIds.has(photo.observation_id);
+      return (
+        hasValidObs &&
+        (photo.report_tier != null
+          ? photo.report_tier !== "excluded"
+          : Boolean(photo.selected_for_report))
+      );
+    },
+    [validObservationIds],
+  );
+
+  const markGalleryPersistUi = useCallback(
+    (state: "idle" | "saving" | "saved" | "error") => {
+      if (galleryPersistTimerRef.current != null) {
+        window.clearTimeout(galleryPersistTimerRef.current);
+        galleryPersistTimerRef.current = null;
+      }
+      setGalleryPersistUi(state);
+      if (state === "saved") {
+        galleryPersistTimerRef.current = window.setTimeout(() => {
+          setGalleryPersistUi("idle");
+          galleryPersistTimerRef.current = null;
+        }, 2500);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (galleryPersistTimerRef.current != null) {
+        window.clearTimeout(galleryPersistTimerRef.current);
+      }
+    };
+  }, []);
+
+  const persistInspectorSelectionImmediate = useCallback(
+    async (patch: {
+      photo_id: string;
+      report_selected: boolean;
+      tier?: "critical" | "support";
+      observation_id?: string | null;
+    }) => {
+      const token = viewerToken?.trim();
+      if (!token) return false;
+      try {
+        const res = await fetch("/api/report-photo-selection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: reportId,
+            access_token: token,
+            ...patch,
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          error?: string;
+        };
+        return res.ok && body.success === true;
+      } catch {
+        return false;
+      }
+    },
+    [reportId, viewerToken],
+  );
+
+  const persistPhotoObservationLinksImmediate = useCallback(
+    async (
+      links: Array<{ photo_id: string; observation_id: string | null }>,
+      opts?: { removedObservationIds?: string[]; validObservationIds?: Iterable<string> },
+    ) => {
+      if (links.length === 0) return true;
+      const token = viewerToken?.trim();
+      if (!token) return false;
+      const validIds =
+        opts?.validObservationIds != null ? [...opts.validObservationIds] : [...validObservationIds];
+      try {
+        const res = await fetch("/api/photo-observation-links", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: reportId,
+            access_token: token,
+            photo_observation_links: links,
+            valid_observation_ids: validIds,
+            ...(opts?.removedObservationIds?.length
+              ? { removed_observation_ids: opts.removedObservationIds }
+              : {}),
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          error?: string;
+        };
+        return res.ok && body.success === true;
+      } catch {
+        return false;
+      }
+    },
+    [reportId, validObservationIds, viewerToken],
+  );
+
+  const onGalleryObservationChange = useCallback(
+    (photoId: string, observationId: string | null) => {
+      const prevPhoto = photosRef.current.find((p) => p.id === photoId);
+      if (!prevPhoto) return;
+
+      const nextPhoto: InspectionPhotoGalleryItem = {
+        ...prevPhoto,
+        observation_id: observationId,
+        selected_for_report: !!observationId,
+        report_tier: observationId ? "support" : "excluded",
+      };
+
+      setPhotos((prev) => prev.map((p) => (p.id === photoId ? nextPhoto : p)));
+
+      const serverPhotoId = prevPhoto.serverPhotoId?.trim();
+      if (!serverPhotoId || !viewerToken?.trim()) return;
+
+      markGalleryPersistUi("saving");
+      void (async () => {
+        const ok = await persistPhotoObservationLinksImmediate(
+          [{ photo_id: serverPhotoId, observation_id: observationId }],
+          { validObservationIds: [...validObservationIds] },
+        );
+        if (!ok) {
+          setPhotos((prev) => prev.map((p) => (p.id === photoId ? prevPhoto : p)));
+          markGalleryPersistUi("error");
+          setError(
+            language === "en"
+              ? "Could not save photo–finding link. Your change was reverted."
+              : "Impossible d'enregistrer le lien photo–constat. Modification annulée.",
+          );
+          return;
+        }
+
+        const selected = !!observationId && validObservationIds.has(observationId);
+        if (selected) {
+          const selOk = await persistInspectorSelectionImmediate({
+            photo_id: serverPhotoId,
+            report_selected: true,
+            tier: "support",
+            observation_id: observationId,
+          });
+          if (!selOk) {
+            setPhotos((prev) => prev.map((p) => (p.id === photoId ? prevPhoto : p)));
+            markGalleryPersistUi("error");
+            setError(
+              language === "en"
+                ? "Link saved but PDF selection could not be saved. Reverted."
+                : "Lien enregistré mais la sélection PDF a échoué. Modification annulée.",
+            );
+            return;
+          }
+        } else {
+          const deselOk = await persistInspectorSelectionImmediate({
+            photo_id: serverPhotoId,
+            report_selected: false,
+            observation_id: null,
+          });
+          if (!deselOk) {
+            setPhotos((prev) => prev.map((p) => (p.id === photoId ? prevPhoto : p)));
+            markGalleryPersistUi("error");
+            setError(
+              language === "en"
+                ? "Link saved but PDF deselection failed. Reverted."
+                : "Lien enregistré mais le retrait PDF a échoué. Modification annulée.",
+            );
+            return;
+          }
+        }
+
+        markGalleryPersistUi("saved");
+      })();
+    },
+    [
+      language,
+      markGalleryPersistUi,
+      persistInspectorSelectionImmediate,
+      persistPhotoObservationLinksImmediate,
+      validObservationIds,
+      viewerToken,
+    ],
+  );
+
+  const onGalleryToggleReportSelection = useCallback(
+    (photoId: string) => {
+      const prevPhoto = photosRef.current.find((p) => p.id === photoId);
+      if (!prevPhoto) return;
+
+      const wasSelected = isPhotoSelectedForReport(prevPhoto);
+      let nextPhoto = prevPhoto;
+
+      if (wasSelected) {
+        nextPhoto = {
+          ...prevPhoto,
+          selected_for_report: false,
+          report_tier: "excluded",
+        };
+      } else {
+        let obs = prevPhoto.observation_id;
+        if (!obs || !validObservationIds.has(obs)) {
+          obs =
+            resolveUploadTargetObservationId(
+              ensureReportEntryIds(entriesRef.current),
+              activeObservationIdRef.current,
+            ) ?? null;
+        }
+        if (!obs) return;
+        nextPhoto = {
+          ...prevPhoto,
+          observation_id: obs,
+          selected_for_report: true,
+          report_tier: "support",
+        };
+      }
+
+      setPhotos((prev) => prev.map((p) => (p.id === photoId ? nextPhoto : p)));
+
+      const serverPhotoId = prevPhoto.serverPhotoId?.trim();
+      if (!serverPhotoId || !viewerToken?.trim()) return;
+
+      markGalleryPersistUi("saving");
+      void (async () => {
+        if (
+          !wasSelected &&
+          nextPhoto.observation_id &&
+          nextPhoto.observation_id !== prevPhoto.observation_id
+        ) {
+          const linkOk = await persistPhotoObservationLinksImmediate(
+            [{ photo_id: serverPhotoId, observation_id: nextPhoto.observation_id }],
+            { validObservationIds: [...validObservationIds] },
+          );
+          if (!linkOk) {
+            setPhotos((prev) => prev.map((p) => (p.id === photoId ? prevPhoto : p)));
+            markGalleryPersistUi("error");
+            setError(
+              language === "en"
+                ? "Could not save photo link. Reverted."
+                : "Impossible d'enregistrer le lien photo. Modification annulée.",
+            );
+            return;
+          }
+        }
+
+        const selOk = await persistInspectorSelectionImmediate({
+          photo_id: serverPhotoId,
+          report_selected: !wasSelected,
+          tier: nextPhoto.report_tier === "critical" ? "critical" : "support",
+          observation_id: nextPhoto.observation_id ?? null,
+        });
+        if (!selOk) {
+          setPhotos((prev) => prev.map((p) => (p.id === photoId ? prevPhoto : p)));
+          markGalleryPersistUi("error");
+          setError(
+            language === "en"
+              ? "Could not save PDF selection. Reverted."
+              : "Impossible d'enregistrer la sélection PDF. Modification annulée.",
+          );
+          return;
+        }
+        markGalleryPersistUi("saved");
+      })();
+    },
+    [
+      isPhotoSelectedForReport,
+      language,
+      markGalleryPersistUi,
+      persistInspectorSelectionImmediate,
+      persistPhotoObservationLinksImmediate,
+      validObservationIds,
+      viewerToken,
+    ],
+  );
+
+  const onGalleryTierChange = useCallback(
+    (photoId: string, tier: Exclude<ReportPhotoTier, "excluded">) => {
+      const prevPhoto = photosRef.current.find((p) => p.id === photoId);
+      if (!prevPhoto) return;
+
+      const nextPhoto: InspectionPhotoGalleryItem = {
+        ...prevPhoto,
+        report_tier: tier,
+        selected_for_report: true,
+      };
+
+      setPhotos((prev) => prev.map((p) => (p.id === photoId ? nextPhoto : p)));
+
+      const serverPhotoId = prevPhoto.serverPhotoId?.trim();
+      if (!serverPhotoId || !viewerToken?.trim()) return;
+
+      markGalleryPersistUi("saving");
+      void (async () => {
+        const ok = await persistInspectorSelectionImmediate({
+          photo_id: serverPhotoId,
+          report_selected: true,
+          tier,
+          observation_id: nextPhoto.observation_id ?? null,
+        });
+        if (!ok) {
+          setPhotos((prev) => prev.map((p) => (p.id === photoId ? prevPhoto : p)));
+          markGalleryPersistUi("error");
+          setError(
+            language === "en"
+              ? "Could not save photo tier. Reverted."
+              : "Impossible d'enregistrer le niveau photo. Modification annulée.",
+          );
+          return;
+        }
+        markGalleryPersistUi("saved");
+      })();
+    },
+    [language, markGalleryPersistUi, persistInspectorSelectionImmediate, viewerToken],
+  );
+
   const reportPhotoSelectionForPayload = useMemo(() => {
     const selected = photos.filter(
       (p) =>
         p.serverPhotoId?.trim() &&
-        (p.report_tier ? p.report_tier !== "excluded" : p.selected_for_report === true),
+        p.observation_id &&
+        validObservationIds.has(p.observation_id) &&
+        (p.report_tier ? p.report_tier !== "excluded" : p.selected_for_report !== false),
     );
     const ids = selected.map((p) => p.serverPhotoId!.trim());
     const tiersByPhotoId: Record<string, "critical" | "support"> = {};
@@ -459,7 +819,7 @@ export default function ZeroDraftReportComposer({
           tiersByPhotoId,
         })
       : undefined;
-  }, [photos, photoSelectionLocked]);
+  }, [photos, photoSelectionLocked, validObservationIds]);
 
   const selectionIdsFromServerPayload = useMemo(() => {
     if (!initialData?.payload || typeof initialData.payload !== "object") return null;
@@ -489,89 +849,20 @@ export default function ZeroDraftReportComposer({
     [photos],
   );
 
-  /** Recalcul sélection « dans le rapport » seulement quand constats, analyses ou rafraîchissement changent (pas à chaque clic manuel sur une photo). */
+  /** Signature pour recharger les métadonnées photo serveur (analyse vision). */
   const photosSelectionSignature = useMemo(
     () =>
       `${photos.length}:` +
       photos
         .map((p) => {
           const k = (p.serverPhotoId?.trim() || p.id).trim();
-          const an = p.analysis != null ? 1 : 0;
-          const z = (p.linked_zone ?? "autre") as string;
-          return `${k}:${an}:${z}`;
+          const obs = p.observation_id?.trim() ?? "";
+          return `${k}:${obs}`;
         })
         .sort()
         .join("|"),
     [photos],
   );
-
-  useEffect(() => {
-    if (!showEditor) return;
-    const list = photosRef.current;
-    if (list.length === 0) return;
-    const serverIdSet = new Set(
-      list.map((p) => p.serverPhotoId?.trim()).filter((x): x is string => Boolean(x && x.length > 0)),
-    );
-    const persistedFromPayload =
-      photoAnalysisRefreshEpoch === 0 && selectionIdsFromServerPayload?.length
-        ? selectionIdsFromServerPayload.filter((id) => serverIdSet.has(id))
-        : [];
-    const persistedFromRows =
-      photoAnalysisRefreshEpoch === 0
-        ? list
-            .filter(
-              (p) =>
-                p.serverPhotoId?.trim() &&
-                p.report_tier != null &&
-                p.report_tier !== "excluded",
-            )
-            .map((p) => p.serverPhotoId!.trim())
-        : [];
-    const persisted = persistedFromPayload.length > 0 ? persistedFromPayload : persistedFromRows;
-    const persistOnly = photoSelectionLocked;
-    if (persistOnly && persisted.length === 0) return;
-    let sel: Set<string>;
-    let tierByKey: Record<string, Exclude<ReportPhotoTier, "excluded">> = {};
-    if (persisted.length > 0) {
-      setPhotoSelectionReasonsByKey({});
-      sel = new Set(persisted);
-      tierByKey = persisted.reduce<Record<string, Exclude<ReportPhotoTier, "excluded">>>((acc, id) => {
-        const rowTier = list.find((p) => p.serverPhotoId?.trim() === id)?.report_tier;
-        const payloadTier = selectionTiersFromServerPayload[id];
-        acc[id] = rowTier === "critical" || payloadTier === "critical" ? "critical" : "support";
-        return acc;
-      }, {});
-    } else {
-      const { ids, reasonsByKey, tiersByKey } = selectPhotosForReportWithReasons({
-        entries,
-        photos: list,
-        maxTotal: REPORT_PHOTO_MAX_TOTAL,
-      });
-      setPhotoSelectionReasonsByKey(reasonsByKey);
-      sel = ids;
-      tierByKey = tiersByKey;
-    }
-    setPhotos((prev) => {
-      let changed = false;
-      const next = prev.map((p) => {
-        const key = (p.serverPhotoId?.trim() || p.id).trim();
-        const on = sel.has(key);
-        const nextTier: ReportPhotoTier = on ? (tierByKey[key] ?? "support") : "excluded";
-        if (Boolean(p.selected_for_report) === on && (p.report_tier ?? "excluded") === nextTier) return p;
-        changed = true;
-        return { ...p, selected_for_report: on, report_tier: nextTier };
-      });
-      return changed ? next : prev;
-    });
-  }, [
-    entries,
-    photoAnalysisRefreshEpoch,
-    showEditor,
-    photosSelectionSignature,
-    selectionIdsFromServerPayload,
-    selectionTiersFromServerPayload,
-    photoSelectionLocked,
-  ]);
 
   useEffect(() => {
     lastPhotoEditorFetchKeyRef.current = null;
@@ -619,6 +910,88 @@ export default function ZeroDraftReportComposer({
   }, []);
 
   useEffect(() => {
+    if (!showEditor) return;
+    return resumePhotoUploadQueueOnVisible(reportId);
+  }, [reportId, showEditor]);
+
+  useEffect(() => {
+    if (!photoIntelligenceProgress || !viewerToken?.trim() || !showEditor) return;
+    if (photoIntelligenceProgress.selection.status !== "ready") return;
+    if (photoAnalysisRefreshEpoch > 0) return;
+    const baseline = draftBaselineRef.current;
+    const manualEdit =
+      baseline != null &&
+      (title.trim() !== baseline.title ||
+        inspectorNote !== baseline.inspectorNote ||
+        clientSectionValue !== baseline.clientFacingSnapshot ||
+        serializeEntriesForBaseline(entries) !== baseline.entriesJson);
+    if (manualEdit) return;
+    const onlyDefaultEntry =
+      entries.length <= 1 &&
+      (entries.length === 0 ||
+        (entries[0]?.zone === "salon" &&
+          entries[0]?.issue === "water_infiltration" &&
+          !(entries[0]?.note ?? "").trim()));
+    if (!onlyDefaultEntry) return;
+    setStatus(
+      language === "en"
+        ? "Analysis complete. Generate AI findings now?"
+        : "Analyse terminée. Générer les constats IA maintenant ?",
+    );
+  }, [
+    photoIntelligenceProgress,
+    viewerToken,
+    showEditor,
+    photoAnalysisRefreshEpoch,
+    title,
+    inspectorNote,
+    clientSectionValue,
+    entries,
+    language,
+  ]);
+
+  useEffect(() => {
+    if (photoDirInputRef.current) {
+      photoDirInputRef.current.setAttribute("webkitdirectory", "");
+      photoDirInputRef.current.setAttribute("directory", "");
+    }
+  }, []);
+
+  useEffect(() => {
+    const token = viewerToken?.trim();
+    if (!token || !showEditor) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/inspection-photo-progress", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            report_id: reportId,
+            access_token: token,
+            batch_id: uploadBatchIdRef.current,
+            expected_upload_total: photoUploadProgress?.total ?? undefined,
+          }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          progress?: InspectionPhotoProgress;
+        };
+        if (cancelled || !res.ok || body.success !== true || !body.progress) return;
+        setPhotoIntelligenceProgress(body.progress);
+      } catch {
+        /* ignore */
+      }
+    };
+    void poll();
+    const id = window.setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [reportId, viewerToken, showEditor, photoUploadProgress?.total, validPhotoCount, photoProgressRefreshTick]);
+
+  useEffect(() => {
     const token = viewerToken?.trim();
     if (!token) return;
     const fetchKey = `${reportId}:${photoAnalysisRefreshEpoch}`;
@@ -638,7 +1011,10 @@ export default function ZeroDraftReportComposer({
             photo_number: number | null;
             url: string | null;
             linked_zone?: string;
+            observation_id?: string | null;
             analysis?: unknown;
+            analysis_status?: string | null;
+            duplicate_of_photo_id?: string | null;
             selected_for_report?: boolean;
             report_tier?: "critical" | "support" | "excluded";
           }>;
@@ -660,12 +1036,17 @@ export default function ZeroDraftReportComposer({
                 : "autre";
             const serverUrl =
               typeof ph.url === "string" && ph.url.startsWith("http") ? ph.url : null;
+            const serverObs =
+              typeof ph.observation_id === "string" && isObservationId(ph.observation_id)
+                ? ph.observation_id.trim()
+                : null;
             const idx = merged.findIndex((p) => p.serverPhotoId === ph.id);
             if (idx >= 0) {
               const p = merged[idx]!;
               const nextUrl = p.url ?? serverUrl;
               const nextZone =
                 (p.linked_zone ?? "autre") === "autre" && linked !== "autre" ? linked : (p.linked_zone ?? linked);
+              const nextObs = p.observation_id ?? serverObs;
               const serverTier =
                 ph.report_tier === "critical" || ph.report_tier === "support"
                   ? ph.report_tier
@@ -676,16 +1057,23 @@ export default function ZeroDraftReportComposer({
                 ...p,
                 url: nextUrl,
                 linked_zone: nextZone,
+                observation_id: nextObs,
                 analysis: ph.analysis !== undefined && ph.analysis !== null ? ph.analysis : p.analysis,
+                analysis_status:
+                  typeof ph.analysis_status === "string" ? ph.analysis_status : p.analysis_status,
+                duplicate_of_photo_id:
+                  typeof ph.duplicate_of_photo_id === "string"
+                    ? ph.duplicate_of_photo_id
+                    : p.duplicate_of_photo_id ?? null,
                 ...(serverTier
                   ? {
                       report_tier: serverTier,
-                      selected_for_report: serverTier !== "excluded",
+                      selected_for_report: serverTier !== "excluded" && !!nextObs,
                     }
                   : ph.selected_for_report !== undefined
                     ? {
-                        selected_for_report: ph.selected_for_report,
-                        report_tier: ph.selected_for_report ? (p.report_tier ?? "support") : "excluded",
+                        selected_for_report: ph.selected_for_report && !!nextObs,
+                        report_tier: ph.selected_for_report && nextObs ? (p.report_tier ?? "support") : "excluded",
                       }
                     : {}),
               };
@@ -706,8 +1094,13 @@ export default function ZeroDraftReportComposer({
               uploading: false,
               serverPhotoId: ph.id,
               linked_zone: linked,
-              selected_for_report: serverTier !== "excluded",
-              report_tier: serverTier,
+              observation_id: serverObs,
+              selected_for_report: serverTier !== "excluded" && !!serverObs,
+              report_tier: serverObs ? serverTier : "excluded",
+              analysis_status:
+                typeof ph.analysis_status === "string" ? ph.analysis_status : null,
+              duplicate_of_photo_id:
+                typeof ph.duplicate_of_photo_id === "string" ? ph.duplicate_of_photo_id : null,
               ...(ph.analysis !== undefined && ph.analysis !== null ? { analysis: ph.analysis } : {}),
             });
           }
@@ -928,12 +1321,19 @@ export default function ZeroDraftReportComposer({
       zone: e.zone,
       note: e.note ?? "",
     }));
+    const linkedPhotos = photos
+      .filter((p) => p.serverPhotoId?.trim())
+      .map((p) => ({
+        photo_id: p.serverPhotoId!.trim(),
+        observation_id: p.observation_id ?? null,
+      }));
     return evaluateCoverReadiness(cover, {
       photoCount,
       reportEntries,
-      photosCoverageByZone,
+      linkedPhotos,
       reportPayload: {
         entries: entries.map((e) => ({
+          id: e.id,
           zone: e.zone,
           issue: e.issue,
           severity: e.severity,
@@ -942,7 +1342,7 @@ export default function ZeroDraftReportComposer({
         sections: generated.sections,
       },
     });
-  }, [hasExistingReport, existingPayload, photos, entries, photosCoverageByZone, generated.sections]);
+  }, [hasExistingReport, existingPayload, photos, entries, generated.sections]);
 
   /** Brouillon fusionné — même forme que `/api/report-content` pour l’aperçu HTML « PDF ». */
   const htmlPreviewPayload = useMemo((): Record<string, unknown> | null => {
@@ -962,6 +1362,7 @@ export default function ZeroDraftReportComposer({
       language,
       jurisdiction,
       entries: entries.map((e) => ({
+        id: e.id,
         zone: e.zone,
         issue: e.issue,
         severity: e.severity,
@@ -993,8 +1394,8 @@ export default function ZeroDraftReportComposer({
     reportPhotoSelectionForPayload,
   ]);
 
-  /** Export PDF réservé au gate `ready` (blocages ou avertissements non accusés). */
-  const pdfExportBlocked = coverReadiness.gate !== "ready";
+  /** Export PDF bloqué uniquement sur gate `blocked` ; `warning` autorise avec avertissements. */
+  const pdfExportBlocked = coverReadiness.gate === "blocked";
   const pdfGateWarning = coverReadiness.gate === "warning";
   const pdfBlockedCritical = coverReadiness.blocking.some((b) => b.severity === "block_critical");
 
@@ -1440,9 +1841,79 @@ export default function ZeroDraftReportComposer({
   };
 
   const addEntry = () => setEntries((prev) => [...prev, defaultEntry()]);
-  const removeEntry = (index: number) => {
-    setEntries((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
-  };
+
+  const removeEntry = useCallback(
+    async (index: number) => {
+      if (entries.length <= 1) return;
+      const removed = entries[index];
+      if (!removed) return;
+
+      const linkedPhotos = photos.filter((p) => p.observation_id === removed.id);
+      const linkedCount = linkedPhotos.length;
+
+      if (linkedCount > 0) {
+        const message =
+          language === "en"
+            ? `This finding contains ${linkedCount} photo(s). They will be removed from the report but kept in your available photos.`
+            : `Ce constat contient ${linkedCount} photo(s). Elles seront retirées du rapport mais conservées dans vos photos disponibles.`;
+        const continueLabel = language === "en" ? "Continue" : "Continuer";
+        const cancelLabel = language === "en" ? "Cancel" : "Annuler";
+        if (
+          !window.confirm(`${message}\n\n${continueLabel} / ${cancelLabel}`)
+        ) {
+          return;
+        }
+
+        const serverLinks = linkedPhotos
+          .map((p) => p.serverPhotoId?.trim())
+          .filter((id): id is string => Boolean(id && id.length > 0))
+          .map((photo_id) => ({ photo_id, observation_id: null as string | null }));
+
+        if (serverLinks.length > 0) {
+          const persisted = await persistPhotoObservationLinksImmediate(serverLinks, {
+            removedObservationIds: removed.id ? [removed.id] : undefined,
+            validObservationIds: collectValidObservationIds(
+              entries.filter((_, i) => i !== index),
+            ),
+          });
+          if (!persisted) {
+            setError(
+              language === "en"
+                ? "Could not detach photos on the server. The finding was not removed."
+                : "Impossible de détacher les photos sur le serveur. Le constat n'a pas été supprimé.",
+            );
+            return;
+          }
+        }
+      }
+
+      setEntries((prev) => {
+        if (prev.length <= 1) return prev;
+        return prev.filter((_, i) => i !== index);
+      });
+
+      if (removed.id) {
+        setPhotos((photoList) =>
+          photoList.map((p) =>
+            p.observation_id === removed.id
+              ? {
+                  ...p,
+                  observation_id: null,
+                  selected_for_report: false,
+                  report_tier: "excluded" as const,
+                }
+              : p,
+          ),
+        );
+      }
+    },
+    [
+      entries,
+      photos,
+      language,
+      persistPhotoObservationLinksImmediate,
+    ],
+  );
 
   const handleNotesProcessed = useCallback((notes: Array<{
     enhanced: string;
@@ -1459,7 +1930,13 @@ export default function ZeroDraftReportComposer({
         const issue = ISSUES.some((i) => i.value === n.suggested_issue)
           ? (n.suggested_issue as IssueCode)
           : "water_infiltration";
-        return { zone, issue, severity: "medium" as const, note: n.enhanced };
+        return {
+          id: createObservationId(),
+          zone,
+          issue,
+          severity: "medium" as const,
+          note: n.enhanced,
+        };
       });
     if (newEntries.length > 0) {
       setEntries((prev) => [...prev, ...newEntries]);
@@ -1471,28 +1948,49 @@ export default function ZeroDraftReportComposer({
       file: File,
       slotId: string,
       attempt: number,
+      observationId: string | null,
+      opts?: {
+        captureMode: "camera" | "bulk_import";
+        sequenceNumber?: number;
+        clientUploadId?: string;
+        batchId?: string | null;
+        createBatch?: boolean;
+        batchExpectedCount?: number;
+      },
     ): Promise<boolean> => {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("report_id", reportId);
-      form.append("language", language);
+      const clientUploadId = opts?.clientUploadId ?? crypto.randomUUID();
       try {
-        const res = await fetch("/api/upload-photo", { method: "POST", body: form });
-        const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        const suggested =
-          typeof body.suggested_inspector_note === "string" && body.suggested_inspector_note.trim()
-            ? body.suggested_inspector_note.trim()
-            : null;
-        if (suggested) {
-          setInspectorNote((prev) => (prev.trim() ? `${prev.trim()}\n\n${suggested}` : suggested));
-        }
-        const ok = res.ok;
+        await queuePhotoForUpload({
+          file,
+          reportId,
+          language,
+          observationId,
+          captureMode: opts?.captureMode ?? "bulk_import",
+          sequenceNumber: opts?.sequenceNumber ?? null,
+          originalTimestamp: new Date(file.lastModified || Date.now()).toISOString(),
+          clientUploadId,
+          batchId: opts?.batchId ?? null,
+          createBatch: opts?.createBatch,
+          batchExpectedCount: opts?.batchExpectedCount ?? null,
+        });
+        await drainPhotoUploadQueue(reportId, { concurrency: UPLOAD_CONCURRENCY });
+        const queued = await getPhotoUploadRecord(clientUploadId);
+        const ok = queued?.status === "uploaded";
+        const body: Record<string, unknown> = ok
+          ? {
+              success: true,
+              photo_id: queued?.server_photo_id ?? null,
+              batch_id: queued?.batch_id ?? opts?.batchId ?? null,
+              url: null,
+            }
+          : { error: queued?.last_error ?? "upload_failed" };
         if (!ok && attempt === 0) {
-          // On 429 (rate limit), wait before retrying to avoid hammering the server.
-          if (res.status === 429) {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-          }
-          return uploadOnePhoto(file, slotId, 1);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          return uploadOnePhoto(file, slotId, 1, observationId, {
+            ...opts,
+            clientUploadId,
+            captureMode: opts?.captureMode ?? "bulk_import",
+          });
         }
         let ai_score: number | undefined;
         if (ok) {
@@ -1505,17 +2003,29 @@ export default function ZeroDraftReportComposer({
         }
         const serverPid =
           typeof body.photo_id === "string" && body.photo_id.trim() ? body.photo_id.trim() : null;
+        const batchFromServer =
+          typeof body.batch_id === "string" && body.batch_id.trim()
+            ? body.batch_id.trim()
+            : typeof queued?.batch_id === "string" && queued.batch_id.trim()
+              ? queued.batch_id.trim()
+              : null;
+        if (batchFromServer) uploadBatchIdRef.current = batchFromServer;
         setPhotos((prev) => {
           const preset = terrainPresetZoneRef.current;
           return prev.map((p) => {
             if (p.id !== slotId) return p;
+            const linked =
+              ok && observationId && isObservationId(observationId) ? observationId : p.observation_id ?? null;
             const next = {
               ...p,
               uploading: false,
               url: typeof body.url === "string" ? body.url : null,
               serverPhotoId: ok ? serverPid : p.serverPhotoId,
+              observation_id: linked,
+              selected_for_report: ok && !!linked,
+              report_tier: (ok && linked ? "support" : "excluded") as ReportPhotoTier,
               error: !ok
-                ? (typeof body.error === "string" ? body.error : `Erreur ${res.status}`)
+                ? (typeof body.error === "string" ? body.error : "Erreur téléversement")
                 : undefined,
               ...(ai_score != null ? { ai_score } : {}),
             };
@@ -1529,7 +2039,11 @@ export default function ZeroDraftReportComposer({
         return ok;
       } catch (e) {
         if (attempt === 0) {
-          return uploadOnePhoto(file, slotId, 1);
+          return uploadOnePhoto(file, slotId, 1, observationId, {
+            ...opts,
+            clientUploadId,
+            captureMode: opts?.captureMode ?? "bulk_import",
+          });
         }
         setPhotos((prev) =>
           prev.map((p) =>
@@ -1559,9 +2073,13 @@ export default function ZeroDraftReportComposer({
   }, []);
 
   const handlePhotoUpload = useCallback(
-    async (files: FileList | File[]) => {
+    async (files: FileList | File[], explicitObservationId?: string | null) => {
       const arr = Array.from(files).filter((f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(f.name));
       if (arr.length === 0) return;
+      const targetObs = resolveUploadTargetObservationId(
+        ensureReportEntryIds(entriesRef.current),
+        explicitObservationId ?? activeObservationIdRef.current,
+      );
       if (arr.length > MAX_BULK_SOFT) {
         window.alert(
           language === "en"
@@ -1570,6 +2088,8 @@ export default function ZeroDraftReportComposer({
         );
       }
       const batch = arr.slice(0, MAX_BULK_HARD);
+      bulkSequenceRef.current = 0;
+      uploadBatchIdRef.current = null;
       const uploadStartedAt = Date.now();
       setUploadingPhoto(true);
       setPhotoUploadProgress({ done: 0, total: batch.length });
@@ -1582,7 +2102,9 @@ export default function ZeroDraftReportComposer({
         name: f.name,
         url: null as string | null,
         uploading: true,
-        report_tier: "excluded" as ReportPhotoTier,
+        observation_id: targetObs,
+        selected_for_report: !!targetObs,
+        report_tier: (targetObs ? "support" : "excluded") as ReportPhotoTier,
       }));
       setPhotos((prev) => [...prev, ...additions]);
 
@@ -1596,7 +2118,17 @@ export default function ZeroDraftReportComposer({
           const slice = chunkFiles.slice(i, i + UPLOAD_CONCURRENCY);
           const sliceAdd = chunkAdd.slice(i, i + UPLOAD_CONCURRENCY);
           const batchOut = await Promise.all(
-            slice.map((file, j) => uploadOnePhoto(file, sliceAdd[j]!.id, 0)),
+            slice.map((file, j) => {
+              bulkSequenceRef.current += 1;
+              return uploadOnePhoto(file, sliceAdd[j]!.id, 0, targetObs, {
+                captureMode: "bulk_import",
+                sequenceNumber: bulkSequenceRef.current,
+                clientUploadId: crypto.randomUUID(),
+                batchId: uploadBatchIdRef.current,
+                createBatch: chunkStart === 0 && i === 0 && j === 0,
+                batchExpectedCount: batch.length,
+              });
+            }),
           );
           outcomes.push(...batchOut);
           completed += slice.length;
@@ -1604,12 +2136,6 @@ export default function ZeroDraftReportComposer({
         }
       }
 
-      setPhotos((prev) => {
-        const batchIds = new Set(additions.map((a) => a.id));
-        return prev.map((p) =>
-          batchIds.has(p.id) ? { ...p, selected_for_report: false, report_tier: "excluded" } : p,
-        );
-      });
       setUploadingPhoto(false);
       setPhotoUploadProgress(null);
       const duration_ms = Date.now() - uploadStartedAt;
@@ -1679,6 +2205,7 @@ export default function ZeroDraftReportComposer({
       let mergedNewFindings = false;
       if (!skipEntryMerge && proposed.length > 0) {
         const prev = entriesSnapshot;
+        const proposedWithIds = ensureReportEntryIds(proposed);
         const isPristineDefault =
           prev.length === 1 &&
           prev[0]?.zone === "salon" &&
@@ -1686,10 +2213,14 @@ export default function ZeroDraftReportComposer({
           prev[0]?.severity === "medium" &&
           !(prev[0]?.note ?? "").trim();
         mergedEntries = isPristineDefault
-          ? proposed.map((e) => ({ ...e }))
-          : [...prev, ...proposed];
+          ? proposedWithIds.map((e) => ({ ...e }))
+          : [...prev, ...proposedWithIds];
         mergedNewFindings = true;
         setEntries(mergedEntries);
+        const proposedSnapshot = buildAIObservationSnapshot(proposedWithIds);
+        setAiObservationSnapshot((current) =>
+          mergeAIObservationSnapshots(current, proposedSnapshot),
+        );
       }
 
       let syncedClientFromFindings = false;
@@ -1960,12 +2491,24 @@ export default function ZeroDraftReportComposer({
       inspector_note: inspectorNote,
       client_section: clientSectionValue,
       polish_client: polishClient,
-      entries,
+      entries: ensureReportEntryIds(entries),
       language,
       jurisdiction,
       photos_coverage: photosCoverageByZone,
+      photo_observation_links: photos
+        .filter((p) => p.serverPhotoId?.trim())
+        .map((p) => ({
+          photo_id: p.serverPhotoId!.trim(),
+          observation_id:
+            p.observation_id && validObservationIds.has(p.observation_id)
+              ? p.observation_id
+              : null,
+        })),
       ...(reportPhotoSelectionForPayload
         ? { report_photo_selection_v1: reportPhotoSelectionForPayload }
+        : {}),
+      ...(aiObservationSnapshot
+        ? { ai_observation_snapshot_v1: aiObservationSnapshot }
         : {}),
     }),
     [
@@ -1979,7 +2522,10 @@ export default function ZeroDraftReportComposer({
       language,
       jurisdiction,
       photosCoverageByZone,
+      photos,
+      validObservationIds,
       reportPhotoSelectionForPayload,
+      aiObservationSnapshot,
     ],
   );
 
@@ -2260,7 +2806,7 @@ export default function ZeroDraftReportComposer({
         fetch("/api/trigger-inspection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ report_id: reportId }),
+          body: JSON.stringify({ report_id: reportId, access_token: viewerToken ?? "" }),
         }),
         180_000,
         "trigger-inspection",
@@ -3204,6 +3750,7 @@ export default function ZeroDraftReportComposer({
               reportId={reportId}
               language={language}
               disabled={loading || uploadingPhoto}
+              sequenceNumber={cameraCaptureSequence + 1}
               guideHint={
                 terrainStepLive?.kind === "photo"
                   ? language === "en"
@@ -3212,10 +3759,20 @@ export default function ZeroDraftReportComposer({
                   : undefined
               }
               onPhotoUploaded={() => {
+                setCameraCaptureSequence((n) => n + 1);
                 router.refresh();
                 schedulePhotoAnalysisRefresh();
               }}
             />
+            {photoIntelligenceProgress && viewerToken?.trim() ? (
+              <PhotoAnalysisDashboardPanel
+                language={language}
+                progress={photoIntelligenceProgress}
+                reportId={reportId}
+                accessToken={viewerToken.trim()}
+                onRetried={() => setPhotoProgressRefreshTick((t) => t + 1)}
+              />
+            ) : null}
             {validPhotoCount > 0 && viewerToken?.trim() ? (
               <p
                 className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/95 px-3 py-2 text-xs font-medium leading-snug text-emerald-950"
@@ -3271,6 +3828,21 @@ export default function ZeroDraftReportComposer({
                 </button>
               </div>
             ) : null}
+            <input
+              ref={photoDirInputRef}
+              id="report-photos-directory"
+              type="file"
+              accept="image/*"
+              multiple
+              className="sr-only"
+              disabled={loading || uploadingPhoto}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  handlePhotoUpload(e.target.files);
+                  e.target.value = "";
+                }
+              }}
+            />
             <input
               ref={photoInputRef}
               id="report-photos-input"
@@ -3328,8 +3900,8 @@ export default function ZeroDraftReportComposer({
                   <>
                     <span>
                       {language === "en"
-                        ? "🧠 Upload & photo analysis…"
-                        : "🧠 Téléversement & analyse des photos…"}
+                        ? "Uploading photos…"
+                        : "Téléversement des photos…"}
                     </span>
                     {photoUploadProgress ? (
                       <span className="text-xs font-medium tabular-nums">
@@ -3338,148 +3910,92 @@ export default function ZeroDraftReportComposer({
                     ) : null}
                   </>
                 ) : (
-                  <span>
-                    {language === "en"
-                      ? "Click or drop photos here"
-                      : "Cliquez ou déposez des photos ici"}
-                  </span>
+                  <>
+                    <span>
+                      {language === "en"
+                        ? "Click or drop photos here (bulk import)"
+                        : "Cliquez ou déposez des photos (import massif)"}
+                    </span>
+                    <span className="text-xs">
+                      {language === "en"
+                        ? "Or import a folder · up to 500 photos"
+                        : "Ou importer un dossier · jusqu'à 500 photos"}
+                    </span>
+                  </>
                 )}
               </button>
+              <button
+                type="button"
+                disabled={loading || uploadingPhoto}
+                onClick={() => photoDirInputRef.current?.click()}
+                className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {language === "en" ? "Import folder" : "Importer un dossier"}
+              </button>
             </div>
-            {photos.length > 0 ? (
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {photos.map((photo) => {
-                  const photoRowKeyForReason = (photo.serverPhotoId?.trim() || photo.id).trim();
-                  const photoSelectionReason = photoSelectionReasonsByKey[photoRowKeyForReason];
-                  const selectedForReport =
-                    photo.report_tier != null ? photo.report_tier !== "excluded" : Boolean(photo.selected_for_report);
-                  const currentTier: Exclude<ReportPhotoTier, "excluded"> =
-                    photo.report_tier === "critical" ? "critical" : "support";
-                  return (
-                  <div key={photo.id} className="rounded-md border border-slate-200 p-1.5 text-center">
-                    {photo.url ? (
-                      // URLs Storage publiques — évite next/image (domaines / tailles variables en session).
-                      // eslint-disable-next-line @next/next/no-img-element -- thumbnails terrain depuis Supabase public URL
-                      <img
-                        src={photo.url}
-                        alt={photo.name}
-                        className="h-20 w-full rounded object-cover"
-                      />
-                    ) : photo.uploading ? (
-                      <div className="flex h-20 items-center justify-center bg-slate-100 rounded">
-                        <span className="text-xs text-slate-400">…</span>
-                      </div>
-                    ) : (
-                      <div className="flex h-20 items-center justify-center bg-red-50 rounded">
-                        <span className="text-xs text-red-500">Erreur</span>
-                      </div>
-                    )}
-                    <p className="mt-1 truncate text-xs text-slate-500">{photo.name}</p>
-                    {photo.url && !photo.uploading ? (
-                      <label className="mt-1 block text-left">
-                        <span className="sr-only">Zone</span>
-                        <select
-                          className="mt-0.5 w-full rounded border border-slate-200 px-1 py-0.5 text-[10px] text-slate-800"
-                          value={photo.linked_zone ?? "autre"}
-                          onChange={(e) => {
-                            const z = e.target.value as ZoneCode;
-                            setPhotos((prev) =>
-                              prev.map((p) => (p.id === photo.id ? { ...p, linked_zone: z } : p)),
-                            );
-                          }}
-                        >
-                          {ZONES.map((z) => (
-                            <option key={z.value} value={z.value}>
-                              {z.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
-                    {photo.ai_score != null && !photo.error ? (
-                      <p className="text-[10px] font-medium text-violet-800">
-                        IA {(photo.ai_score * 100).toFixed(0)}%
-                        {selectedForReport ? (
-                          <span className="ml-1 rounded bg-violet-100 px-1 font-semibold text-violet-900">
-                            {language === "en" ? "AI selected" : "IA sélectionnée"}
-                          </span>
-                        ) : null}
-                      </p>
-                    ) : null}
-                    {photo.url && !photo.uploading ? (
-                      <button
-                        type="button"
-                        className="mt-1 text-[10px] font-medium text-blue-700 underline"
-                        onClick={() =>
-                          setPhotos((prev) =>
-                            prev.map((p) =>
-                              p.id === photo.id
-                                ? {
-                                    ...p,
-                                    selected_for_report: !selectedForReport,
-                                    report_tier: !selectedForReport ? "support" : "excluded",
-                                  }
-                                : p,
-                            ),
-                          )
-                        }
-                      >
-                        {selectedForReport
-                          ? language === "en"
-                            ? "Deselect for summary"
-                            : "Retirer de la sélection"
-                          : language === "en"
-                            ? "Select for summary"
-                            : "Inclure sélection"}
-                      </button>
-                    ) : null}
-                    {photo.url && !photo.uploading && selectedForReport ? (
-                      <label className="mt-1 block text-left">
-                        <span className="sr-only">
-                          {language === "en" ? "Photo tier" : "Niveau de photo"}
-                        </span>
-                        <select
-                          className="w-full rounded border border-amber-200 bg-amber-50 px-1 py-0.5 text-[10px] font-medium text-amber-950"
-                          value={currentTier}
-                          onChange={(e) => {
-                            const t = e.target.value === "critical" ? "critical" : "support";
-                            setPhotos((prev) =>
-                              prev.map((p) =>
-                                p.id === photo.id
-                                  ? { ...p, report_tier: t, selected_for_report: true }
-                                  : p,
-                              ),
-                            );
-                          }}
-                        >
-                          <option value="critical">
-                            {language === "en" ? "Critical evidence" : "Critique (preuve)"}
-                          </option>
-                          <option value="support">
-                            {language === "en" ? "Support context" : "Support (contexte)"}
-                          </option>
-                        </select>
-                      </label>
-                    ) : null}
-                    {selectedForReport && photoSelectionReason ? (
-                      <p className="mt-1 text-left text-[9px] leading-snug text-slate-600">
-                        {language === "en" ? photoSelectionReason.en : photoSelectionReason.fr}
-                      </p>
-                    ) : null}
-                    {photo.error ? (
-                      <p className="text-xs text-red-500">{photo.error}</p>
-                    ) : null}
-                  </div>
-                  );
-                })}
-              </div>
+            {galleryPersistUi !== "idle" ? (
+              <p
+                className={`text-xs ${
+                  galleryPersistUi === "error" ? "text-red-600" : "text-slate-500"
+                }`}
+                aria-live="polite"
+              >
+                {galleryPersistUi === "saving"
+                  ? language === "en"
+                    ? "Saving photo changes…"
+                    : "Enregistrement des photos…"
+                  : galleryPersistUi === "saved"
+                    ? language === "en"
+                      ? "Photo changes saved"
+                      : "Modifications photo enregistrées"
+                    : language === "en"
+                      ? "Photo save failed — changes reverted"
+                      : "Échec d'enregistrement — modifications annulées"}
+              </p>
             ) : null}
+            <InspectionPhotoGallery
+              language={language}
+              photos={photos}
+              entries={entries}
+              validObservationIds={validObservationIds}
+              photoSelectionReasonsByKey={photoSelectionReasonsByKey}
+              isSelectedForReport={isPhotoSelectedForReport}
+              onObservationChange={onGalleryObservationChange}
+              onToggleReportSelection={onGalleryToggleReportSelection}
+              onTierChange={onGalleryTierChange}
+            />
           </div>
 
             <p className="text-xs leading-relaxed text-slate-600">{labels.entriesBlockHint}</p>
             <div id="report-entries-zone" className="scroll-mt-28 space-y-3">
-              {entries.map((entry, idx) => (
-                <div key={idx} className="rounded-lg border border-slate-200 p-3">
+              <input
+                ref={entryPhotoInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                onChange={(e) => {
+                  const files = e.target.files;
+                  if (files && files.length > 0) {
+                    void handlePhotoUpload(files, pendingEntryPhotoObservationIdRef.current);
+                  }
+                  e.target.value = "";
+                  pendingEntryPhotoObservationIdRef.current = null;
+                }}
+              />
+              {entries.map((entry, idx) => {
+                const entryId = entry.id ?? `entry-${idx}`;
+                const linkedPhotoCount = photos.filter(
+                  (p) => p.observation_id === entry.id && p.url && !p.error,
+                ).length;
+                return (
+                <div
+                  key={entryId}
+                  className="rounded-lg border border-slate-200 p-3"
+                  onFocus={() => {
+                    if (entry.id) activeObservationIdRef.current = entry.id;
+                  }}
+                >
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-sm font-semibold text-slate-800">
                       {labels.finding} #{idx + 1}
@@ -3488,7 +4004,7 @@ export default function ZeroDraftReportComposer({
                       type="button"
                       className="text-xs text-red-600 disabled:text-slate-400"
                       disabled={entries.length === 1 || loading}
-                      onClick={() => removeEntry(idx)}
+                      onClick={() => void removeEntry(idx)}
                     >
                       {labels.remove}
                     </button>
@@ -3542,8 +4058,29 @@ export default function ZeroDraftReportComposer({
                     placeholder="Note optionnelle pour ce constat..."
                     disabled={loading}
                   />
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      disabled={loading || uploadingPhoto || !entry.id}
+                      onClick={() => {
+                        if (!entry.id) return;
+                        pendingEntryPhotoObservationIdRef.current = entry.id;
+                        entryPhotoInputRef.current?.click();
+                      }}
+                    >
+                      {language === "en"
+                        ? linkedPhotoCount > 0
+                          ? `Add photos (${linkedPhotoCount} linked)`
+                          : "Add photos to this finding"
+                        : linkedPhotoCount > 0
+                          ? `Ajouter photos (${linkedPhotoCount} liées)`
+                          : "Ajouter photos à ce constat"}
+                    </button>
+                  </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -3643,13 +4180,13 @@ export default function ZeroDraftReportComposer({
           <p className="text-sm text-slate-700">{generated.summary}</p>
 
           <div className="space-y-3">
-            {generated.sections.slice(0, 3).map((section) => (
-              <div key={section.order} className="rounded-md border border-slate-200 bg-white p-3">
-                <p className="text-sm font-semibold text-slate-900">{section.title}</p>
-                <p className="mt-1 text-xs text-slate-700">{section.observation}</p>
-                <p className="mt-1 text-xs text-slate-700">{section.analysis}</p>
+            {generated.sections.slice(0, 3).map((section, index) => (
+              <div key={index} className="rounded-md border border-slate-200 bg-white p-3">
+                <p className="text-sm font-semibold text-slate-900">{String(section.title ?? "")}</p>
+                <p className="mt-1 text-xs text-slate-700">{String(section.observation ?? "")}</p>
+                <p className="mt-1 text-xs text-slate-700">{String(section.analysis ?? "")}</p>
                 <p className="mt-1 text-xs font-medium text-slate-800">
-                  {labels.recommendation}: {section.recommendation}
+                  {labels.recommendation}: {String(section.recommendation ?? "")}
                 </p>
               </div>
             ))}

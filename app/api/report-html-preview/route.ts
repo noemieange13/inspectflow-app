@@ -1,5 +1,6 @@
 import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { buildLiveReportHtmlPreview } from "@/lib/buildLiveReportHtmlPreview";
+import { tryOfflineReportHtmlPreview } from "@/lib/devOffline/htmlPreview";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import {
   ifNoneMatchPrecludesBody,
@@ -35,6 +36,12 @@ export async function POST(req: Request) {
   if (!reportId) {
     return Response.json({ error: "Missing report_id" }, { status: 400 });
   }
+
+  const offlinePreview = await tryOfflineReportHtmlPreview({
+    reportId,
+    accessTokenRaw,
+  });
+  if (offlinePreview) return offlinePreview;
 
   let supabase;
   try {

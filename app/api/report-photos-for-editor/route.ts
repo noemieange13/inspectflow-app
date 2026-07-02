@@ -1,6 +1,12 @@
 import { inferLinkedZoneFromPhotoAnalysis } from "@/lib/inferLinkedZoneFromPhotoAnalysis";
-import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { isObservationId } from "@/lib/observationIds";
+import {
+  assertReportResourceAccess,
+  jsonAccessDenied,
+  REPORT_ACCESS_SELECT,
+} from "@/lib/access_control/inspectionAccess";
 import { getUserUploadPublicUrl } from "@/lib/reportPhotoPublicUrl";
+import { MAX_INSPECTION_PHOTOS_LOAD } from "@/lib/inspectionPhotoLimits";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import type { ZoneCode } from "@/lib/reportNarrative";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
@@ -24,7 +30,7 @@ export async function POST(req: Request) {
     const supabase = await createServiceRoleClient();
     const { data: report, error: readError } = await supabase
       .from("reports")
-      .select("id, access_token, token_expires_at")
+      .select(REPORT_ACCESS_SELECT)
       .eq("id", reportId)
       .maybeSingle();
 
@@ -35,44 +41,37 @@ export async function POST(req: Request) {
       return Response.json({ success: false, error: "Report not found" }, { status: 404 });
     }
 
-    const rec = report as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-    if (dbToken) {
-      if (!reportAccessTokensMatch(accessTokenRaw, dbToken)) {
-        return Response.json(
-          { success: false, error: "Invalid access token", code: "access_denied" },
-          { status: 403 },
-        );
-      }
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return Response.json(
-          { success: false, error: "Access token expired", code: "access_denied" },
-          { status: 403 },
-        );
-      }
+    const access = await assertReportResourceAccess(req, supabase, {
+      reportId,
+      accessTokenRaw,
+      row: report as Record<string, unknown>,
+      action: "view",
+    });
+    if (!access.ok) {
+      if (access.code === "access_denied") return jsonAccessDenied();
+      return Response.json({ success: false, error: access.error }, { status: access.status });
     }
 
-    const { rows } = await loadPhotoRowsForReport(supabase, reportId, 320);
+    const { rows } = await loadPhotoRowsForReport(supabase, reportId, MAX_INSPECTION_PHOTOS_LOAD);
     const { data: selectionRows, error: selectionErr } = await supabase
       .from("report_photo_selections")
-      .select("photo_id, tier")
+      .select("photo_id, tier, report_selected")
       .eq("report_id", reportId);
-    const selectionByPhotoId = new Map<string, "critical" | "support">();
+    const selectionByPhotoId = new Map<
+      string,
+      { tier: "critical" | "support"; reportSelected: boolean }
+    >();
     if (!selectionErr && Array.isArray(selectionRows)) {
       for (const row of selectionRows) {
         const photoId = (row as { photo_id?: unknown }).photo_id;
         const tier = (row as { tier?: unknown }).tier;
+        const reportSelectedRaw = (row as { report_selected?: unknown }).report_selected;
         if (typeof photoId !== "string") continue;
-        if (tier === "critical" || tier === "support") {
-          selectionByPhotoId.set(photoId, tier);
-        } else {
-          selectionByPhotoId.set(photoId, "support");
-        }
+        const resolvedTier: "critical" | "support" =
+          tier === "critical" ? "critical" : "support";
+        const reportSelected =
+          typeof reportSelectedRaw === "boolean" ? reportSelectedRaw : true;
+        selectionByPhotoId.set(photoId, { tier: resolvedTier, reportSelected });
       }
     }
 
@@ -80,14 +79,21 @@ export async function POST(req: Request) {
       const inferred = inferLinkedZoneFromPhotoAnalysis(r.analysis);
       const linked_zone: ZoneCode = inferred ?? "autre";
       const url = getUserUploadPublicUrl(supabase, r.storage_path);
-      const tier = selectionByPhotoId.get(r.id) ?? "excluded";
+      const selection = selectionByPhotoId.get(r.id);
+      const reportSelected = selection?.reportSelected ?? false;
+      const tier = reportSelected ? (selection?.tier ?? "support") : "excluded";
+      const obsRaw = r.observation_id;
+      const observation_id =
+        typeof obsRaw === "string" && isObservationId(obsRaw) ? obsRaw.trim() : null;
       return {
         id: r.id,
         photo_number: r.photo_number ?? null,
         url,
         linked_zone,
-        /** Pour sélection « meilleures prises » côté client (peut être volumineux sur gros lots). */
+        observation_id,
         analysis: r.analysis ?? null,
+        analysis_status: r.analysis_status ?? null,
+        duplicate_of_photo_id: r.duplicate_of_photo_id ?? null,
         selected_for_report: tier !== "excluded",
         report_tier: tier,
       };

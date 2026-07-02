@@ -4,5 +4,11 @@
       "PUPPETEER_SKIP_DOWNLOAD": "true",
       "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "true"
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/process-photo-analysis-queue",
+      "schedule": "*/2 * * * *"
+    }
+  ]
 }

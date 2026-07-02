@@ -4,14 +4,29 @@ import {
   parseInspectorProfileFromUnknown,
   getComplianceExportMode,
 } from "@/lib/inspectionCoverPayload";
+import {
+  ensureLegacyInspectorPayloadFromSnapshot,
+  hasReportProfessionalSnapshot,
+} from "@/lib/inspectorProfile";
 import { buildCoverSectionHtml } from "@/lib/coverSectionHtml";
 import { buildQc2027HtmlFromPayload } from "@/lib/qc2027PdfTemplate";
 import type { QcLegalClauseRow } from "@/lib/qcLegalClauses";
+import {
+  parseObservationPhotoUrlsFromPayload,
+  renderObservationPhotosHtml,
+} from "@/lib/reportObservationPhotos";
+import { resolvePayloadReportLanguage, resolvePayloadReportLocale } from "@/lib/reportLanguage";
+import { buildProfessionalHtmlFromPayload } from "@/lib/report_template_engine";
+import type { ReportLanguage } from "@/lib/reportNarrative";
+import { readInspectionWeatherFromPayload } from "@/lib/weather/inspectionWeather";
+import { formatWeatherSummary } from "@/lib/weather/weatherLabels";
 
 export type BuildHtmlFromReportPayloadOptions = {
   legalClauseRows?: QcLegalClauseRow[];
   /** QC + rapport EN : clauses FR parallèles (PDF). */
   legalClauseRowsFrForQc?: QcLegalClauseRow[];
+  /** Langue de rendu (sinon résolue depuis le payload). */
+  reportLanguage?: ReportLanguage;
 };
 
 /**
@@ -36,11 +51,12 @@ export const REPORT_BASE_PRINT_CSS =
   ".header h1{margin-bottom:0}.header .subtitle{color:#475569;font-size:15px}" +
   ".inspectflow-cover h2{margin-top:0;font-size:18px}";
 
-type ReportLanguage = "fr" | "en";
-
-function getReportLanguage(payload: Record<string, unknown>): ReportLanguage {
-  const candidate = payload.language ?? payload.lang;
-  return candidate === "en" ? "en" : "fr";
+function getReportLanguage(
+  payload: Record<string, unknown>,
+  override?: ReportLanguage,
+): ReportLanguage {
+  if (override === "en" || override === "fr") return override;
+  return resolvePayloadReportLanguage(payload);
 }
 
 function i18n(language: ReportLanguage) {
@@ -96,7 +112,11 @@ function statusCssClass(status: string): "ok" | "warn" | "bad" {
 }
 
 type SectionItem = { label?: unknown; status?: unknown };
-type Section = { title?: unknown; items?: unknown };
+type Section = {
+  title?: unknown;
+  items?: unknown;
+  id?: unknown;
+};
 type ComplianceChecklistItem = {
   title?: unknown;
   requirement?: unknown;
@@ -262,12 +282,13 @@ export function buildHtmlFromReportPayload(
   options?: BuildHtmlFromReportPayloadOptions,
 ): string | null {
   if (!payload || typeof payload !== "object") return null;
-  const language = getReportLanguage(payload);
+  const enriched = ensureLegacyInspectorPayloadFromSnapshot(payload);
+  const language = getReportLanguage(enriched, options?.reportLanguage);
   const t = i18n(language);
 
-  const coverParsed = parseCoverV1FromUnknown(payload.cover_v1);
+  const coverParsed = parseCoverV1FromUnknown(enriched.cover_v1);
   const profileParsed = parseInspectorProfileFromUnknown(
-    payload[INSPECTOR_PROFILE_PAYLOAD_KEY],
+    enriched[INSPECTOR_PROFILE_PAYLOAD_KEY],
   );
   const coverBlock =
     coverParsed != null
@@ -276,7 +297,16 @@ export function buildHtmlFromReportPayload(
 
   const sectionsRaw =
     normalizeSectionsFromPayload(payload.sections) ?? [];
+  const observationPhotoUrls = parseObservationPhotoUrlsFromPayload(payload);
   if (sectionsRaw.length > 0) {
+    if (hasReportProfessionalSnapshot(enriched)) {
+      const proHtml = buildProfessionalHtmlFromPayload(enriched, {
+        locale: resolvePayloadReportLocale(enriched),
+        legalClauseRows: options?.legalClauseRows,
+      });
+      if (proHtml) return proHtml;
+    }
+
     if (
       coverParsed != null &&
       getComplianceExportMode(coverParsed) === "QC_2027"
@@ -312,6 +342,13 @@ export function buildHtmlFromReportPayload(
 
     if (coverBlock) {
       parts.push(coverBlock);
+    }
+
+    const weather = readInspectionWeatherFromPayload(enriched);
+    if (weather) {
+      parts.push(
+        `<p class="qc-muted" style="font-size:13px;color:#64748b;margin:0.75em 0">${escapeHtml(formatWeatherSummary(weather, language))}</p>`,
+      );
     }
 
     if (payload.score != null && String(payload.score).length > 0) {
@@ -397,6 +434,11 @@ export function buildHtmlFromReportPayload(
       const rec =
         typeof s.recommendation === "string" ? s.recommendation.trim() : "";
       const sev = typeof s.severity === "string" ? s.severity.trim() : "";
+      const observationId =
+        typeof s.id === "string" && s.id.trim().length > 0 ? s.id.trim() : "";
+      const photoUrls =
+        observationId.length > 0 ? (observationPhotoUrls[observationId] ?? []) : [];
+      const photosHtml = renderObservationPhotosHtml(photoUrls);
 
       if (items.length > 0) {
         parts.push(`<h3>${escapeHtml(secTitle)}</h3><ul>`);
@@ -411,6 +453,7 @@ export function buildHtmlFromReportPayload(
           );
         }
         parts.push("</ul>");
+        if (photosHtml) parts.push(photosHtml);
       } else if (obs || ana || rec || secTitle || sev) {
         parts.push(`<h3>${escapeHtml(secTitle)}</h3>`);
         if (sev) {
@@ -431,6 +474,26 @@ export function buildHtmlFromReportPayload(
         if (rec) {
           parts.push(
             `<p><strong>${escapeHtml(t.findingRecommendation)}:</strong> ${escapeHtml(rec)}</p>`,
+          );
+        }
+        if (photosHtml) parts.push(photosHtml);
+      }
+    }
+
+    const integrityRaw = payload.photo_integrity_v1;
+    if (integrityRaw && typeof integrityRaw === "object" && !Array.isArray(integrityRaw)) {
+      const excluded = (integrityRaw as { excluded_photo_ids?: unknown }).excluded_photo_ids;
+      if (Array.isArray(excluded) && excluded.length > 0) {
+        const n = excluded.filter((x) => typeof x === "string").length;
+        if (n > 0) {
+          parts.push(
+            `<p class="qc-muted" style="font-size:12px;color:#64748b;margin-top:1em">${
+              escapeHtml(
+                language === "en"
+                  ? `${n} photo(s) excluded from this report (no valid finding link). See server record photo_integrity_v1.`
+                  : `${n} photo(s) exclue(s) du rapport (lien constat invalide). Voir photo_integrity_v1 en base.`,
+              )
+            }</p>`,
           );
         }
       }

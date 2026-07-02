@@ -1,5 +1,20 @@
+import {
+  detectInspectorFeedback,
+  mergeAIObservationSnapshots,
+  parseAIObservationSnapshot,
+  recordInspectorFeedbackOnSave,
+} from "@/lib/inspector_feedback_engine";
+import {
+  assertReportResourceAccess,
+  jsonAccessDenied,
+  REPORT_ACCESS_SELECT,
+} from "@/lib/access_control/inspectionAccess";
 import { appendAuditTrail } from "@/lib/auditTrailPayload";
-import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { tryOfflineReportContentPost } from "@/lib/devOffline/reportContent";
+import {
+  buildEntriesContentHash,
+  recordInspectionEventSafe,
+} from "@/lib/inspection_audit_trail";
 import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { updateReportPayloadWithUnlock } from "@/lib/updateReportPayloadWithUnlock";
@@ -18,6 +33,17 @@ import {
   type Severity,
   type ZoneCode,
 } from "@/lib/reportNarrative";
+import {
+  collectValidObservationIds,
+  ensureReportEntryIds,
+  isObservationId,
+} from "@/lib/observationIds";
+import {
+  auditObservationPhotoIntegrity,
+  loadObservationPhotoRowsForReport,
+  parsePhotoObservationLinks,
+  persistPhotoObservationLinks,
+} from "@/lib/reportObservationPhotos";
 import type { AiFailureReason } from "@/lib/aiResult";
 import {
   refineClientSectionAi,
@@ -31,6 +57,13 @@ import {
   parseReportPhotoSelectionLocked,
   parseReportPhotoSelectionTiers,
 } from "@/lib/reportPhotoSelectionPayload";
+import {
+  persistReportPhotoSelectionLayer,
+  syncReportPhotoSelectionAfterObservationLinks,
+  type InspectorPhotoSelectionPayload,
+} from "@/lib/reportPhotoSelectionPersist";
+import { REPORT_LANGUAGE_PAYLOAD_KEY } from "@/lib/reportLanguage";
+import { parseInspectionWeatherV1 } from "@/lib/weather/inspectionWeather";
 
 function mapAiFailureToPolishOutcome(
   reason: AiFailureReason,
@@ -90,6 +123,7 @@ function raceWithTimeout<T>(
 }
 
 type IncomingEntry = {
+  id?: unknown;
   zone?: unknown;
   issue?: unknown;
   severity?: unknown;
@@ -110,74 +144,22 @@ function isSeverity(value: unknown): value is Severity {
 
 function normalizeEntries(rawEntries: unknown): ReportEntryInput[] {
   if (!Array.isArray(rawEntries)) return [];
-  return rawEntries
+  const parsed = rawEntries
     .map((row) => row as IncomingEntry)
     .filter((row) => isZoneCode(row.zone) && isIssueCode(row.issue))
-    .map((row) => ({
-      zone: row.zone as ZoneCode,
-      issue: row.issue as IssueCode,
-      severity: isSeverity(row.severity) ? row.severity : "medium",
-      note: typeof row.note === "string" ? row.note.trim() : undefined,
-    }));
-}
-
-type ReportPhotoSelectionDbInput = {
-  selectedPhotoIds: string[];
-  tiersByPhotoId: Record<string, "critical" | "support">;
-};
-
-async function persistReportPhotoSelectionDb(
-  supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
-  reportId: string,
-  sel: ReportPhotoSelectionDbInput,
-): Promise<void> {
-  const ids = [...new Set(sel.selectedPhotoIds.map((x) => x.trim()).filter((x) => x.length > 0))];
-  if (ids.length === 0) {
-    const { error } = await supabase
-      .from("report_photo_selections")
-      .delete()
-      .eq("report_id", reportId);
-    if (error && error.code !== "42P01") throw error;
-    return;
-  }
-
-  const rows = ids.map((photoId) => ({
-    report_id: reportId,
-    photo_id: photoId,
-    tier: sel.tiersByPhotoId[photoId] === "critical" ? "critical" : "support",
-    updated_at: new Date().toISOString(),
-  }));
-
-  const { error: upsertErr } = await supabase
-    .from("report_photo_selections")
-    .upsert(rows, { onConflict: "report_id,photo_id" });
-  if (upsertErr) {
-    if (upsertErr.code === "42P01") return;
-    throw upsertErr;
-  }
-
-  const { data: existingRows, error: existingErr } = await supabase
-    .from("report_photo_selections")
-    .select("photo_id")
-    .eq("report_id", reportId);
-  if (existingErr) {
-    if (existingErr.code === "42P01") return;
-    throw existingErr;
-  }
-  const keep = new Set(ids);
-  const staleIds = (existingRows ?? [])
-    .map((r) => (r as { photo_id?: unknown }).photo_id)
-    .filter((x): x is string => typeof x === "string" && !keep.has(x));
-  if (staleIds.length > 0) {
-    const { error: deleteErr } = await supabase
-      .from("report_photo_selections")
-      .delete()
-      .eq("report_id", reportId)
-      .in("photo_id", staleIds);
-    if (deleteErr && deleteErr.code !== "42P01") {
-      throw deleteErr;
-    }
-  }
+    .map((row) => {
+      const entry: ReportEntryInput = {
+        zone: row.zone as ZoneCode,
+        issue: row.issue as IssueCode,
+        severity: isSeverity(row.severity) ? row.severity : "medium",
+        note: typeof row.note === "string" ? row.note.trim() : undefined,
+      };
+      if (typeof row.id === "string" && isObservationId(row.id)) {
+        entry.id = row.id.trim();
+      }
+      return entry;
+    });
+  return ensureReportEntryIds(parsed);
 }
 
 export async function POST(req: Request) {
@@ -187,6 +169,9 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
   }
+
+  const offlineHandled = await tryOfflineReportContentPost(body);
+  if (offlineHandled) return offlineHandled;
 
   const reportId =
     typeof body === "object" &&
@@ -236,9 +221,11 @@ export async function POST(req: Request) {
       : undefined,
   );
   const language: ReportLanguage = normalizeReportLanguage(
-    typeof body === "object" && body !== null && "language" in body
-      ? (body as { language: unknown }).language
-      : undefined,
+    typeof body === "object" && body !== null && "report_language" in body
+      ? (body as { report_language: unknown }).report_language
+      : typeof body === "object" && body !== null && "language" in body
+        ? (body as { language: unknown }).language
+        : undefined,
   );
   const jurisdiction: JurisdictionProfile = normalizeJurisdictionProfile(
     typeof body === "object" && body !== null && "jurisdiction" in body
@@ -289,7 +276,7 @@ export async function POST(req: Request) {
         const supabase = await createServiceRoleClient();
         const { data: report, error: readError } = await supabase
           .from("reports")
-          .select("id, payload, is_locked, access_token, token_expires_at")
+          .select(`${REPORT_ACCESS_SELECT}, payload, is_locked`)
           .eq("id", reportId)
           .maybeSingle();
 
@@ -300,29 +287,56 @@ export async function POST(req: Request) {
           return Response.json({ success: false, error: "Report not found" }, { status: 404 });
         }
 
-        const rec = report as Record<string, unknown>;
-        const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-        if (dbToken) {
-          if (!reportAccessTokensMatch(accessTokenRaw, dbToken)) {
-            return Response.json(
-              { success: false, error: "Invalid access token", code: "access_denied" },
-              { status: 403 },
-            );
-          }
-          if (
-            rec.token_expires_at != null &&
-            String(rec.token_expires_at) !== "" &&
-            new Date(String(rec.token_expires_at)) < new Date()
-          ) {
-            return Response.json(
-              { success: false, error: "Access token expired", code: "access_denied" },
-              { status: 403 },
-            );
-          }
+        const access = await assertReportResourceAccess(req, supabase, {
+          reportId,
+          accessTokenRaw,
+          row: report as Record<string, unknown>,
+          action: "edit",
+        });
+        if (!access.ok) {
+          if (access.code === "access_denied") return jsonAccessDenied();
+          return Response.json(
+            { success: false, error: access.error, code: access.code },
+            { status: access.status },
+          );
         }
 
         const generated = buildStructuredReport(entries, language, jurisdiction);
+        const validObservationIds = collectValidObservationIds(entries);
+
+        const photoLinksRaw =
+          typeof body === "object" &&
+          body !== null &&
+          "photo_observation_links" in body
+            ? (body as { photo_observation_links?: unknown }).photo_observation_links
+            : undefined;
+        const photoLinks = parsePhotoObservationLinks(photoLinksRaw);
+
+        let photoIntegrityPayload: Record<string, unknown> | null = null;
+        if (photoLinks) {
+          try {
+            await persistPhotoObservationLinks(supabase, photoLinks, validObservationIds);
+            await syncReportPhotoSelectionAfterObservationLinks(supabase, reportId, {
+              linkedPhotoIds: photoLinks.map((link) => link.photo_id),
+              validObservationIds,
+            });
+          } catch (linkErr) {
+            const msg = linkErr instanceof Error ? linkErr.message : String(linkErr);
+            return Response.json(
+              { success: false, error: `Photo observation links failed: ${msg}` },
+              { status: 500 },
+            );
+          }
+        }
+        try {
+          const photoRows = await loadObservationPhotoRowsForReport(supabase, reportId);
+          photoIntegrityPayload = auditObservationPhotoIntegrity(
+            photoRows,
+            validObservationIds,
+          ) as unknown as Record<string, unknown>;
+        } catch (auditErr) {
+          console.warn("[report-content] photo integrity audit skipped", auditErr);
+        }
 
         const mergeRecoOverrides = (
           sections: Array<Record<string, unknown>>,
@@ -356,6 +370,20 @@ export async function POST(req: Request) {
           report.payload && typeof report.payload === "object"
             ? (report.payload as Record<string, unknown>)
             : {};
+
+        const bodySnapshotRaw =
+          typeof body === "object" &&
+          body !== null &&
+          "ai_observation_snapshot_v1" in body
+            ? (body as { ai_observation_snapshot_v1: unknown }).ai_observation_snapshot_v1
+            : undefined;
+        const bodySnapshot = parseAIObservationSnapshot(bodySnapshotRaw);
+        const payloadSnapshot = parseAIObservationSnapshot(currentPayload.ai_observation_snapshot_v1);
+        const feedbackSnapshot = payloadSnapshot ?? bodySnapshot;
+        const inspectionId =
+          typeof report.inspection_id === "string" && report.inspection_id.trim()
+            ? report.inspection_id.trim()
+            : null;
 
         let clientSection =
           clientSectionFromBody ||
@@ -401,10 +429,12 @@ export async function POST(req: Request) {
           inspector_note: inspectorNote || null,
           client_section: clientSection,
           language,
+          [REPORT_LANGUAGE_PAYLOAD_KEY]: language,
           jurisdiction,
           generation_mode: "zero-draft-ui",
           generated_at: new Date().toISOString(),
           entries: entries.map((e) => ({
+            id: e.id,
             zone: e.zone,
             issue: e.issue,
             severity: e.severity,
@@ -415,9 +445,19 @@ export async function POST(req: Request) {
             updated_at: new Date().toISOString(),
             by_zone: photosByZone,
           },
+          ...(photoIntegrityPayload ? { photo_integrity_v1: photoIntegrityPayload } : {}),
         };
 
-        let dbSelectionInput: ReportPhotoSelectionDbInput | null = null;
+        const mergedSnapshot =
+          bodySnapshot != null
+            ? mergeAIObservationSnapshots(payloadSnapshot, bodySnapshot)
+            : payloadSnapshot;
+        if (mergedSnapshot) {
+          nextPayloadRaw.ai_observation_snapshot_v1 = mergedSnapshot;
+        }
+
+        let dbSelectionInput: InspectorPhotoSelectionPayload | null = null;
+        let selectionLocked = false;
         if (
           typeof body === "object" &&
           body !== null &&
@@ -425,18 +465,48 @@ export async function POST(req: Request) {
         ) {
           const rawSel = (body as { report_photo_selection_v1: unknown }).report_photo_selection_v1;
           const ids = parseReportPhotoSelectionIds(rawSel);
-          const locked = parseReportPhotoSelectionLocked(rawSel);
+          selectionLocked = parseReportPhotoSelectionLocked(rawSel);
           const tiersByPhotoId = parseReportPhotoSelectionTiers(rawSel);
           if (ids !== null) {
             dbSelectionInput = { selectedPhotoIds: ids, tiersByPhotoId };
             nextPayloadRaw.report_photo_selection_v1 = buildReportPhotoSelectionV1(ids, {
-              locked,
+              locked: selectionLocked,
               tiersByPhotoId,
             });
           } else {
             dbSelectionInput = { selectedPhotoIds: [], tiersByPhotoId: {} };
             delete nextPayloadRaw.report_photo_selection_v1;
           }
+        } else {
+          const payloadSel = currentPayload.report_photo_selection_v1;
+          selectionLocked = parseReportPhotoSelectionLocked(payloadSel);
+        }
+
+        if (
+          typeof body === "object" &&
+          body !== null &&
+          "inspection_weather_v1" in body
+        ) {
+          const parsedWeather = parseInspectionWeatherV1(
+            (body as { inspection_weather_v1: unknown }).inspection_weather_v1,
+          );
+          if (parsedWeather) {
+            nextPayloadRaw.inspection_weather_v1 = parsedWeather;
+          }
+        }
+
+        if (
+          typeof body === "object" &&
+          body !== null &&
+          "report_backup_snapshot_v1" in body &&
+          (body as { report_backup_snapshot_v1: unknown }).report_backup_snapshot_v1 &&
+          typeof (body as { report_backup_snapshot_v1: unknown }).report_backup_snapshot_v1 ===
+            "object" &&
+          !Array.isArray((body as { report_backup_snapshot_v1: unknown }).report_backup_snapshot_v1)
+        ) {
+          nextPayloadRaw.report_backup_snapshot_v1 = (
+            body as { report_backup_snapshot_v1: Record<string, unknown> }
+          ).report_backup_snapshot_v1;
         }
 
         const nextPayload = appendAuditTrail(nextPayloadRaw, {
@@ -479,6 +549,9 @@ export async function POST(req: Request) {
           undoVersionId = snap.versionId;
         }
 
+        const dbToken =
+          typeof report.access_token === "string" ? report.access_token.trim() : "";
+
         const allowUnlock =
           allowReportPayloadUnlock(req) || Boolean(dbToken);
 
@@ -511,16 +584,55 @@ export async function POST(req: Request) {
           return Response.json({ success: false, error: updateError.message }, { status: 500 });
         }
 
-        if (dbSelectionInput) {
-          try {
-            await persistReportPhotoSelectionDb(supabase, reportId, dbSelectionInput);
-          } catch (selErr) {
-            const msg = selErr instanceof Error ? selErr.message : String(selErr);
-            return Response.json(
-              { success: false, error: `Photo selection DB persistence failed: ${msg}` },
-              { status: 500 },
-            );
+        let inspectorFeedback: { inserted: number; skipped_duplicates: number } | undefined;
+        try {
+          inspectorFeedback = await recordInspectorFeedbackOnSave(supabase, {
+            report_id: reportId,
+            inspection_id: inspectionId,
+            snapshot: feedbackSnapshot,
+            final_entries: entries,
+          });
+        } catch (feedbackErr) {
+          console.warn("[report-content] inspector feedback skipped", feedbackErr);
+        }
+
+        try {
+          const feedbackEvents = detectInspectorFeedback({
+            snapshot: feedbackSnapshot,
+            final_entries: entries,
+          }).events;
+          const modified = feedbackEvents.filter((e) => e.change_type !== "accepted");
+          if (modified.length > 0) {
+            void recordInspectionEventSafe(supabase, {
+              report_id: reportId,
+              inspection_id: inspectionId,
+              event_type: "inspector_modified",
+              actor_type: "inspector",
+              metadata: {
+                entries_count: entries.length,
+                content_hash: buildEntriesContentHash(entries),
+                change_types: modified.map((e) => e.change_type),
+                observation_ids: modified.map((e) => e.observation_id),
+                feedback_events: modified.length,
+              },
+            });
           }
+        } catch (auditErr) {
+          console.warn("[report-content] inspection audit skipped", auditErr);
+        }
+
+        try {
+          await persistReportPhotoSelectionLayer(supabase, reportId, {
+            entries,
+            inspectorPayload: dbSelectionInput,
+            runAi: !selectionLocked,
+          });
+        } catch (selErr) {
+          const msg = selErr instanceof Error ? selErr.message : String(selErr);
+          return Response.json(
+            { success: false, error: `Photo selection DB persistence failed: ${msg}` },
+            { status: 500 },
+          );
         }
 
         let defectClassification: { itemsInserted: number; logged: boolean } | undefined;
@@ -530,10 +642,10 @@ export async function POST(req: Request) {
               supabase,
               reportId,
               sections: generated.sections.map((s) => ({
-                title: s.title,
-                observation: s.observation,
-                analysis: s.analysis,
-                recommendation: s.recommendation,
+                title: String(s.title ?? ""),
+                observation: String(s.observation ?? ""),
+                analysis: String(s.analysis ?? ""),
+                recommendation: String(s.recommendation ?? ""),
               })),
               language,
               signal: routeAbort.signal,
@@ -558,6 +670,9 @@ export async function POST(req: Request) {
             : {}),
           ...(polishClient && defectClassification !== undefined
             ? { defect_classification: defectClassification }
+            : {}),
+          ...(inspectorFeedback !== undefined
+            ? { inspector_feedback: inspectorFeedback }
             : {}),
         });
       })(),

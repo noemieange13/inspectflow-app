@@ -95,6 +95,20 @@ test-data/inspection-demo/run-log.*
 # Sensitive files (auto-detected)
 .env.example
 .env.local
+.dev-offline/
 node_modules
 tsconfig.tsbuildinfo
+
+# --- Pilot release hygiene (v1.0.0-pilot.1) ---
+# Generated / temporary dumps
+tsc_out.txt
+base_form_git.txt
+pr-draft-body.md
+log des actions.txt
+# Secrets (never commit)
+*recovery-codes*.txt
+# Tesseract OCR language data (runtime-downloaded; see docs/OCR_SETUP.md)
+*.traineddata
+# Standalone UI prototype (excluded from Next.js build — tsconfig/eslint ignore it)
+/inspectflow-ui/
 

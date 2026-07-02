@@ -1,10 +1,13 @@
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { MAX_INSPECTION_PHOTOS_LOAD } from "@/lib/inspectionPhotoLimits";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import {
   inferPhotoZonesByServerId,
   proposeQcEntryDraftsFromPhotoRows,
 } from "@/lib/proposeQcEntryDraftsFromPhotoRows";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { recordInspectionEventSafe } from "@/lib/inspection_audit_trail";
+import { hashInspectionContent } from "@/lib/inspection_audit_trail/metadata";
 
 export const maxDuration = 60;
 
@@ -27,21 +30,28 @@ export async function POST(req: Request) {
     }
 
     const entriesRaw = body.entries;
-    const currentEntries: Array<{ zone: string; note?: string }> = [];
+    const currentEntries: Array<{ id?: string; zone: string; note?: string }> = [];
     if (Array.isArray(entriesRaw)) {
       for (const row of entriesRaw) {
         if (!row || typeof row !== "object") continue;
-        const r = row as SlimEntry;
+        const r = row as Record<string, unknown>;
+        const id = typeof r.id === "string" ? r.id : undefined;
         const zone = typeof r.zone === "string" ? r.zone : "";
         const note = typeof r.note === "string" ? r.note : "";
-        currentEntries.push({ zone, note });
+        currentEntries.push({ id, zone, note });
       }
     }
+
+    const contextRaw = body.inspection_context;
+    const inspectionContext =
+      contextRaw && typeof contextRaw === "object"
+        ? (contextRaw as Record<string, unknown>)
+        : null;
 
     const supabase = await createServiceRoleClient();
     const { data: report, error: readError } = await supabase
       .from("reports")
-      .select("id, access_token, token_expires_at")
+      .select("id, access_token, token_expires_at, inspection_id")
       .eq("id", reportId)
       .maybeSingle();
 
@@ -74,9 +84,51 @@ export async function POST(req: Request) {
       }
     }
 
-    const { rows } = await loadPhotoRowsForReport(supabase, reportId, 200);
+    const { rows } = await loadPhotoRowsForReport(supabase, reportId, MAX_INSPECTION_PHOTOS_LOAD);
     const photo_zones = inferPhotoZonesByServerId(rows);
-    const proposed_entries = proposeQcEntryDraftsFromPhotoRows(currentEntries, rows, language);
+    const proposed_entries = proposeQcEntryDraftsFromPhotoRows(currentEntries, rows, language, {
+      context: {
+        province:
+          typeof inspectionContext?.province === "string"
+            ? inspectionContext.province
+            : "QC",
+        norme:
+          typeof inspectionContext?.norme === "string" ? inspectionContext.norme : undefined,
+        building_type:
+          typeof inspectionContext?.building_type === "string"
+            ? inspectionContext.building_type
+            : undefined,
+        construction_year:
+          typeof inspectionContext?.construction_year === "number"
+            ? inspectionContext.construction_year
+            : null,
+        language,
+      },
+    });
+
+    if (proposed_entries.length > 0) {
+      const inspectionId =
+        typeof rec.inspection_id === "string" ? rec.inspection_id.trim() : null;
+      void recordInspectionEventSafe(supabase, {
+        report_id: reportId,
+        inspection_id: inspectionId,
+        event_type: "ai_observation_created",
+        actor_type: "ai",
+        metadata: {
+          proposed_count: proposed_entries.length,
+          observation_ids: proposed_entries
+            .map((e) => e.id?.trim())
+            .filter((id): id is string => !!id),
+          content_hash: hashInspectionContent(
+            proposed_entries.map((e) => ({
+              zone: e.zone,
+              issue: e.issue,
+              severity: e.severity,
+            })),
+          ),
+        },
+      });
+    }
 
     return Response.json({
       success: true,

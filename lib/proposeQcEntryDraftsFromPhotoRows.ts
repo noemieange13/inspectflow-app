@@ -1,131 +1,107 @@
 import type { PhotoVisionAnalysis } from "@/lib/analyzeInspectionPhoto";
 import { inferLinkedZoneFromPhotoAnalysis } from "@/lib/inferLinkedZoneFromPhotoAnalysis";
 import {
-  findMissingQcSystemSections,
-  QC_SYSTEM_ZONE_GROUPS,
-  type QcSystemCode,
-} from "@/lib/qcSystemSections";
-import type { IssueCode, ReportEntryInput, Severity, ZoneCode } from "@/lib/reportNarrative";
+  aiObservationDraftsToReportEntries,
+  generateObservationDrafts,
+  identifyInspectorLockedEntryIds,
+  mergeObservationDraftsOnRerun,
+  type InspectionObservationContext,
+} from "@/lib/observation_ai_engine";
+import { runInspectionReasoning } from "@/lib/inspection_reasoning_engine";
+import { runJudgmentPipeline } from "@/lib/report_judgment_engine";
+import type { ReportEntryInput } from "@/lib/reportNarrative";
 
 export type PhotoRowForQcDraft = {
   id: string;
+  observation_id?: string | null;
   analysis?: unknown;
+  linked_zone?: string;
 };
-
-function defaultIssueForSystem(code: QcSystemCode): IssueCode {
-  switch (code) {
-    case "toiture":
-      return "roof_wear";
-    case "structure":
-      return "structure_movement";
-    case "electricite":
-      return "electrical_risk";
-    case "plomberie":
-      return "plumbing_issue";
-    case "chauffage":
-      return "ventilation_issue";
-    case "isolation":
-      return "insulation_deficiency";
-    case "ventilation":
-      return "ventilation_issue";
-    default:
-      return "other";
-  }
-}
-
-function severityFromAnalysis(analysis: unknown): Severity {
-  if (!analysis || typeof analysis !== "object") return "medium";
-  const h = (analysis as PhotoVisionAnalysis).severity_hint;
-  if (h === "low" || h === "medium" || h === "high") return h;
-  return "medium";
-}
-
-function noteFromAnalysis(analysis: unknown, language: "fr" | "en"): string {
-  if (!analysis || typeof analysis !== "object") return "";
-  const o = analysis as Record<string, unknown>;
-  const sug =
-    typeof o.suggested_inspector_note === "string" ? o.suggested_inspector_note.trim() : "";
-  const sum = typeof o.summary === "string" ? o.summary.trim() : "";
-  const obs = Array.isArray(o.observations)
-    ? o.observations.filter((x): x is string => typeof x === "string").slice(0, 4)
-    : [];
-  const head =
-    sug ||
-    [sum, obs.length ? obs.map((x) => `• ${x}`).join("\n") : ""].filter(Boolean).join("\n\n");
-  const prefix =
-    language === "en"
-      ? "Draft from photo evidence (review before sign-off):\n"
-      : "Brouillon issu des photos (à valider avant signature) :\n";
-  const body = head.trim();
-  if (!body) return "";
-  const merged = `${prefix}${body}`;
-  return merged.length > 3500 ? `${merged.slice(0, 3497)}...` : merged;
-}
-
-/**
- * Propose un constat par système QC encore absent, en s’appuyant sur les photos
- * dont la zone inférée couvre ce système.
- */
-export function proposeQcEntryDraftsFromPhotoRows(
-  currentEntries: Array<{ zone: string; note?: string }>,
-  rows: PhotoRowForQcDraft[],
-  language: "fr" | "en",
-): ReportEntryInput[] {
-  const missing = findMissingQcSystemSections(currentEntries);
-  if (missing.length === 0 || rows.length === 0) return [];
-
-  const enriched = rows.map((r) => ({
-    id: r.id,
-    analysis: r.analysis,
-    zone: inferLinkedZoneFromPhotoAnalysis(r.analysis),
-  }));
-
-  const out: ReportEntryInput[] = [];
-
-  for (const system of missing) {
-    const allowed = new Set<string>(QC_SYSTEM_ZONE_GROUPS[system]);
-    const candidates = enriched.filter((x) => x.zone && allowed.has(x.zone));
-    if (candidates.length === 0) continue;
-
-    const scored = candidates.map((c) => {
-      const note = noteFromAnalysis(c.analysis, language);
-      return { ...c, weight: note.length };
-    });
-    scored.sort((a, b) => b.weight - a.weight);
-    const pick = scored[0]!;
-    const zone = pick.zone as ZoneCode;
-    let note = noteFromAnalysis(pick.analysis, language);
-    if (!note.trim() && zone) {
-      note =
-        zone === "installation_electrique"
-          ? language === "en"
-            ? "Electrical / service panel area — complete wording after on-site verification."
-            : "Zone installation électrique / panneau — complétez le libellé après vérification terrain."
-          : language === "en"
-            ? `Photo evidence (${zone.replace(/_/g, " ")}) — add detail after site review.`
-            : `Constat issu d’une photo (${zone.replace(/_/g, " ")}) — précisez après vérification terrain.`;
-    }
-    if (!note.trim()) continue;
-
-    out.push({
-      zone,
-      issue: defaultIssueForSystem(system),
-      severity: severityFromAnalysis(pick.analysis),
-      note,
-    });
-  }
-
-  return out;
-}
 
 /**
  * Carte photo serveur → zone inférée (pour appliquer côté client sur `serverPhotoId`).
  */
-export function inferPhotoZonesByServerId(rows: PhotoRowForQcDraft[]): Record<string, ZoneCode> {
-  const out: Record<string, ZoneCode> = {};
+export function inferPhotoZonesByServerId(rows: PhotoRowForQcDraft[]): Record<string, import("@/lib/reportNarrative").ZoneCode> {
+  const out: Record<string, import("@/lib/reportNarrative").ZoneCode> = {};
   for (const r of rows) {
     const z = inferLinkedZoneFromPhotoAnalysis(r.analysis);
     if (z) out[r.id] = z;
   }
   return out;
+}
+
+export type ProposeQcEntryDraftsOptions = {
+  context?: Partial<InspectionObservationContext>;
+  previous_ai_drafts?: import("@/lib/observation_ai_engine").AIObservationDraft[];
+  inspector_locked_entry_ids?: Set<string>;
+};
+
+/**
+ * Propose des constats à partir des analyses photo via `observation_ai_engine`.
+ * Ne crée un constat que si une anomalie est détectée (pas de constat « photo seule »).
+ */
+export function proposeQcEntryDraftsFromPhotoRows(
+  currentEntries: Array<{ id?: string; zone: string; note?: string }>,
+  rows: PhotoRowForQcDraft[],
+  language: "fr" | "en",
+  opts?: ProposeQcEntryDraftsOptions,
+): ReportEntryInput[] {
+  if (rows.length === 0) return [];
+
+  const context: InspectionObservationContext = {
+    province: opts?.context?.province ?? "QC",
+    norme: opts?.context?.norme,
+    building_type: opts?.context?.building_type,
+    construction_year: opts?.context?.construction_year ?? null,
+    language,
+  };
+
+  const generated = generateObservationDrafts({
+    photos: rows.map((r) => ({
+      id: r.id,
+      observation_id: r.observation_id ?? null,
+      analysis: r.analysis,
+      linked_zone: r.linked_zone ?? inferLinkedZoneFromPhotoAnalysis(r.analysis),
+    })),
+    context,
+    existing_entries: currentEntries,
+  });
+
+  let drafts = generated.drafts;
+  const lockedDraftIds = identifyInspectorLockedEntryIds(
+    currentEntries,
+    opts?.previous_ai_drafts ?? [],
+  );
+  if (opts?.previous_ai_drafts?.length) {
+    drafts = mergeObservationDraftsOnRerun(opts.previous_ai_drafts, drafts, {
+      inspector_locked_draft_ids: lockedDraftIds,
+    });
+  }
+
+  const judgment = runJudgmentPipeline(drafts, context, {
+    inspector_locked_draft_ids: lockedDraftIds,
+  });
+
+  const reasoning = runInspectionReasoning(judgment.judged, context, {
+    inspector_locked_draft_ids: lockedDraftIds,
+  });
+
+  return aiObservationDraftsToReportEntries(judgment.drafts_for_report, language, {
+    normative_context: {
+      province: context.province,
+      norme: context.norme,
+      building_type: context.building_type,
+      construction_year: context.construction_year,
+      language,
+    },
+    reasoning_result: reasoning,
+  });
+}
+
+/** @deprecated Utilisé en interne — conservé pour compat tests legacy. */
+export function severityFromAnalysis(analysis: unknown): import("@/lib/reportNarrative").Severity {
+  if (!analysis || typeof analysis !== "object") return "medium";
+  const h = (analysis as PhotoVisionAnalysis).severity_hint;
+  if (h === "low" || h === "medium" || h === "high") return h;
+  return "medium";
 }

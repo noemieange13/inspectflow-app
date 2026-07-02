@@ -30,7 +30,7 @@ function withSecurityHeaders(response: NextResponse): NextResponse {
   // geolocation=() bloquait tout appel à navigator.geolocation (violation navigateur + bouton météo inutilisable).
   response.headers.set(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(self)",
+    "camera=(self), microphone=(), geolocation=(self)",
   );
   return response;
 }
@@ -46,6 +46,9 @@ export function proxy(req: NextRequest) {
   const pass = process.env.DASHBOARD_PASS;
 
   if (!user || !pass) {
+    if (process.env.NODE_ENV === "development") {
+      return withSecurityHeaders(NextResponse.next());
+    }
     return new NextResponse("Dashboard auth not configured", { status: 503 });
   }
 

@@ -1,0 +1,17 @@
+-- Phase Photo Intelligence 2B — cron worker analyse (Supabase pg_cron + pg_net)
+-- Adapter URL + secrets Vault avant prod.
+
+-- select cron.schedule(
+--   'inspectflow-photo-analysis-worker',
+--   '*/2 * * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://YOUR_APP.vercel.app/api/process-photo-analysis-queue',
+--     headers := jsonb_build_object(
+--       'Content-Type', 'application/json',
+--       'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'PHOTO_ANALYSIS_WORKER_SECRET' limit 1)
+--     ),
+--     body := '{"batch_limit":10,"max_batches":20,"drain":true}'::jsonb
+--   ) as request_id;
+--   $$
+-- );

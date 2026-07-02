@@ -1,29 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
+
+import { embedInspectorProfileInReportPayload } from "@/lib/embedInspectorProfileInReportPayload";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { resolveBearerUserId } from "@/lib/supabaseAuthFromRequest";
 
 export async function POST(request: NextRequest) {
   try {
     const { clientName, address, inspectionType, language } = await request.json();
 
     const supabase = await createServiceRoleClient();
+    const userId = await resolveBearerUserId(request);
 
-    // Créer une nouvelle inspection avec les données de base
-    const { data, error } = await supabase
-      .from("reports")
-      .insert({
-        payload: {
-          cover_v1: {
-            client_name: clientName,
-            address: address,
-            inspection_type: inspectionType,
-            language: language,
-            created_at: new Date().toISOString(),
-          },
-        },
+    let payload: Record<string, unknown> = {
+      cover_v1: {
+        client_name: clientName,
+        address: address,
+        inspection_type: inspectionType,
+        language: language,
         created_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
+      },
+    };
+
+    if (userId) {
+      payload = await embedInspectorProfileInReportPayload(supabase, userId, payload);
+    }
+
+    const insertRow: Record<string, unknown> = {
+      payload,
+      created_at: new Date().toISOString(),
+    };
+    if (userId) {
+      insertRow.user_id = userId;
+    }
+
+    const { data, error } = await supabase.from("reports").insert(insertRow).select().single();
 
     if (error) {
       console.error("Erreur création inspection:", error);

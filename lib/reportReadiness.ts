@@ -4,6 +4,8 @@ import {
 } from "@/lib/inspectionCoverPayload";
 
 import { effectiveDescriptionNarrative } from "@/lib/coverResumeFormat";
+import { buildZeroDraftComplianceContextFromReadiness } from "@/lib/compliance/compliance-rules/adapters/zeroDraftAdapter";
+import { validateCompliance } from "@/lib/compliance/compliance-rules/validate";
 import { parsePayloadEntries, type ReportEntryLike } from "@/lib/qcSystemSections";
 import {
   evaluateQc2027Certification,
@@ -52,8 +54,10 @@ export function evaluateCoverReadiness(
     userAcknowledged?: boolean;
     /** Constats structurés (`payload.entries`) — grille systèmes QC 2027. */
     reportEntries?: ReportEntryLike[];
-    /** Comptage photos par zone (`payload.photos_coverage_v1.by_zone` ou état client). */
+    /** Comptage photos par zone (`payload.photos_coverage_v1.by_zone` ou état client). @deprecated validation finale via linkedPhotos */
     photosCoverageByZone?: Partial<Record<string, number>> | null;
+    /** Photos liées via observation_id (validation conformité). */
+    linkedPhotos?: Array<{ photo_id: string; observation_id: string | null }>;
     /** Extrait brut : `entries` (avec gravité), `sections`, etc. */
     reportPayload?: Record<string, unknown> | null;
   },
@@ -118,14 +122,34 @@ export function evaluateCoverReadiness(
     const qc = evaluateQc2027Certification(cover, {
       reportEntries,
       rawEntries: rp?.entries,
-      photosCoverageByZone: opts?.photosCoverageByZone,
       reportSections: rp?.sections,
       reportScope: hasReportBundle ? "full" : "cover_only",
+      linkedPhotos: opts?.linkedPhotos,
     });
     blocking.push(...qc.blocking);
     warnings.push(...qc.warnings);
     qcCertification = qc.checklist;
     qcCertificationErrorCodes = qc.blocking.map((b) => b.code);
+  } else {
+    const rp = opts?.reportPayload;
+    const compliance = validateCompliance(
+      buildZeroDraftComplianceContextFromReadiness(cover, {
+        reportPayload: rp !== undefined && rp !== null ? rp : null,
+        linkedPhotos: opts?.linkedPhotos,
+      }),
+    );
+    if (compliance.gate === "warning") {
+      for (const w of compliance.warnings) {
+        if (warnings.some((x) => x.code === w.code)) continue;
+        warnings.push({
+          code: w.code,
+          severity: w.severity,
+          messageFr: w.messageFr,
+          focusId: w.focusId,
+          focusPage: w.focusPage,
+        });
+      }
+    }
   }
 
   if (h.photos_condition_imported && cover.condition_generale.trim()) {

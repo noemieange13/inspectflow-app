@@ -4,6 +4,13 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams } from "next/navigation";
 import { ArrowLeft, Download, Edit2, CheckCircle, User, Camera, FileText, AlertCircle } from 'lucide-react';
+import {
+  attachMediaToPhotoPool,
+  buildSmartPhotoMediaByPhotoId,
+  photosForConstat,
+  type SmartInspectionPhoto,
+  type SmartInspectionSection,
+} from "@/lib/smartInspectionPhotos";
 
 console.log("🔧 DEBUG: Composant ReportPreviewPage chargé");
 
@@ -32,17 +39,21 @@ interface InspectionData {
       id: string;
       title: string;
       photos: Array<{
+        photo_id?: string;
+        observation_id?: string | null;
         name: string;
-        photoNumber: number;
+        photoNumber?: number;
         sectionName: string;
         size: number;
         type: string;
         lastModified: number;
-        quality: string;
-        relevance: string;
-        sectionType: string;
-        defectType: string;
+        quality?: string;
+        relevance?: string;
+        sectionType?: string;
+        defectType?: string;
         url: string;
+        base64?: string;
+        originalFileName?: string;
       }>;
       observation: string;
       recommendation: string;
@@ -176,81 +187,63 @@ export default function ReportPreviewPage() {
           }
         }
         
-        // Restore photo url/base64 from window.inspectionSections (full data, never stripped).
-        // We use a FLAT map keyed by photoNumber (globally unique counter) rather than the
-        // fragile triple-key (sectionName→constatId→photoName), because:
-        //   - photoNumber is set by a global counter so it's unique across all photos
-        //   - sectionName/constatId/photoName can diverge if generateDescription ran twice
-        //     (second run creates new constat IDs stored in window but old ones in localStorage)
+        // Restaurer url/base64 depuis window.inspectionSections (mémoire session) via photo_id uniquement.
         if (parsedData.sections) {
-          type PhotoData = { url?: string; base64?: string };
-          const byNumber: Record<number, PhotoData> = {};
-          const byName: Record<string, PhotoData> = {};   // secondary: deduplicated by name
-
-          const memSections: any[] | undefined =
+          const memSections: SmartInspectionSection[] | undefined =
             typeof window !== "undefined"
-              ? (window as any).inspectionSections
+              ? (window as unknown as { inspectionSections?: SmartInspectionSection[] }).inspectionSections
               : undefined;
 
-          if (Array.isArray(memSections)) {
-            // Diagnostic: log keys to help debug future mismatches
-            console.log("🔍 [preview] window.inspectionSections sections:",
-              memSections.map((s: any) => ({
-                name: s.name,
-                constats: s.constats?.map((c: any) => ({
-                  id: c.id,
-                  photos: c.photos?.map((p: any) => ({ name: p.name, photoNumber: p.photoNumber, hasUrl: !!p.url }))
-                }))
-              }))
-            );
+          const mediaByPhotoId = Array.isArray(memSections)
+            ? buildSmartPhotoMediaByPhotoId(memSections)
+            : new Map<string, { url?: string; base64?: string }>();
 
-            for (const sec of memSections) {
-              for (const con of sec?.constats ?? []) {
-                for (const p of con?.photos ?? []) {
-                  const data: PhotoData = {
-                    url: typeof p.url === "string" && p.url.length > 0 ? p.url : undefined,
-                    base64: typeof p.base64 === "string" && p.base64.length > 0 ? p.base64 : undefined,
-                  };
-                  if (typeof p.photoNumber === "number") byNumber[p.photoNumber] = data;
-                  // Also index by name (last writer wins — acceptable, names often unique)
-                  if (typeof p.name === "string" && p.name) byName[p.name] = data;
-                  if (typeof p.originalFileName === "string" && p.originalFileName) byName[p.originalFileName] = data;
-                }
-              }
-            }
-            console.log(`🔍 [preview] byNumber keys: ${Object.keys(byNumber).join(",")} | byName keys: ${Object.keys(byName).slice(0,10).join(",")}`);
-          } else {
-            console.warn("⚠️ [preview] window.inspectionSections is not available — photos will show as placeholders");
+          if (!Array.isArray(memSections)) {
+            console.warn("⚠️ [preview] window.inspectionSections indisponible — placeholders si pas de base64");
           }
 
           let restored = 0;
           let placeholders = 0;
-          parsedData.sections.forEach((section: any) => {
-            // Diagnostic: log what's in localStorage sections
-            console.log(`🔍 [preview] localStorage section "${section.name}": constats=${section.constats?.length}, photos=`,
-              section.constats?.flatMap((c: any) => c.photos?.map((p: any) => ({ name: p.name, photoNumber: p.photoNumber, hasUrl: !!p.url })) ?? [])
-            );
-            section.constats?.forEach((constat: any) => {
-              constat.photos?.forEach((photo: any) => {
-                if (photo.url || photo.base64) return; // already has data
-                // Try photoNumber first (most reliable)
-                const byNum = typeof photo.photoNumber === "number" ? byNumber[photo.photoNumber] : undefined;
-                // Try name fallback
-                const byNm = byName[photo.name] ?? byName[photo.originalFileName];
-                const match = byNum ?? byNm;
-                if (match?.url || match?.base64) {
-                  if (match.url) photo.url = match.url;
-                  if (match.base64) photo.base64 = match.base64;
+          parsedData.sections = (parsedData.sections as SmartInspectionSection[]).map((section) => {
+            const poolRaw = [
+              ...(section.photos_pool ?? []),
+              ...section.constats.flatMap((c) => c.photos ?? []),
+            ];
+            const uniqueById = new Map<string, SmartInspectionPhoto>();
+            for (const p of poolRaw) {
+              if (typeof p.photo_id === "string" && p.photo_id) uniqueById.set(p.photo_id, p as SmartInspectionPhoto);
+            }
+            const pool = attachMediaToPhotoPool([...uniqueById.values()], mediaByPhotoId);
+            const poolById = new Map(pool.map((p) => [p.photo_id, p]));
+
+            const nextConstats = section.constats.map((constat) => {
+              const linked = photosForConstat(
+                { id: constat.id, photos: [...poolById.values()] },
+                pool,
+              ).map((photo) => {
+                const media = mediaByPhotoId.get(photo.photo_id);
+                if (photo.url || photo.base64) return photo;
+                if (media?.url || media?.base64) {
                   restored++;
-                } else {
-                  // No image data in memory — show named placeholder
-                  photo.url = `data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iI2Y3ZjdmNyIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTgiIGZpbGw9IiM2NjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiPvCfk7Y8L3RleHQ+PC9zdmc+`;
-                  placeholders++;
+                  return {
+                    ...photo,
+                    url: media.url ?? photo.url,
+                    base64: media.base64 ?? photo.base64,
+                  };
                 }
+                placeholders++;
+                return {
+                  ...photo,
+                  url: `data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iI2Y3ZjdmNyIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTgiIGZpbGw9IiM2NjYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiPvCfk7Y8L3RleHQ+PC9zdmc+`,
+                };
               });
+              return { ...constat, photos: linked };
             });
+
+            return { ...section, photos_pool: pool, constats: nextConstats };
           });
-          console.log(`✅ [preview] Photos restaurées: ${restored} depuis mémoire, ${placeholders} placeholders`);
+
+          console.log(`✅ [preview] Photos restaurées: ${restored} via photo_id, ${placeholders} placeholders`);
         }
         
         setInspectionData(parsedData);
@@ -459,36 +452,29 @@ export default function ReportPreviewPage() {
                               </p>
                             ) : null}
                             <div className="flex flex-wrap gap-2 pt-2">
-                              {constat.photos?.map((photo: any, pIdx: number) => {
+                              {photosForConstat(
+                                { id: constat.id, photos: section.photos_pool ?? constat.photos ?? [] },
+                                section.photos_pool,
+                              ).map((photo: SmartInspectionPhoto) => {
                                 const src = photoSrc(photo);
                                 if (src) {
                                   return (
                                     <img
-                                      key={pIdx}
+                                      key={photo.photo_id}
                                       src={src}
-                                      alt={photo.name || `Photo ${pIdx + 1}`}
+                                      alt={photo.name || "Photo"}
                                       className="h-32 w-40 object-cover rounded border"
                                       loading="lazy"
                                       decoding="async"
                                     />
                                   );
                                 }
-                                const brokenPromise =
-                                  photo?.url &&
-                                  typeof photo.url === "object" &&
-                                  !Array.isArray(photo.url);
                                 return (
                                   <div
-                                    key={pIdx}
+                                    key={photo.photo_id}
                                     className="h-32 w-40 flex flex-col items-center justify-center rounded border border-dashed text-xs text-gray-500 p-1 text-center gap-1"
                                   >
-                                    <span>{photo?.name || `Photo ${pIdx + 1}`}</span>
-                                    {brokenPromise ? (
-                                      <span className="text-amber-700 text-[10px] leading-tight">
-                                        Données enregistrées avant correctif. Regénère la
-                                        description puis enregistre à nouveau.
-                                      </span>
-                                    ) : null}
+                                    <span>{photo.name || "Photo"}</span>
                                   </div>
                                 );
                               })}

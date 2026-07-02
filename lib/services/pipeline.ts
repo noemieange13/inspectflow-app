@@ -4,8 +4,11 @@ import type {
   InspectionSeverity,
 } from "@/lib/types/inspection";
 
+import { isDevAuthBypass, stampDevInspectorAttribution } from "@/lib/devInspectorMode";
+
 import { analyzeImagesWithGemini } from "./gemini";
-import { structureInspectionResultFromModelText } from "./openrouter";
+import { structureFromGeminiVisionText } from "./inspectionTextStructure";
+import { structureInspectionResultFromModelText, isOpenRouterEnabled } from "./openrouter";
 
 const INVALID_IMAGE_FORMAT = "INVALID_IMAGE_FORMAT";
 
@@ -192,15 +195,38 @@ export async function analyzeInspection(images: string[]): Promise<InspectionRes
     return resultInvalidImages();
   }
 
-  if (!process.env.GEMINI_API_KEY?.trim() || !process.env.OPENROUTER_API_KEY?.trim()) {
+  const openRouterEnabled = isOpenRouterEnabled();
+  if (!process.env.GEMINI_API_KEY?.trim()) {
+    return resultConfigMissing();
+  }
+  if (openRouterEnabled && !process.env.OPENROUTER_API_KEY?.trim()) {
     return resultConfigMissing();
   }
 
   try {
     const raw = await analyzeImagesWithGemini(images);
-    const structured = await structureInspectionResultFromModelText(raw);
+    let structured: unknown;
+    if (openRouterEnabled) {
+      try {
+        structured = await structureInspectionResultFromModelText(raw);
+      } catch (orErr) {
+        console.warn("[analyzeInspection] OpenRouter fallback → parse Gemini", orErr);
+        structured = structureFromGeminiVisionText(raw);
+      }
+    } else {
+      structured = structureFromGeminiVisionText(raw);
+    }
     const rec = modelPayloadToRecord(structured);
-    return normalizeResult(rec);
+    const result = normalizeResult(rec);
+    if (isDevAuthBypass()) {
+      return {
+        ...result,
+        inspectorAttribution: stampDevInspectorAttribution({})[
+          "dev_inspector_v1"
+        ] as InspectionResult["inspectorAttribution"],
+      };
+    }
+    return result;
   } catch (e) {
     console.error("[analyzeInspection]", e);
     return handleError(e);

@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/sha256Hex";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /** Empreinte stable du snapshot (même logique que côté vérif manuelle du payload). */
 export function payloadSha256Hex(payload: unknown): string {
-  return createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
+  return sha256Hex(JSON.stringify(payload));
 }
 
 /**

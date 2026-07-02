@@ -1,5 +1,9 @@
 import { snippetsFromPhotoAnalysis } from "@/lib/photoAnalysisSnippets";
 import type { IssueCode, ReportEntryInput, ZoneCode } from "@/lib/reportNarrative";
+import {
+  serializeSelectionReason,
+  type ReportPhotoSelectionDecision,
+} from "@/lib/reportPhotoSelectionTypes";
 
 /** Plafond global de photos marquées « dans le rapport » (évite les PDF à 200 images). */
 export const REPORT_PHOTO_MAX_TOTAL = 48;
@@ -10,6 +14,8 @@ export type PhotoForSelection = {
   id: string;
   serverPhotoId?: string | null;
   linked_zone?: ZoneCode;
+  observation_id?: string | null;
+  file_hash?: string | null;
   analysis?: unknown;
   ai_score?: number;
   uploading?: boolean;
@@ -169,6 +175,56 @@ function considerPick(
   }
 }
 
+function duplicateGroupForPhoto(p: PhotoForSelection): string | null {
+  const hash = p.file_hash?.trim();
+  return hash && hash.length > 0 ? hash : null;
+}
+
+/** Ne conserve qu’une photo par groupe duplicate (file_hash) — la mieux scorée. */
+export function dedupePickedByDuplicateGroup(
+  picked: Map<string, PickMeta>,
+  keyToPhoto: Map<string, PhotoForSelection>,
+): Map<string, PickMeta> {
+  const bestKeyByGroup = new Map<string, string>();
+  for (const [key, meta] of picked) {
+    const photo = keyToPhoto.get(key);
+    const group = photo ? duplicateGroupForPhoto(photo) : null;
+    if (!group) continue;
+    const prevKey = bestKeyByGroup.get(group);
+    if (!prevKey) {
+      bestKeyByGroup.set(group, key);
+      continue;
+    }
+    const prevMeta = picked.get(prevKey);
+    if (!prevMeta || meta.score > prevMeta.score) {
+      picked.delete(prevKey);
+      bestKeyByGroup.set(group, key);
+    } else {
+      picked.delete(key);
+    }
+  }
+  return picked;
+}
+
+export type PhotoSelectionScoreMeta = {
+  relevanceScore: number;
+  qualityScore: number;
+  duplicateGroup: string | null;
+};
+
+function scoreMetaForPhoto(p: PhotoForSelection, entry?: ReportEntryInput): PhotoSelectionScoreMeta {
+  const snippets = snippetsFromPhotoAnalysis(p.analysis);
+  const low = snippets.join(" ").toLowerCase();
+  const qualityScore = totalPhotoScore(p, low);
+  const relevanceScore =
+    entry != null ? issueMatchScore(entry, low) * 8 + qualityScore : qualityScore;
+  return {
+    relevanceScore,
+    qualityScore,
+    duplicateGroup: duplicateGroupForPhoto(p),
+  };
+}
+
 /**
  * Choisit les IDs (serverPhotoId si présent, sinon id client) des photos à inclure dans le rapport,
  * avec une courte justification par clé (pour l’UI).
@@ -216,6 +272,12 @@ export function selectPhotosForReportWithReasons(opts: SelectPhotosForReportOpti
     if (!picked.has(k)) considerPick(picked, k, score * 0.5, FILL_REASON_PRIORITY, REASON_FILL);
   }
 
+  const keyToPhoto = new Map<string, PhotoForSelection>();
+  for (const p of photos) {
+    keyToPhoto.set(photoRowKey(p), p);
+  }
+  dedupePickedByDuplicateGroup(picked, keyToPhoto);
+
   const arr = [...picked.entries()].sort((a, b) => b[1].score - a[1].score);
   const keys = arr.slice(0, maxTotal).map(([k]) => k);
   const reasonsByKey: Record<string, PhotoSelectionReasonLabels> = {};
@@ -236,4 +298,82 @@ export function selectPhotosForReportWithReasons(opts: SelectPhotosForReportOpti
  */
 export function selectPhotoIdsForReportExport(opts: SelectPhotosForReportOptions): Set<string> {
   return selectPhotosForReportWithReasons(opts).ids;
+}
+
+export type ComputeAiPhotoSelectionOptions = SelectPhotosForReportOptions & {
+  /** Map photo id (server) → observation_id pour persistance DB. */
+  observationIdByPhotoId?: Record<string, string | null>;
+};
+
+/**
+ * Produit les décisions IA complètes (scores, rang, dédup) prêtes pour merge/persistance DB.
+ */
+export function computeAiPhotoSelectionDecisions(
+  opts: ComputeAiPhotoSelectionOptions,
+): ReportPhotoSelectionDecision[] {
+  const { ids, reasonsByKey, tiersByKey } = selectPhotosForReportWithReasons(opts);
+  const photos = opts.photos.filter((p) => p.uploading !== true);
+  const observationIdByPhotoId = opts.observationIdByPhotoId ?? {};
+
+  const scoreByKey = new Map<string, PhotoSelectionScoreMeta>();
+  for (const entry of opts.entries) {
+    const pool = candidatePhotosForEntry(entry, photos);
+    for (const p of pool) {
+      const key = photoRowKey(p);
+      const meta = scoreMetaForPhoto(p, entry);
+      const prev = scoreByKey.get(key);
+      if (!prev || meta.relevanceScore > prev.relevanceScore) {
+        scoreByKey.set(key, meta);
+      }
+    }
+  }
+  for (const p of photos) {
+    const key = photoRowKey(p);
+    if (!scoreByKey.has(key)) {
+      scoreByKey.set(key, scoreMetaForPhoto(p));
+    }
+  }
+
+  const rankedSelected = [...ids]
+    .map((key) => ({
+      key,
+      score: scoreByKey.get(key)?.relevanceScore ?? 0,
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const rankByKey = new Map<string, number>();
+  rankedSelected.forEach((row, idx) => {
+    rankByKey.set(row.key, idx + 1);
+  });
+
+  const keyToPhotoId = new Map<string, string>();
+  for (const p of photos) {
+    const key = photoRowKey(p);
+    const photoId = p.serverPhotoId?.trim() || p.id.trim();
+    keyToPhotoId.set(key, photoId);
+  }
+
+  const decisions: ReportPhotoSelectionDecision[] = [];
+  for (const p of photos) {
+    const key = photoRowKey(p);
+    const photoId = keyToPhotoId.get(key) ?? p.id.trim();
+    const selected = ids.has(key);
+    const meta = scoreByKey.get(key);
+    const reasonLabels = reasonsByKey[key];
+    decisions.push({
+      photoId,
+      observationId: observationIdByPhotoId[photoId] ?? p.observation_id ?? null,
+      reportSelected: selected,
+      tier: tiersByKey[key] ?? "support",
+      selectionSource: "ai",
+      relevanceScore: meta?.relevanceScore ?? null,
+      qualityScore: meta?.qualityScore ?? null,
+      duplicateGroup: meta?.duplicateGroup ?? null,
+      selectionReason: reasonLabels ? serializeSelectionReason(reasonLabels) : null,
+      aiRecommended: selected,
+      aiRank: selected ? (rankByKey.get(key) ?? null) : null,
+    });
+  }
+
+  return decisions;
 }

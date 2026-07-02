@@ -1,28 +1,35 @@
+import type { PhotoCaptureMode } from "@/lib/photoCaptureContext";
+
 /**
  * Upload via `POST /api/upload-photo` (storage + ligne `photos` côté serveur).
- *
- * Optimisation future : persister `photo_url` en base après upload pour éviter
- * tout resolver sur les chemins chauds (export PDF, reporting).
  */
 export type UploadPhotoParams = {
   file: File;
   reportId: string;
   inspectionId?: string;
   language?: "en" | "fr";
+  observationId?: string | null;
+  captureMode?: PhotoCaptureMode;
+  sequenceNumber?: number | null;
+  originalTimestamp?: string | null;
+  clientUploadId?: string;
+  batchId?: string | null;
+  createBatch?: boolean;
+  batchExpectedCount?: number;
+  perceptualHash?: string | null;
 };
 
-/** Contrat aligné sur `app/api/upload-photo` — validation runtime ci-dessous. */
 export type UploadPhotoApiSuccess = {
   success: true;
   storage_path: string;
   url: string | null;
   file_hash: string;
-  /** Peut être null si l’insert `photos` n’a pas abouti (ex. sans inspection_id). */
   photo_id: string | null;
+  batch_id?: string | null;
+  deduplicated?: boolean;
   file_name: string;
   file_size: number;
-  photo_analysis: null;
-  suggested_inspector_note: null;
+  capture_mode?: PhotoCaptureMode | null;
 };
 
 export type UploadPhotoApiError = {
@@ -33,9 +40,7 @@ function parseUploadSuccess(data: unknown): UploadPhotoApiSuccess | null {
   if (!data || typeof data !== "object") return null;
   const o = data as Record<string, unknown>;
   if (o.success !== true) return null;
-  if (typeof o.storage_path !== "string" || o.storage_path.length === 0) {
-    return null;
-  }
+  if (typeof o.storage_path !== "string" || o.storage_path.length === 0) return null;
   if (typeof o.file_hash !== "string") return null;
   if (o.photo_id != null && typeof o.photo_id !== "string") return null;
   if (typeof o.file_name !== "string") return null;
@@ -47,10 +52,17 @@ function parseUploadSuccess(data: unknown): UploadPhotoApiSuccess | null {
     url: typeof o.url === "string" || o.url === null ? (o.url as string | null) : null,
     file_hash: o.file_hash,
     photo_id: o.photo_id == null ? null : String(o.photo_id),
+    batch_id:
+      typeof o.batch_id === "string" || o.batch_id === null
+        ? (o.batch_id as string | null)
+        : undefined,
+    deduplicated: o.deduplicated === true,
     file_name: o.file_name,
     file_size: o.file_size,
-    photo_analysis: null,
-    suggested_inspector_note: null,
+    capture_mode:
+      o.capture_mode === "camera" || o.capture_mode === "bulk_import"
+        ? o.capture_mode
+        : null,
   };
 }
 
@@ -60,17 +72,27 @@ export async function uploadPhotoViaApi(
   const form = new FormData();
   form.append("file", params.file);
   form.append("report_id", params.reportId);
-  if (params.inspectionId) {
-    form.append("inspection_id", params.inspectionId);
+  if (params.inspectionId) form.append("inspection_id", params.inspectionId);
+  if (params.language) form.append("language", params.language);
+  if (params.observationId) form.append("observation_id", params.observationId);
+  if (params.captureMode) form.append("capture_mode", params.captureMode);
+  if (params.sequenceNumber != null) {
+    form.append("sequence_number", String(params.sequenceNumber));
   }
-  if (params.language) {
-    form.append("language", params.language);
+  if (params.originalTimestamp) {
+    form.append("original_timestamp", params.originalTimestamp);
+  }
+  if (params.clientUploadId) form.append("client_upload_id", params.clientUploadId);
+  if (params.batchId) form.append("batch_id", params.batchId);
+  if (params.createBatch) form.append("create_batch", "true");
+  if (params.batchExpectedCount != null) {
+    form.append("batch_expected_count", String(params.batchExpectedCount));
+  }
+  if (params.perceptualHash) {
+    form.append("perceptual_hash", params.perceptualHash);
   }
 
-  const res = await fetch("/api/upload-photo", {
-    method: "POST",
-    body: form,
-  });
+  const res = await fetch("/api/upload-photo", { method: "POST", body: form });
 
   let body: unknown;
   try {

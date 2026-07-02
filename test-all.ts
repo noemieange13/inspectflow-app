@@ -11,6 +11,7 @@ import { config as loadDotenv } from "dotenv";
 import { resolve } from "node:path";
 
 import { coerceInspectionResult } from "./lib/inspectionResultCoerce";
+import { isOpenRouterEnabled } from "./lib/services/openrouter";
 
 loadDotenv({ path: resolve(process.cwd(), ".env.local") });
 loadDotenv({ path: resolve(process.cwd(), ".env") });
@@ -77,6 +78,11 @@ async function test2EnvGemini() {
 
 async function test2bEnvOpenRouter() {
   log("TEST 2b — ENV OPENROUTER_API_KEY");
+  if (!isOpenRouterEnabled()) {
+    console.log("OpenRouter désactivé (dev ou ENABLE_OPENROUTER=false)");
+    pass();
+    return;
+  }
   if (process.env.OPENROUTER_API_KEY?.trim()) {
     pass();
   } else {

@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // Classification vision + JSON volumineux : laisser de la marge (Vercel/self-host selon plan).
 export const maxDuration = 120;
 
-const MAX_IMAGES = 10;
+const MAX_IMAGES = 20;
 const MAX_DATA_URL_CHARS = 300_000;
 
 type PhotoIn = { name: string; dataUrl: string };
@@ -11,6 +11,7 @@ type PhotoIn = { name: string; dataUrl: string };
 type ClassifyResult = {
   photoName: string;
   section: string;
+  subTopic: string;
   constatId?: string;
   confidence: number;
 };
@@ -122,17 +123,17 @@ export async function POST(req: NextRequest) {
           `You are classifying building inspection photos.`,
           `The photos shown (in order) have these file names: ${photoList}.`,
           `Available sections: ${sectionList}.`,
-          `For each photo, return its exact fileName, the section it belongs to, and your confidence (0-1).`,
+          `For each photo, return its exact fileName, the section it belongs to, a short subTopic describing the specific element shown (e.g. "crack front wall", "floor drain", "steel beam"), and your confidence (0-1).`,
           `Use "none" if the photo does not clearly belong to any section.`,
-          `Reply with JSON only: { "results": [ { "photoName": "filename.jpg", "section": "SectionName", "confidence": 0.85 }, ... ] }`,
+          `Reply with JSON only: { "results": [ { "photoName": "filename.jpg", "section": "SectionName", "subTopic": "short description", "confidence": 0.85 }, ... ] }`,
         ]
       : [
           `Tu classes des photos d'inspection en bâtiment.`,
           `Les photos affichées (dans l'ordre) ont ces noms de fichier : ${photoList}.`,
           `Sections disponibles : ${sectionList}.`,
-          `Pour chaque photo, retourne son nom de fichier exact, la section correspondante, et ta confiance (0-1).`,
+          `Pour chaque photo, retourne son nom de fichier exact, la section correspondante, un subTopic court décrivant l'élément spécifique visible (ex : 'fissure mur avant', 'drain de sol', 'poutre acier'), et ta confiance (0-1).`,
           `Utilise "none" si la photo ne correspond clairement à aucune section.`,
-          `Réponse JSON uniquement : { "results": [ { "photoName": "fichier.jpg", "section": "NomSection", "confidence": 0.85 }, ... ] }`,
+          `Réponse JSON uniquement : { "results": [ { "photoName": "fichier.jpg", "section": "NomSection", "subTopic": "description courte", "confidence": 0.85 }, ... ] }`,
         ];
 
   const userText = lines.join("\n");
@@ -161,8 +162,8 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model,
-        /** 20 lignes × ~150 car. + accolades — 1000 tronquait le JSON (« Unterminated string »). */
-        max_tokens: 1200,
+        /** 20 photos × ~200 car. + accolades — augmenté pour supporter 20 photos avec subTopic. */
+        max_tokens: 2500,
         temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
@@ -261,6 +262,8 @@ export async function POST(req: NextRequest) {
             : typeof e.findingId === "string"
               ? e.findingId.trim()
               : undefined;
+        const subTopic =
+          typeof e.subTopic === "string" ? e.subTopic.trim().slice(0, 80) : "";
         const confidenceRaw = e.confidence;
         const confidence =
           typeof confidenceRaw === "number"
@@ -280,7 +283,7 @@ export async function POST(req: NextRequest) {
         const constatId =
           !rawConstatId || rawConstatId === "unknown" ? "none" : rawConstatId;
 
-        results.push({ photoName, section: normalizedSection, constatId, confidence });
+        results.push({ photoName, section: normalizedSection, subTopic, constatId, confidence });
       }
     }
 

@@ -33,6 +33,8 @@ export type ZoneCode =
   | "autre";
 
 export type ReportEntryInput = {
+  /** UUID stable — clé d'association `photos.observation_id` et `payload.sections[].id`. */
+  id?: string;
   zone: ZoneCode;
   issue: IssueCode;
   severity: Severity;
@@ -117,7 +119,14 @@ export function parseStructuredEntriesFromPayload(raw: unknown): ReportEntryInpu
     const severity: Severity =
       sev === "low" || sev === "medium" || sev === "high" ? sev : "medium";
     const note = typeof o.note === "string" ? o.note : "";
-    out.push({ zone, issue, severity, note });
+    const idRaw = typeof o.id === "string" ? o.id.trim() : "";
+    out.push({
+      ...(idRaw.length > 0 ? { id: idRaw } : {}),
+      zone,
+      issue,
+      severity,
+      note,
+    });
   }
   return out;
 }
@@ -762,7 +771,7 @@ export function buildStructuredReport(
     const suffix = note
       ? (language === "en" ? ` Field note: ${note}.` : ` Note terrain: ${note}.`)
       : "";
-    return {
+    const section: Record<string, unknown> = {
       title: `${zoneLabel} - ${issue.label}`,
       observation: issue.observation + suffix,
       analysis: issue.analysis,
@@ -770,6 +779,10 @@ export function buildStructuredReport(
       severity: severityLabel(entry.severity, language),
       order: idx + 1,
     };
+    if (typeof entry.id === "string" && entry.id.trim().length > 0) {
+      section.id = entry.id.trim();
+    }
+    return section;
   });
 
   const risk = getRiskLevel(entries);

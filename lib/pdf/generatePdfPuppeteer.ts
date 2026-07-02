@@ -26,7 +26,7 @@ export async function generatePdfWithPuppeteer(html: string): Promise<Buffer> {
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0", timeout: 60_000 });
+    await page.setContent(html, { waitUntil: "load", timeout: 60_000 });
     const buf = await page.pdf({
       format: "A4",
       printBackground: true,

@@ -170,6 +170,8 @@ from public.qc_events
 group by 1
 order by 1 desc;
 
+drop view if exists public.qc_ai_impact cascade;
+
 create or replace view public.qc_ai_impact as
 select
   report_id,

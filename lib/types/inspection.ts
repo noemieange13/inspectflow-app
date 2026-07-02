@@ -17,4 +17,14 @@ export type InspectionResult = {
   estimatedCost?: string;
   error?: string;
   hint?: string;
+  /** Dev bypass — inspecteur courant (Phase 9C). */
+  inspectorAttribution?: {
+    id: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+    name: string;
+    company: string;
+    role: string;
+  };
 };

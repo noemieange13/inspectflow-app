@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { computeBuildingScoreMarket } from "@/lib/buildingScoreMarket";
 import { computeQcBuildingIndexScore } from "@/lib/qcBuildingIndexScore";
+import { MAX_INSPECTION_PHOTOS_LOAD } from "@/lib/inspectionPhotoLimits";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import { evaluatePdfExportReadiness } from "@/lib/pdfExportReadiness";
 import {
@@ -65,7 +66,7 @@ export async function collectInspectionAgentObservation(
 
   let photo_count = 0;
   try {
-    const { rows } = await loadPhotoRowsForReport(supabase, reportId, 400);
+    const { rows } = await loadPhotoRowsForReport(supabase, reportId, MAX_INSPECTION_PHOTOS_LOAD);
     photo_count = rows.length;
   } catch {
     photo_count = 0;

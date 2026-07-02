@@ -1,0 +1,3 @@
+export const INSPECTOR_FEEDBACK_VERSION = "2027.1";
+
+export const AI_OBSERVATION_SNAPSHOT_SCHEMA_VERSION = 1 as const;

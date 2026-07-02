@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/sha256Hex";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -8,7 +8,7 @@ import type { ClassifiedDefects } from "@/lib/defectClassificationTypes";
 const PROMPT_VERSION = 1;
 
 function sha256Json(obj: unknown): string {
-  return createHash("sha256").update(JSON.stringify(obj), "utf8").digest("hex");
+  return sha256Hex(JSON.stringify(obj));
 }
 
 export type PersistDefectOutcome = {

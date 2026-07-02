@@ -1,0 +1,109 @@
+{
+  "document_trace_id": "doc-trace-steve-real-failure-captured",
+  "captured_at": "2026-06-15T00:00:00.000Z",
+  "anonymized_from": "Real Steve Inspect-Habitation checklist import — embedded PDF labels only; OCR layout blocks empty on failure path",
+  "diagnosis": "The data disappeared between STEP 3 (OCR) and STEP 5 (parser output) because OCR layout blocks are empty — handwritten values were never extracted.",
+  "steps": {
+    "file": {
+      "filename": "checklist-steve-anonymized.pdf",
+      "mime": "application/pdf",
+      "size": 248512,
+      "pages": 1
+    },
+    "text_extraction": {
+      "method": "pdf_text",
+      "textLength": 186,
+      "first1000Chars": "\nInspect-Habitation\nCheck-list for Report/pour rapport\nDate:\n2. Adresse:\nType de bâtiment:\nAnnée de Construction:\nOrientation de la façade:\nToiture:\nAnnée toiture:\nChauffage:\n",
+      "quality": { "quality": "good", "reasons": [] },
+      "ocr_attempted": false
+    },
+    "classifier": {
+      "previous_inspection_report": false,
+      "seller_disclosure": false,
+      "steve_field_notes": true,
+      "unknown": false,
+      "selected": "steve_field_notes",
+      "reason": "isSteveFieldSheet(text) matched Inspect-Habitation checklist markers",
+      "classifiedType": "other"
+    },
+    "ocr": {
+      "method": "none",
+      "blockCount": 0,
+      "firstBlocks": [],
+      "hasAddressValue": false,
+      "hasYearValue": false,
+      "hasOrientationValue": false,
+      "hasMarginNotes": false
+    },
+    "parser_selection": {
+      "steve_field_parser_called": true,
+      "inspection_report_parser_called": false,
+      "reason": "parseDocumentWithVisionLayout returned field_sheet_v1"
+    },
+    "parser_output": {
+      "property": {
+        "address": "",
+        "construction_year": "",
+        "orientation": ""
+      },
+      "raw_notes": [],
+      "full": null
+    },
+    "prefill": {
+      "client": "",
+      "address": "",
+      "type": "residential",
+      "missingReasons": [
+        "address missing: no value in fusion.property, analysis.property, or field_sheet_v1",
+        "steve_field_notes detected but OCR layout blocks empty — handwriting not reachable"
+      ]
+    }
+  },
+  "replay": {
+    "embedded_text": "\nInspect-Habitation\nCheck-list for Report/pour rapport\nDate:\n2. Adresse:\nType de bâtiment:\nAnnée de Construction:\nOrientation de la façade:\nToiture:\nAnnée toiture:\nChauffage:\n",
+    "classified_type": "other",
+    "kind": "dv_pdf",
+    "ocr_blocks_failure": [],
+    "ocr_blocks_recovered": [
+      { "text": "Inspect-Habitation", "x": 20, "y": 20, "width": 180, "height": 14, "confidence": 0.99 },
+      { "text": "Check-list for Report/pour rapport", "x": 20, "y": 38, "width": 320, "height": 14, "confidence": 0.99 },
+      { "text": "2. Adresse:", "x": 30, "y": 112, "width": 78, "height": 12, "confidence": 0.98 },
+      {
+        "text": "2404 Rue de la Reine des Prés, Mont-Laurier",
+        "x": 220,
+        "y": 113,
+        "width": 360,
+        "height": 14,
+        "confidence": 0.84
+      },
+      { "text": "Année de Construction:", "x": 30, "y": 156, "width": 150, "height": 12, "confidence": 0.98 },
+      { "text": "1990", "x": 220, "y": 157, "width": 40, "height": 12, "confidence": 0.92 },
+      { "text": "Orientation de la façade:", "x": 30, "y": 178, "width": 160, "height": 12, "confidence": 0.98 },
+      { "text": "Sud", "x": 220, "y": 179, "width": 30, "height": 12, "confidence": 0.89 },
+      {
+        "text": "fissure côté droit",
+        "x": 12,
+        "y": 130,
+        "width": 120,
+        "height": 12,
+        "confidence": 0.78
+      },
+      {
+        "text": "scellant fenêtre",
+        "x": 8,
+        "y": 260,
+        "width": 110,
+        "height": 12,
+        "confidence": 0.76
+      },
+      {
+        "text": "rampe",
+        "x": 10,
+        "y": 280,
+        "width": 50,
+        "height": 12,
+        "confidence": 0.74
+      }
+    ]
+  }
+}

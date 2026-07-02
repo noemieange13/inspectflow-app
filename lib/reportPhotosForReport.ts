@@ -6,6 +6,10 @@ export type ReportPhotoRow = {
   inspection_id?: string | null;
   photo_number?: number | null;
   storage_path?: string | null;
+  observation_id?: string | null;
+  file_hash?: string | null;
+  analysis_status?: string | null;
+  duplicate_of_photo_id?: string | null;
 };
 
 type ReportLinks = {
@@ -86,7 +90,7 @@ export async function loadPhotoRowsForReport(
   if (inspectionId) {
     const { data, error } = await supabase
       .from("photos")
-      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .select("id, analysis, inspection_id, photo_number, storage_path, observation_id, file_hash, analysis_status, duplicate_of_photo_id")
       .eq("inspection_id", inspectionId)
       .order("photo_number", { ascending: true })
       .limit(maxPhotos);
@@ -104,7 +108,7 @@ export async function loadPhotoRowsForReport(
   if (links.photo_id) {
     const { data: row, error } = await supabase
       .from("photos")
-      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .select("id, analysis, inspection_id, photo_number, storage_path, observation_id, file_hash, analysis_status, duplicate_of_photo_id")
       .eq("id", links.photo_id)
       .maybeSingle();
     if (!error && row) {
@@ -126,7 +130,7 @@ export async function loadPhotoRowsForReport(
     if (!jobErr && job?.photo_id != null && String(job.photo_id) !== "") {
       const { data: row, error } = await supabase
         .from("photos")
-        .select("id, analysis, inspection_id, photo_number, storage_path")
+        .select("id, analysis, inspection_id, photo_number, storage_path, observation_id, file_hash, analysis_status, duplicate_of_photo_id")
         .eq("id", String(job.photo_id))
         .maybeSingle();
       if (!error && row) {
@@ -153,7 +157,7 @@ export async function loadPhotoRowsSnapshotByIds(
   if (ids.length === 0) return [];
   const { data, error } = await supabase
     .from("photos")
-    .select("id, analysis, inspection_id, photo_number, storage_path")
+    .select("id, analysis, inspection_id, photo_number, storage_path, file_hash")
     .in("id", ids)
     .order("photo_number", { ascending: true });
   if (error || !Array.isArray(data)) {

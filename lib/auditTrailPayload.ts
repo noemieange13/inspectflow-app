@@ -10,7 +10,13 @@ export type AuditTrailEntryV1 = {
   /** Aperçu court (pas de secrets volumineux). */
   old_preview: string;
   new_preview: string;
-  source?: "cover_save" | "report_content" | "client";
+  source?:
+    | "cover_save"
+    | "report_content"
+    | "client"
+    | "inspection_weather_save"
+    | "inspector_field_notes_save"
+    | "report_professional_snapshot_attach";
 };
 
 const MAX_ENTRIES = 150;

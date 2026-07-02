@@ -1,4 +1,6 @@
 import { invokeCreateReport } from "@/lib/invokeCreateReport";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { resolveOrganizationIdForReport, trackUsageSafe } from "@/lib/usage_control";
 
 /**
  * Crée une ligne `reports` via l’Edge `create-report` (job_id résolu depuis l’inspection si omis).
@@ -86,11 +88,33 @@ export async function POST(req: Request) {
       );
     }
 
-    return Response.json(
+    const responseBody =
       typeof parsed === "object" && parsed !== null
         ? { success: true, ...parsed }
-        : { success: true, raw: parsed },
-    );
+        : { success: true, raw: parsed };
+
+    try {
+      const supabase = await createServiceRoleClient();
+      const reportId =
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "reportId" in parsed &&
+        typeof (parsed as { reportId: unknown }).reportId === "string"
+          ? (parsed as { reportId: string }).reportId
+          : null;
+      const orgId = await resolveOrganizationIdForReport(supabase, reportId, userId);
+      if (orgId) {
+        trackUsageSafe(supabase, {
+          organizationId: orgId,
+          metric: "inspections_created",
+          amount: 1,
+        });
+      }
+    } catch {
+      /* usage non bloquant */
+    }
+
+    return Response.json(responseBody);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return Response.json({ success: false, error: message }, { status: 500 });

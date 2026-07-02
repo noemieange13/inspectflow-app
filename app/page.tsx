@@ -13,60 +13,23 @@ export default function HomePage() {
         </h1>
 
         <p className="mt-4 text-base leading-relaxed text-slate-600">
-          Rapports d&apos;inspection professionnels générés automatiquement.
-          Bilingue FR/EN, conforme aux pratiques canadiennes, livré en PDF sécurisé.
+          Votre assistant terrain intelligent — photos, constats IA et rapport PDF en un flux
+          simple.
         </p>
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link
             href="/dashboard/simple"
-            className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-blue-600 px-6 py-2.5 text-base font-semibold text-white shadow-sm transition hover:bg-blue-700"
           >
-            🏠 Tableau de bord simple
-          </Link>
-          <Link
-            href="/smart-inspection"
-            className="inline-flex items-center justify-center rounded-lg bg-green-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700"
-          >
-            🧠 Inspection IA (recommandé)
-          </Link>
-          <Link
-            href="/inspection/new"
-            className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-          >
-            ⚡ Inspection rapide
-          </Link>
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-          >
-            📊 Tableau de bord complet
-          </Link>
-          <Link
-            href="/rapport/couverture"
-            className="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-5 py-2.5 text-sm font-semibold text-blue-900 shadow-sm transition hover:bg-blue-100"
-          >
-            📝 Formulaire détaillé
+            Mes inspections
           </Link>
         </div>
 
-        <div className="mt-12 grid grid-cols-3 gap-6 text-center">
-          <div>
-            <p className="text-2xl font-bold text-slate-900">0 min</p>
-            <p className="mt-1 text-xs text-slate-500">Rédaction manuelle</p>
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-slate-900">FR/EN</p>
-            <p className="mt-1 text-xs text-slate-500">Bilingue natif</p>
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-slate-900">PDF</p>
-            <p className="mt-1 text-xs text-slate-500">Sécurisé & signé</p>
-          </div>
-        </div>
-
-        <p className="mt-12 text-xs text-slate-400">
-          CNB · Codes provinciaux · CSA · Pratiques d&apos;inspection canadiennes
+        <p className="mt-6 text-xs text-slate-400">
+          <Link href="/dashboard" className="underline hover:text-slate-600">
+            Espace administration
+          </Link>
         </p>
 
         {process.env.NODE_ENV === "development" ? (

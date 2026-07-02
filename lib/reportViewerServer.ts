@@ -1,4 +1,10 @@
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { isDevAuthBypass } from "@/lib/devInspectorMode";
+import {
+  loadOfflineReportForViewer,
+  shouldResolveOfflineReport,
+} from "@/lib/devOffline/reportViewer";
+import { MAX_INSPECTION_PHOTOS_LOAD } from "@/lib/inspectionPhotoLimits";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
@@ -14,6 +20,8 @@ export type ReportServerData = {
   accessDenied?: boolean;
   notFound?: boolean;
   serverError?: string;
+  /** Phase 9E — rapport local dev (jamais en production). */
+  offlineDev?: boolean;
 };
 
 const REPORT_QUERY_MS = 20_000;
@@ -140,7 +148,7 @@ export async function loadReportForViewer(
 
     let photoCountForReadiness: number | undefined;
     try {
-      const { rows } = await loadPhotoRowsForReport(supabase, reportId, 200);
+      const { rows } = await loadPhotoRowsForReport(supabase, reportId, MAX_INSPECTION_PHOTOS_LOAD);
       photoCountForReadiness = rows.length;
     } catch {
       photoCountForReadiness = undefined;
@@ -167,4 +175,19 @@ export async function loadReportForViewer(
       serverError: message,
     };
   }
+}
+
+/**
+ * Dev offline-first resolver — never hits Supabase when a local inspection exists.
+ */
+export async function resolveReportForViewer(
+  reportId: string,
+  viewerToken: string | undefined,
+  options?: { offlineQuery?: boolean },
+): Promise<ReportServerData> {
+  const offlineQuery = options?.offlineQuery === true;
+  if (isDevAuthBypass() && (await shouldResolveOfflineReport(reportId, offlineQuery))) {
+    return loadOfflineReportForViewer(reportId, viewerToken);
+  }
+  return loadReportForViewer(reportId, viewerToken);
 }

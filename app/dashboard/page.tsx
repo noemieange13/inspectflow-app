@@ -68,9 +68,20 @@ export default async function DashboardPage() {
     <div className="mx-auto max-w-6xl p-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-xl font-semibold">Statistiques rapports</h1>
-        <Link href="/" className="text-sm underline">
-          Accueil
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/dashboard/system-health" className="text-sm underline">
+            Monitoring système
+          </Link>
+          <Link href="/dashboard/organization-usage" className="text-sm underline">
+            Plans &amp; usage
+          </Link>
+          <Link href="/dashboard/settings/billing" className="text-sm underline">
+            Facturation
+          </Link>
+          <Link href="/" className="text-sm underline">
+            Accueil
+          </Link>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-foreground/15">

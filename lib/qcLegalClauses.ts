@@ -9,8 +9,8 @@ import {
   evaluateAppliesIf,
 } from "@/lib/qcClauseContext";
 import type { ComplianceJurisdiction } from "@/lib/inspectionCoverPayload";
-import type { ReportLanguage } from "@/lib/reportNarrative";
-import { normalizeReportLanguage } from "@/lib/reportNarrative";
+import { normalizeReportLanguage, type ReportLanguage } from "@/lib/reportNarrative";
+import { resolvePayloadReportLanguage } from "@/lib/reportLanguage";
 
 export type QcLegalClauseRow = {
   id: string;
@@ -54,7 +54,7 @@ export function provinceCodeForLegalClauses(
 export function getPayloadReportLanguage(
   payload: Record<string, unknown>,
 ): ReportLanguage {
-  return normalizeReportLanguage(payload.language ?? payload.lang);
+  return resolvePayloadReportLanguage(payload);
 }
 
 function strictEnglishFromEnv(): boolean {

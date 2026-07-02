@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/sha256Hex";
 
 import type { ComplianceJurisdiction } from "@/lib/inspectionCoverPayload";
 import type { QcLegalClauseRow } from "@/lib/qcLegalClauses";
@@ -41,9 +41,7 @@ export function serializeClauseSnapshotForHash(snap: ClauseSnapshot[]): string {
 }
 
 export function hashClauseSnapshotSha256(snap: ClauseSnapshot[]): string {
-  return createHash("sha256")
-    .update(serializeClauseSnapshotForHash(snap), "utf8")
-    .digest("hex");
+  return sha256Hex(serializeClauseSnapshotForHash(snap));
 }
 
 export function buildClauseSnapshots(

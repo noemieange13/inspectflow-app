@@ -5,32 +5,44 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { buildZeroDraftComplianceContext } from "@/lib/compliance/compliance-rules/adapters/zeroDraftAdapter";
+import {
+  buildComplianceValidationV1,
+  mergeComplianceValidationIntoPayload,
+  validateCompliance,
+} from "@/lib/compliance/compliance-rules/validate";
 import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
-import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
+import { rpcUpdateReportPayloadWithUnlock } from "@/lib/rpcUpdateReportPayload";
+import { loadObservationPhotoRowsForReport } from "@/lib/reportObservationPhotos";
 import { evaluateCoverReadiness } from "@/lib/reportReadiness";
 import { parsePayloadEntries } from "@/lib/qcSystemSections";
-
-function photosCoverageFromPayload(
-  payload: Record<string, unknown>,
-): Partial<Record<string, number>> | null {
-  const pcv = payload.photos_coverage_v1;
-  if (!pcv || typeof pcv !== "object" || pcv === null || !("by_zone" in pcv)) {
-    return null;
-  }
-  const bz = (pcv as { by_zone?: unknown }).by_zone;
-  if (!bz || typeof bz !== "object" || Array.isArray(bz)) return null;
-  const acc: Partial<Record<string, number>> = {};
-  for (const [k, v] of Object.entries(bz as Record<string, unknown>)) {
-    if (typeof v === "number" && v >= 0) acc[k] = v;
-  }
-  return Object.keys(acc).length > 0 ? acc : null;
-}
+import { recordInspectionEventSafe } from "@/lib/inspection_audit_trail";
+import { hashInspectionContent } from "@/lib/inspection_audit_trail/metadata";
 
 /**
  * Désactive la garde (staging / secours uniquement).
  */
 export function isPdfReadinessBypassEnabled(): boolean {
   return process.env.ALLOW_PDF_EXPORT_WITHOUT_READINESS === "1";
+}
+
+async function persistComplianceValidation(
+  supabase: SupabaseClient,
+  reportId: string,
+  payload: Record<string, unknown>,
+  validationV1: ReturnType<typeof buildComplianceValidationV1>,
+): Promise<void> {
+  const nextPayload = mergeComplianceValidationIntoPayload(payload, validationV1);
+  if (JSON.stringify(nextPayload.compliance_validation_v1) === JSON.stringify(payload.compliance_validation_v1)) {
+    return;
+  }
+  await rpcUpdateReportPayloadWithUnlock(supabase, {
+    reportId,
+    payload: nextPayload,
+    source: "compliance-validation-v1",
+    clearPdfPath: false,
+    allowUnlock: true,
+  });
 }
 
 export async function evaluatePdfExportReadiness(
@@ -47,36 +59,90 @@ export async function evaluatePdfExportReadiness(
   const cover = parseCoverV1FromUnknown(payload.cover_v1);
 
   let photoCount = 0;
+  const linkedPhotos: Array<{ photo_id: string; observation_id: string | null }> = [];
   try {
-    const { rows } = await loadPhotoRowsForReport(supabase, reportId, 200);
+    const rows = await loadObservationPhotoRowsForReport(supabase, reportId);
     photoCount = rows.length;
+    for (const row of rows) {
+      linkedPhotos.push({
+        photo_id: row.id,
+        observation_id: row.observation_id ?? null,
+      });
+    }
   } catch {
     photoCount = 0;
   }
 
+  const complianceCtx = buildZeroDraftComplianceContext({
+    payload,
+    cover,
+    linkedPhotos,
+    reportScope: "full",
+  });
+  const complianceResult = validateCompliance(complianceCtx);
+  const validationV1 = buildComplianceValidationV1(complianceResult);
+  try {
+    await persistComplianceValidation(supabase, reportId, payload, validationV1);
+  } catch {
+    /* non-bloquant pour message utilisateur */
+  }
+
+  try {
+    const { data: reportRow } = await supabase
+      .from("reports")
+      .select("inspection_id")
+      .eq("id", reportId)
+      .maybeSingle();
+    void recordInspectionEventSafe(supabase, {
+      report_id: reportId,
+      inspection_id:
+        typeof reportRow?.inspection_id === "string" ? reportRow.inspection_id : null,
+      event_type: "compliance_validated",
+      actor_type: "system",
+      metadata: {
+        gate: validationV1.gate,
+        ruleset_id: validationV1.ruleset_id,
+        blocking_count: validationV1.blocking.length,
+        warning_count: validationV1.warnings.length,
+        content_hash: hashInspectionContent({ gate: validationV1.gate, ruleset_id: validationV1.ruleset_id }),
+      },
+    });
+  } catch {
+    /* audit non bloquant */
+  }
+
+  if (complianceResult.gate === "blocked") {
+    const first =
+      complianceResult.blocking[0]?.messageFr ?? "Conformité non satisfaite.";
+    return {
+      ok: false,
+      error: `Rapport non certifié — génération PDF bloquée. ${first}`,
+      gate: "blocked",
+    };
+  }
+
   const reportEntries = parsePayloadEntries(payload.entries);
-  const photosCoverageByZone = photosCoverageFromPayload(payload);
 
   const result = evaluateCoverReadiness(cover, {
     photoCount,
     reportEntries:
       reportEntries.length > 0 ? reportEntries : parsePayloadEntries(payload.entries),
-    photosCoverageByZone,
     reportPayload: payload,
+    linkedPhotos,
   });
 
-  if (result.gate === "ready") {
-    return { ok: true };
+  if (result.gate === "blocked") {
+    const firstBlock = result.blocking[0]?.messageFr?.trim();
+    const error = firstBlock
+      ? `Rapport non certifié — génération PDF bloquée. ${firstBlock}`
+      : "Rapport non certifié — génération PDF bloquée. Accusez réception des avertissements ou corrigez les points affichés dans la zone conformité.";
+
+    return {
+      ok: false,
+      error,
+      gate: result.gate,
+    };
   }
 
-  const firstBlock = result.blocking[0]?.messageFr?.trim();
-  const error = firstBlock
-    ? `Rapport non certifié — génération PDF bloquée. ${firstBlock}`
-    : "Rapport non certifié — génération PDF bloquée. Accusez réception des avertissements ou corrigez les points affichés dans la zone conformité.";
-
-  return {
-    ok: false,
-    error,
-    gate: result.gate,
-  };
+  return { ok: true };
 }
