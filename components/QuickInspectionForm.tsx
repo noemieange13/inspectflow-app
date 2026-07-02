@@ -26,8 +26,16 @@ export default function QuickInspectionForm() {
       });
       
       if (response.ok) {
-        const { reportId } = await response.json();
-        router.push(`/report/${reportId}`);
+        const { reportId, accessToken, reportUrl } = await response.json();
+        if (typeof reportUrl === "string") {
+          router.push(reportUrl);
+        } else {
+          const tokenQuery =
+            typeof accessToken === "string" && accessToken
+              ? `?token=${encodeURIComponent(accessToken)}`
+              : "";
+          router.push(`/report/${reportId}${tokenQuery}`);
+        }
       }
     } catch (error) {
       console.error("Erreur création inspection:", error);
