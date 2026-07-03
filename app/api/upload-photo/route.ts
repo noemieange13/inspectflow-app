@@ -1,4 +1,6 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
+import { resolveTrustedInspectionForReport } from "@/lib/reportInspectionGuard";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -13,12 +15,37 @@ async function ensureBucket(supabase: Awaited<ReturnType<typeof createServiceRol
   await supabase.storage.createBucket(BUCKET, { public: true });
 }
 
+async function nextPhotoNumber(
+  supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
+  inspectionId: string,
+): Promise<number> {
+  const { data: rpcNumber, error: rpcErr } = await supabase.rpc("next_photo_number", {
+    p_inspection_id: inspectionId,
+  });
+  if (!rpcErr && typeof rpcNumber === "number" && Number.isFinite(rpcNumber)) {
+    return rpcNumber;
+  }
+
+  const { data: maxRow, error: maxErr } = await supabase
+    .from("photos")
+    .select("photo_number")
+    .eq("inspection_id", inspectionId)
+    .order("photo_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (maxErr) {
+    throw new Error(maxErr.message);
+  }
+  return typeof maxRow?.photo_number === "number" ? maxRow.photo_number + 1 : 1;
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
+    const accessTokenRaw = String(formData.get("access_token") ?? "");
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
       langRaw === "en" || langRaw === "fr" ? langRaw : "fr";
@@ -40,7 +67,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at, photo_id")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -51,25 +78,49 @@ export async function POST(req: Request) {
       return Response.json({ error: "Report not found" }, { status: 404 });
     }
 
-    const effectiveInspectionId =
-      inspectionId?.trim() ||
-      (typeof report.inspection_id === "string" ? report.inspection_id : null);
-    const ownerId =
-      typeof report.user_id === "string" ? report.user_id : "anonymous";
+    const gate = await assertReportAccessWithOptionalSession(
+      req,
+      reportId.trim(),
+      accessTokenRaw,
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { error: gate.error, code: gate.code },
+        { status: gate.status },
+      );
+    }
 
-    if (effectiveInspectionId) {
-      const { count, error: cntErr } = await supabase
-        .from("photos")
-        .select("id", { count: "exact", head: true })
-        .eq("inspection_id", effectiveInspectionId);
-      if (!cntErr && typeof count === "number" && count >= MAX_PHOTOS_PER_INSPECTION) {
-        return Response.json(
-          {
-            error: `Nombre maximum de photos atteint pour cette inspection (${MAX_PHOTOS_PER_INSPECTION}).`,
-          },
-          { status: 400 },
-        );
-      }
+    const inspectionGate = resolveTrustedInspectionForReport(
+      report.inspection_id,
+      inspectionId,
+    );
+    if (!inspectionGate.ok) {
+      return Response.json(
+        { error: inspectionGate.error },
+        { status: inspectionGate.status },
+      );
+    }
+    const effectiveInspectionId = inspectionGate.inspectionId;
+    const ownerId =
+      typeof report.user_id === "string" && report.user_id.trim()
+        ? report.user_id.trim()
+        : gate.userId ?? "anonymous";
+
+    const { count, error: cntErr } = await supabase
+      .from("photos")
+      .select("id", { count: "exact", head: true })
+      .eq("inspection_id", effectiveInspectionId);
+    if (cntErr) {
+      return Response.json({ error: cntErr.message }, { status: 500 });
+    }
+    if (typeof count === "number" && count >= MAX_PHOTOS_PER_INSPECTION) {
+      return Response.json(
+        {
+          error: `Nombre maximum de photos atteint pour cette inspection (${MAX_PHOTOS_PER_INSPECTION}).`,
+        },
+        { status: 400 },
+      );
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -102,17 +153,8 @@ export async function POST(req: Request) {
 
     let photoId: string | null = null;
 
-    if (effectiveInspectionId) {
-      const { data: maxRow } = await supabase
-        .from("photos")
-        .select("photo_number")
-        .eq("inspection_id", effectiveInspectionId)
-        .order("photo_number", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const nextNum =
-        typeof maxRow?.photo_number === "number" ? maxRow.photo_number + 1 : 1;
-
+    {
+      const nextNum = await nextPhotoNumber(supabase, effectiveInspectionId);
       const insertPayload = {
         inspection_id: effectiveInspectionId,
         owner_id: ownerId,
@@ -146,12 +188,34 @@ export async function POST(req: Request) {
         }
       }
 
+      if (!photoId) {
+        return Response.json(
+          {
+            error: "Photo database insert failed",
+            details: insertRes.error?.message ?? "missing inserted photo id",
+          },
+          { status: 500 },
+        );
+      }
+
+      const existingReportPhotoId =
+        typeof report.photo_id === "string" && report.photo_id.trim()
+          ? report.photo_id.trim()
+          : null;
+      if (!existingReportPhotoId) {
+        await supabase
+          .from("reports")
+          .update({ photo_id: photoId })
+          .eq("id", reportId.trim())
+          .eq("inspection_id", effectiveInspectionId)
+          .is("photo_id", null);
+      }
+
       // Analyse vision hors chemin critique : sinon chaque photo bloque la réponse HTTP
       // (séquence client = 2e/3e aperçu « figé » jusqu'à la fin d'OpenAI sur la 1re).
-      if (photoId && process.env.OPENAI_API_KEY?.trim()) {
+      if (process.env.OPENAI_API_KEY?.trim()) {
         const mime = file.type?.trim() || "image/jpeg";
         const b64 = buffer.toString("base64");
-        const rid = reportId.trim();
         const pid = photoId;
         void (async () => {
           try {
@@ -166,9 +230,7 @@ export async function POST(req: Request) {
               .from("photos")
               .update({ analysis: merged })
               .eq("id", pid);
-            if (!updErr) {
-              await supabase.from("reports").update({ photo_id: pid }).eq("id", rid);
-            }
+            if (updErr) console.warn("[upload-photo] photo analysis update", updErr.message);
           } catch {
             /* analyse optionnelle */
           }

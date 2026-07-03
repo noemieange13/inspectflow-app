@@ -53,7 +53,7 @@ export async function persistBuildingSummaryV1(
     payload,
     source: "inspection-agent-building-summary",
     clearPdfPath: false,
-    allowUnlock: true,
+    allowUnlock: false,
   });
 
   if (rpcErr) {

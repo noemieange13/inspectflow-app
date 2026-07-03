@@ -365,13 +365,19 @@ async function fetchPhotoAnalysesForReport(
     inspectionId = links?.inspection_id ?? null;
   }
 
-  if (links?.photo_id && (!wanted || wanted.size === 0)) {
+  if (inspectionId && links?.photo_id && (!wanted || wanted.size === 0)) {
     const { data: row, error } = await supabase
       .from("photos")
       .select("id, analysis, inspection_id, photo_number, storage_path")
       .eq("id", links.photo_id)
       .maybeSingle();
-    if (!error && row) {
+    if (
+      !error &&
+      row &&
+      (!inspectionId ||
+        !row.inspection_id ||
+        String(row.inspection_id) === inspectionId)
+    ) {
       return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id" };
     }
     if (error) {
@@ -400,13 +406,19 @@ async function fetchPhotoAnalysesForReport(
       if (!inspectionId && job?.inspection_id) {
         inspectionId = String(job.inspection_id);
       }
-      if (job?.photo_id) {
+      if (inspectionId && job?.photo_id) {
         const { data: row, error } = await supabase
           .from("photos")
           .select("id, analysis, inspection_id, photo_number, storage_path")
           .eq("id", job.photo_id)
           .maybeSingle();
-        if (!error && row) {
+        if (
+          !error &&
+          row &&
+          (!inspectionId ||
+            !row.inspection_id ||
+            String(row.inspection_id) === inspectionId)
+        ) {
           return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id" };
         }
         if (error) {
@@ -453,7 +465,7 @@ async function fetchPhotoAnalysesForReport(
     }
   }
 
-  if (wanted && wanted.size > 0) {
+  if (inspectionId && wanted && wanted.size > 0) {
     const ids = [...wanted];
     const { data, error } = await supabase
       .from("photos")
@@ -462,8 +474,16 @@ async function fetchPhotoAnalysesForReport(
       .order("photo_number", { ascending: true })
       .limit(AI_PHOTO_FETCH_CAP);
     if (!error && Array.isArray(data) && data.length > 0) {
+      const rows = (data as PhotoAnalysisRow[]).filter(
+        (row) =>
+          !row.inspection_id ||
+          String(row.inspection_id) === inspectionId,
+      );
+      if (rows.length === 0) {
+        return { rows: [], source: "none" };
+      }
       return {
-        rows: data as PhotoAnalysisRow[],
+        rows,
         source: wantedDb && wantedDb.size > 0 ? "photos.by_db_selection_ids" : "photos.by_payload_selection_ids",
       };
     }

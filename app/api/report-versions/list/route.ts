@@ -1,4 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
+import { validateReportAccessRow } from "@/lib/assertReportAccessForApi"
+import { listReportVersions } from "@/lib/reportVersions"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
@@ -25,8 +27,10 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const report_id = body?.report_id
-    const access_token = body?.access_token
+    const report_id =
+      typeof body?.report_id === "string" ? body.report_id.trim() : ""
+    const access_token =
+      typeof body?.access_token === "string" ? body.access_token.trim() : ""
 
     if (!report_id) {
       return Response.json(
@@ -35,17 +39,17 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔒 Gate admin legacy (ajuste si ta règle est différente)
-    // Ici: admin requise quand "legacy" => access_token absent/vide
-    const isLegacy = !access_token
-    if (isLegacy) {
+    const requireAdmin = () => {
       const creds = parseBasicAuth(req)
 
       if (!creds) {
-        return Response.json(
+        return {
+          ok: false as const,
+          response: Response.json(
           { data: [], error: "ADMIN_AUTH_MISSING", meta: { max_versions: MAX_VERSIONS } },
           { status: 401 }
-        )
+          ),
+        }
       }
 
       const expectedUser = process.env.DASHBOARD_USER
@@ -58,27 +62,64 @@ export async function POST(req: Request) {
 
       const ok = creds.user === expectedUser && creds.pass === expectedPass
       if (!ok) {
-        return Response.json(
+        return {
+          ok: false as const,
+          response: Response.json(
           { data: [], error: "ADMIN_AUTH_INVALID", meta: { max_versions: MAX_VERSIONS } },
           { status: 403 }
-        )
+          ),
+        }
       }
+      return { ok: true as const }
     }
 
-    // 🧠 Init Supabase après gate admin
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    const { data, error } = await supabase
-      .from("report_versions")
-      .select("*")
-      .eq("report_id", report_id)
-      .order("created_at", { ascending: false })
+    if (access_token) {
+      const { data: report, error: reportErr } = await supabase
+        .from("reports")
+        .select("access_token, token_expires_at, user_id")
+        .eq("id", report_id)
+        .maybeSingle()
+      if (reportErr) {
+        return Response.json(
+          { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+          { status: 500 }
+        )
+      }
+      if (!report) {
+        return Response.json(
+          { data: [], error: "REPORT_NOT_FOUND", meta: { max_versions: MAX_VERSIONS } },
+          { status: 404 }
+        )
+      }
+      const dbToken =
+        typeof (report as { access_token?: unknown }).access_token === "string"
+          ? String((report as { access_token: string }).access_token).trim()
+          : ""
+      if (!dbToken) {
+        const adminGate = requireAdmin()
+        if (!adminGate.ok) return adminGate.response
+      } else {
+        const gate = validateReportAccessRow(report_id, access_token, report)
+        if (!gate.ok) {
+          return Response.json(
+            { data: [], error: gate.code ?? "ACCESS_DENIED", meta: { max_versions: MAX_VERSIONS } },
+            { status: gate.status }
+          )
+        }
+      }
+    } else {
+      const adminGate = requireAdmin()
+      if (!adminGate.ok) return adminGate.response
+    }
 
-    if (error) {
-      console.error("DB ERROR:", error)
+    const listed = await listReportVersions(supabase, report_id, MAX_VERSIONS)
+    if ("error" in listed) {
+      console.error("DB ERROR:", listed.error)
       return Response.json(
         { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
         { status: 500 }
@@ -86,7 +127,7 @@ export async function POST(req: Request) {
     }
 
     return Response.json({
-      data: Array.isArray(data) ? data : [],
+      data: listed.rows,
       error: null,
       meta: { max_versions: MAX_VERSIONS },
     })
