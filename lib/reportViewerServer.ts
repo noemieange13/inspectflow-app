@@ -83,34 +83,33 @@ export async function loadReportForViewer(
     const rec = report as Record<string, unknown>;
     const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
 
-    if (dbToken && viewerToken) {
-      if (!reportAccessTokensMatch(viewerToken, dbToken)) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
+    if (dbToken && !reportAccessTokensMatch(viewerToken ?? "", dbToken)) {
+      return {
+        id: reportId,
+        status: null,
+        title: null,
+        payload: null,
+        hasPdf: false,
+        pdfSignedUrl: null,
+        accessDenied: true,
+      };
+    }
 
-      if (
-        rec.token_expires_at != null &&
-        String(rec.token_expires_at) !== "" &&
-        new Date(String(rec.token_expires_at)) < new Date()
-      ) {
-        return {
-          id: reportId,
-          status: null,
-          title: null,
-          payload: null,
-          hasPdf: false,
-          pdfSignedUrl: null,
-          accessDenied: true,
-        };
-      }
+    if (
+      dbToken &&
+      rec.token_expires_at != null &&
+      String(rec.token_expires_at) !== "" &&
+      new Date(String(rec.token_expires_at)) < new Date()
+    ) {
+      return {
+        id: reportId,
+        status: null,
+        title: null,
+        payload: null,
+        hasPdf: false,
+        pdfSignedUrl: null,
+        accessDenied: true,
+      };
     }
 
     const payload =

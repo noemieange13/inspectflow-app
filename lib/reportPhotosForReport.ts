@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { photoMatchesInspection } from "@/lib/reportInspectionGuard";
+
 export type ReportPhotoRow = {
   id: string;
   analysis?: unknown;
@@ -39,22 +41,10 @@ export async function loadPhotoRowsForReport(
       : null;
 
   /**
-   * `reports.photo_id` pointe souvent vers la dernière photo uploadée : on l’utilise
-   * seulement pour retrouver `inspection_id`, puis on charge **toutes** les photos
-   * du lot — sinon le QC / la couverture ne voient qu’une seule ligne (ex. panneau
-   * électrique absent si ce n’était pas la dernière image).
+   * On ne déduit plus `inspection_id` depuis `reports.photo_id` : une photo directe
+   * stale/étrangère ne doit jamais choisir le lot PDF. `jobs.inspection_id` reste une
+   * source métier acceptable quand la ligne `reports` n’est pas encore renseignée.
    */
-  if (!inspectionId && links.photo_id) {
-    const { data: row, error } = await supabase
-      .from("photos")
-      .select("inspection_id")
-      .eq("id", links.photo_id)
-      .maybeSingle();
-    if (!error && row?.inspection_id != null && String(row.inspection_id) !== "") {
-      inspectionId = String(row.inspection_id);
-    }
-  }
-
   if (!inspectionId && links.job_id) {
     const { data: job, error: jobErr } = await supabase
       .from("jobs")
@@ -101,7 +91,7 @@ export async function loadPhotoRowsForReport(
   }
 
   /* Dernier recours : une seule photo liée au rapport, sans inspection résolvable */
-  if (links.photo_id) {
+  if (inspectionId && links.photo_id) {
     const { data: row, error } = await supabase
       .from("photos")
       .select("id, analysis, inspection_id, photo_number, storage_path")
@@ -109,6 +99,9 @@ export async function loadPhotoRowsForReport(
       .maybeSingle();
     if (!error && row) {
       const r = row as ReportPhotoRow;
+      if (!photoMatchesInspection(r.inspection_id, inspectionId)) {
+        return { rows: [], inspectionId, source: "none" };
+      }
       return {
         rows: [r],
         inspectionId: r.inspection_id != null ? String(r.inspection_id) : null,
@@ -117,7 +110,7 @@ export async function loadPhotoRowsForReport(
     }
   }
 
-  if (links.job_id) {
+  if (inspectionId && links.job_id) {
     const { data: job, error: jobErr } = await supabase
       .from("jobs")
       .select("photo_id")
@@ -131,6 +124,9 @@ export async function loadPhotoRowsForReport(
         .maybeSingle();
       if (!error && row) {
         const r = row as ReportPhotoRow;
+        if (!photoMatchesInspection(r.inspection_id, inspectionId)) {
+          return { rows: [], inspectionId, source: "none" };
+        }
         return {
           rows: [r],
           inspectionId: r.inspection_id != null ? String(r.inspection_id) : null,

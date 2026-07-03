@@ -595,7 +595,7 @@ export default function ZeroDraftReportComposer({
       window.clearTimeout(manualSaveDebounceTimerRef.current);
       manualSaveDebounceTimerRef.current = null;
     }
-  }, [reportId]);
+  }, [reportId, viewerToken]);
 
   useEffect(() => {
     if (!showEditor) return;
@@ -1476,6 +1476,9 @@ export default function ZeroDraftReportComposer({
       form.append("file", file);
       form.append("report_id", reportId);
       form.append("language", language);
+      if (viewerToken?.trim()) {
+        form.append("access_token", viewerToken.trim());
+      }
       try {
         const res = await fetch("/api/upload-photo", { method: "POST", body: form });
         const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -1541,7 +1544,7 @@ export default function ZeroDraftReportComposer({
         return false;
       }
     },
-    [reportId, language],
+    [reportId, language, viewerToken],
   );
 
   const schedulePhotoAnalysisRefresh = useCallback(() => {
@@ -2260,7 +2263,7 @@ export default function ZeroDraftReportComposer({
         fetch("/api/trigger-inspection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ report_id: reportId }),
+          body: JSON.stringify({ report_id: reportId, access_token: viewerToken ?? "" }),
         }),
         180_000,
         "trigger-inspection",
@@ -2298,7 +2301,7 @@ export default function ZeroDraftReportComposer({
       );
     }
     return pdfBody.signed_url ?? pdfBody.pdf_url ?? null;
-  }, [reportId]);
+  }, [reportId, viewerToken]);
 
   const refreshPdfUrl = useCallback(async () => {
     if (!viewerToken) return;
@@ -3203,6 +3206,7 @@ export default function ZeroDraftReportComposer({
             <LiveInspectionCapture
               reportId={reportId}
               language={language}
+              viewerToken={viewerToken}
               disabled={loading || uploadingPhoto}
               guideHint={
                 terrainStepLive?.kind === "photo"
