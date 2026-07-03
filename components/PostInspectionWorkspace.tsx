@@ -16,6 +16,7 @@ import { humanInspectorError } from "@/lib/commercialCopy8g";
 import { parseCoverFromPayload } from "@/lib/inspectorHomeList";
 import { MAX_INSPECTION_PHOTOS } from "@/lib/inspectionPhotoLimits";
 import type { InspectionPhotoProgress } from "@/lib/inspectionPhotoProgress";
+import { resumePhotoUploadQueueOnVisible } from "@/lib/photoUploadQueueProcessor";
 import { readReportReadySnapshotFromPayload } from "@/lib/report_readiness_engine";
 import { startReportGenerationTimer } from "@/lib/reportGenerationMetrics";
 import {
@@ -127,6 +128,10 @@ export default function PostInspectionWorkspace({
     return () => window.clearInterval(t);
   }, [refreshProgress]);
 
+  useEffect(() => {
+    return resumePhotoUploadQueueOnVisible(reportId);
+  }, [reportId]);
+
   const triggerBackgroundPrepare = useCallback(async () => {
     const token = viewerToken?.trim();
     if (!token) return;
@@ -224,11 +229,11 @@ export default function PostInspectionWorkspace({
           step2: "Assistant prepares your report",
           step2hint: readySnap?.observations_ready
             ? "Draft ready for your review"
-            : "Organizing photos…",
+            : "Analyzing photos…",
           step3: "Review",
           step4: "Create PDF",
           chooseFolder: "Choose folder",
-          organizing: "Organizing photos…",
+          organizing: "Analyzing photos…",
           reviewBtn: "Review findings",
           createBtn: "Create report",
           address: "Property",
@@ -239,11 +244,11 @@ export default function PostInspectionWorkspace({
           step2: "Assistant prépare votre rapport",
           step2hint: readySnap?.observations_ready
             ? "Brouillon prêt pour votre révision"
-            : "Organisation des photos…",
+            : "Analyse des photos…",
           step3: "Réviser",
           step4: "Créer le PDF",
           chooseFolder: "Choisir dossier",
-          organizing: "Organisation des photos…",
+          organizing: "Analyse des photos…",
           reviewBtn: "Réviser les constats",
           createBtn: "Créer rapport",
           address: "Propriété",

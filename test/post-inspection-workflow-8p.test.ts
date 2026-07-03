@@ -37,7 +37,7 @@ describe("Phase 8P post-inspection workflow", () => {
     assert.match(importBtn, /sequenceNumber/);
     assert.match(importBtn, /batchExpectedCount/);
     assert.match(importBtn, /webkitdirectory/);
-    assert.match(importBtn, /Organisation des photos/);
+    assert.match(importBtn, /Préparation des photos/);
     assert.ok(MAX_INSPECTION_PHOTOS >= 300);
   });
 

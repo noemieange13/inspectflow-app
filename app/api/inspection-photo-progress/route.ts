@@ -1,5 +1,6 @@
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import { loadInspectionPhotoProgress } from "@/lib/inspectionPhotoProgress";
+import { logPhotoImport } from "@/lib/photoImportLog";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export const maxDuration = 30;
@@ -94,6 +95,22 @@ export async function POST(req: Request) {
           ? expectedUploadTotal
           : null,
       batchId,
+    });
+
+    logPhotoImport({
+      reportId,
+      step: "upload_progress",
+      message: `[api/inspection-photo-progress] upload ${progress.upload.done}/${progress.upload.total ?? "?"} — analyse ${progress.analysis.done}/${progress.analysis.total} (pending ${progress.analysis.pending}, processing ${progress.analysis.processing})`,
+      data: {
+        inspection_id: inspectionId,
+        upload_done: progress.upload.done,
+        upload_total: progress.upload.total,
+        analysis_done: progress.analysis.done,
+        analysis_total: progress.analysis.total,
+        analysis_pending: progress.analysis.pending,
+        analysis_processing: progress.analysis.processing,
+        analysis_failed: progress.analysis.failed,
+      },
     });
 
     return Response.json({ success: true, progress, inspection_id: inspectionId });

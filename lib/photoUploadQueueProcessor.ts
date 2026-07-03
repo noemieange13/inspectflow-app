@@ -7,6 +7,7 @@ import {
   type PhotoUploadQueueRecord,
 } from "@/lib/photoUploadQueueIdb";
 import { uploadPhotoViaApi, type UploadPhotoParams } from "@/photo-pipeline/client/uploadPhoto";
+import { logPhotoImport } from "@/lib/photoImportLog";
 
 export type PhotoUploadQueueEnqueueInput = {
   file: File;
@@ -28,6 +29,16 @@ export type PhotoUploadQueueProcessResult = {
   uploaded: number;
   failed: number;
   deduplicated: number;
+};
+
+export type PhotoUploadProgress = {
+  total: number;
+  processed: number;
+  uploaded: number;
+  failed: number;
+  deduplicated: number;
+  lastFileName?: string;
+  lastStatus: "uploaded" | "failed";
 };
 
 function recordToUploadParams(record: PhotoUploadQueueRecord): UploadPhotoParams {
@@ -81,7 +92,11 @@ const activeDrains = new Map<string, Promise<PhotoUploadQueueProcessResult>>();
 
 export async function drainPhotoUploadQueue(
   reportId: string,
-  opts?: { concurrency?: number; maxAttempts?: number },
+  opts?: {
+    concurrency?: number;
+    maxAttempts?: number;
+    onProgress?: (progress: PhotoUploadProgress) => void;
+  },
 ): Promise<PhotoUploadQueueProcessResult> {
   const inflight = activeDrains.get(reportId);
   if (inflight) return inflight;
@@ -89,6 +104,7 @@ export async function drainPhotoUploadQueue(
   const promise = (async () => {
     const concurrency = opts?.concurrency ?? 3;
     const maxAttempts = opts?.maxAttempts ?? 5;
+    const onProgress = opts?.onProgress;
     let processed = 0;
     let uploaded = 0;
     let failed = 0;
@@ -96,6 +112,23 @@ export async function drainPhotoUploadQueue(
 
     const pending = await listPendingPhotoUploads(reportId);
     pending.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const total = pending.length;
+
+    const emitProgress = (lastFileName: string, lastStatus: "uploaded" | "failed") => {
+      if (!onProgress) return;
+      try {
+        onProgress({ total, processed, uploaded, failed, deduplicated, lastFileName, lastStatus });
+      } catch {
+        /* callback ne doit jamais casser le drain */
+      }
+    };
+
+    logPhotoImport({
+      reportId,
+      step: "upload_start",
+      message: `drain de la file : ${total} photo(s) en attente (concurrence ${concurrency})`,
+      data: { pending: total, concurrency, max_attempts: maxAttempts },
+    });
 
     let index = 0;
     async function worker(): Promise<void> {
@@ -106,6 +139,17 @@ export async function drainPhotoUploadQueue(
 
         if (record.attempt_count >= maxAttempts) {
           failed += 1;
+          logPhotoImport({
+            reportId,
+            step: "upload_interrupted",
+            message: `photo abandonnée après ${record.attempt_count} tentative(s) (max ${maxAttempts})`,
+            data: {
+              client_upload_id: record.client_upload_id,
+              file_name: record.file_name,
+              attempt_count: record.attempt_count,
+              last_error: record.last_error,
+            },
+          });
           continue;
         }
 
@@ -128,6 +172,18 @@ export async function drainPhotoUploadQueue(
               last_error: result.error,
             });
             failed += 1;
+            logPhotoImport({
+              reportId,
+              step: "upload_progress",
+              message: `échec upload (${processed}/${total}) : ${record.file_name}`,
+              data: {
+                client_upload_id: record.client_upload_id,
+                file_name: record.file_name,
+                error: result.error,
+                attempt: record.attempt_count + 1,
+              },
+            });
+            emitProgress(record.file_name, "failed");
             continue;
           }
 
@@ -139,17 +195,50 @@ export async function drainPhotoUploadQueue(
           });
           uploaded += 1;
           if (result.deduplicated) deduplicated += 1;
+          logPhotoImport({
+            reportId,
+            step: "upload_progress",
+            message: `photo envoyée (${uploaded}/${total})${result.deduplicated ? " [doublon]" : ""} : ${record.file_name}`,
+            data: {
+              client_upload_id: record.client_upload_id,
+              file_name: record.file_name,
+              server_photo_id: result.photo_id,
+              deduplicated: Boolean(result.deduplicated),
+              uploaded,
+              total,
+            },
+          });
+          emitProgress(record.file_name, "uploaded");
         } catch (e) {
           await updatePhotoUploadRecord(record.client_upload_id, {
             status: "failed",
             last_error: e instanceof Error ? e.message : String(e),
           });
           failed += 1;
+          logPhotoImport({
+            reportId,
+            step: "upload_progress",
+            message: `exception upload (${processed}/${total}) : ${record.file_name}`,
+            data: {
+              client_upload_id: record.client_upload_id,
+              file_name: record.file_name,
+              error: e instanceof Error ? e.message : String(e),
+              attempt: record.attempt_count + 1,
+            },
+          });
+          emitProgress(record.file_name, "failed");
         }
       }
     }
 
     await Promise.all(Array.from({ length: Math.min(concurrency, pending.length || 1) }, () => worker()));
+
+    logPhotoImport({
+      reportId,
+      step: "upload_end",
+      message: `drain terminé : ${uploaded} envoyée(s), ${failed} échec(s), ${deduplicated} doublon(s)`,
+      data: { processed, uploaded, failed, deduplicated, total },
+    });
 
     return { processed, uploaded, failed, deduplicated };
   })();
@@ -164,14 +253,37 @@ export async function drainPhotoUploadQueue(
 
 export function resumePhotoUploadQueueOnVisible(reportId: string): () => void {
   if (typeof document === "undefined") return () => {};
-  const run = () => {
-    void drainPhotoUploadQueue(reportId).catch(() => {});
+  const run = (trigger: string) => {
+    logPhotoImport({
+      reportId,
+      step: "upload_resume",
+      message: `reprise de la file déclenchée (${trigger})`,
+      data: { trigger },
+    });
+    void drainPhotoUploadQueue(reportId).catch((e) => {
+      logPhotoImport({
+        reportId,
+        step: "upload_interrupted",
+        message: "échec du drain pendant la reprise",
+        data: { trigger, error: e instanceof Error ? e.message : String(e) },
+      });
+    });
   };
-  document.addEventListener("visibilitychange", run);
-  window.addEventListener("online", run);
-  void drainPhotoUploadQueue(reportId).catch(() => {});
+  const onVisible = () => {
+    if (document.visibilityState === "visible") run("visibilitychange");
+  };
+  const onOnline = () => run("online");
+  document.addEventListener("visibilitychange", onVisible);
+  window.addEventListener("online", onOnline);
+  logPhotoImport({
+    reportId,
+    step: "upload_resume",
+    message: "écoute de reprise activée (visibilitychange + online) + drain initial",
+    data: { trigger: "mount" },
+  });
+  run("mount");
   return () => {
-    document.removeEventListener("visibilitychange", run);
-    window.removeEventListener("online", run);
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("online", onOnline);
   };
 }

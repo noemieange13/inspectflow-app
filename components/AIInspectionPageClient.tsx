@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import AIReportReviewScreen from "@/components/AIReportReviewScreen";
@@ -15,6 +15,7 @@ import {
   readDocumentIntakeFromPayload,
 } from "@/lib/documentContextHints";
 import { parseInspectionObservation } from "@/lib/inspection-local-ai";
+import { resumePhotoUploadQueueOnVisible } from "@/lib/photoUploadQueueProcessor";
 import { normalizeReportLanguage } from "@/lib/reportNarrative";
 import type { ReportEntryInput } from "@/lib/reportNarrative";
 import type { ReportServerData } from "@/lib/reportViewerServer";
@@ -40,6 +41,10 @@ export default function AIInspectionPageClient({
     previewUrl: string;
   } | null>(null);
   const [sequence, setSequence] = useState(1);
+
+  useEffect(() => {
+    return resumePhotoUploadQueueOnVisible(reportId);
+  }, [reportId]);
 
   const payload =
     reportData.payload && typeof reportData.payload === "object"

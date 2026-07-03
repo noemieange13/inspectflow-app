@@ -25,6 +25,7 @@ import { handleOfflinePhotoUpload } from "@/lib/devOffline/uploadPhoto";
 import { getOfflineInspection } from "@/lib/devOffline/inspection";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { resolveOrganizationIdForReport, trackUsageSafe } from "@/lib/usage_control";
+import { logPhotoImport } from "@/lib/photoImportLog";
 import { createHash } from "crypto";
 
 const BUCKET = "user-uploads";
@@ -94,11 +95,31 @@ export async function POST(req: Request) {
       return Response.json({ error: "Missing report_id" }, { status: 400 });
     }
     if (file.size > MAX_SIZE_BYTES) {
+      logPhotoImport({
+        reportId: reportId.trim(),
+        step: "error",
+        message: `fichier trop volumineux (${Math.round(file.size / 1024)} Ko) : ${file.name}`,
+        data: { file_name: file.name, file_size: file.size, max_bytes: MAX_SIZE_BYTES },
+      });
       return Response.json(
         { error: `File too large (max ${MAX_SIZE_BYTES / 1024 / 1024} MB)` },
         { status: 400 },
       );
     }
+
+    logPhotoImport({
+      reportId: reportId.trim(),
+      step: "upload_progress",
+      message: `[api/upload-photo] réception : ${file.name} (${Math.round(file.size / 1024)} Ko)`,
+      data: {
+        file_name: file.name,
+        file_size: file.size,
+        inspection_id: inspectionId?.trim() || null,
+        client_upload_id: clientUploadId || null,
+        batch_id: batchIdRaw || null,
+        capture_mode: captureContext?.capture_mode ?? null,
+      },
+    });
 
     const accessTokenRaw =
       typeof formData.get("access_token") === "string"
@@ -230,6 +251,12 @@ export async function POST(req: Request) {
       });
 
     if (uploadErr) {
+      logPhotoImport({
+        reportId: trimmedReportId,
+        step: "error",
+        message: `[api/upload-photo] échec stockage : ${file.name}`,
+        data: { file_name: file.name, error: uploadErr.message, storage_path: storagePath },
+      });
       return Response.json(
         { error: "Storage upload failed", details: uploadErr.message },
         { status: 500 },
@@ -378,6 +405,19 @@ export async function POST(req: Request) {
       }
     }
 
+    logPhotoImport({
+      reportId: trimmedReportId,
+      step: "upload_progress",
+      message: `[api/upload-photo] photo ${deduplicated ? "dédupliquée" : "enregistrée"} : ${file.name}`,
+      data: {
+        file_name: file.name,
+        photo_id: photoId,
+        deduplicated,
+        batch_id: batchId,
+        analysis_enqueued: Boolean(photoId),
+      },
+    });
+
     return Response.json({
       success: true,
       deduplicated,
@@ -392,6 +432,11 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    logPhotoImport({
+      step: "error",
+      message: `[api/upload-photo] exception serveur : ${message}`,
+      data: { error: message },
+    });
     return Response.json({ error: message }, { status: 500 });
   }
 }
