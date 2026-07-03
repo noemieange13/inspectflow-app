@@ -3,6 +3,11 @@
  */
 import { applySteveCorrectionMemory } from "@/lib/steveCorrectionMemory";
 import {
+  cleanOcrSeparatorText,
+  normalizeBuildingValue,
+  sanitizeAddressValue,
+} from "@/lib/documentIntakeSanitizer";
+import {
   findKnownCity,
   OCR_CORRECTION_RULES,
   suggestsMontLaurierAddress,
@@ -39,6 +44,17 @@ export type NormalizedSteveFieldValue = {
   requires_confirmation: boolean;
   corrections: HandwritingCorrection[];
 };
+
+/** Free-text field kinds where OCR separator artifacts (`:+`, `+`, …) are cleaned. */
+const OCR_TEXT_CLEAN_FIELDS = new Set<SteveFieldKind>([
+  "roof",
+  "heating",
+  "building_type",
+  "facade_orientation",
+  "electrical_panel",
+  "water_heater",
+  "generic",
+]);
 
 const FIELD_RULE_FILTER: Partial<Record<SteveFieldKind, (reason: string) => boolean>> = {
   address: (reason) =>
@@ -126,6 +142,16 @@ export function normalizeSteveFieldValue(input: {
     corrections = [...corrections, ...ruled.corrections];
     value = finishAddressNormalization(value, corrections);
 
+    const decontaminated = sanitizeAddressValue(value, input.confidence);
+    if (decontaminated !== value) {
+      corrections.push({
+        from: value,
+        to: decontaminated || "(removed)",
+        reason: "address_ocr_noise",
+      });
+      value = decontaminated;
+    }
+
     const changed = value !== original;
     if (changed) {
       traceHandwritingNormalized({
@@ -149,6 +175,26 @@ export function normalizeSteveFieldValue(input: {
   if (!hasRuleFilter) {
     corrections = [];
     value = original;
+  }
+
+  if (OCR_TEXT_CLEAN_FIELDS.has(input.field)) {
+    const cleaned = cleanOcrSeparatorText(value);
+    if (cleaned !== value) {
+      corrections.push({ from: value, to: cleaned || "(removed)", reason: "ocr_separator_noise" });
+      value = cleaned;
+    }
+  }
+
+  if (input.field === "building_type") {
+    const normalizedBuilding = normalizeBuildingValue(value, input.confidence);
+    if (normalizedBuilding !== value) {
+      corrections.push({
+        from: value,
+        to: normalizedBuilding,
+        reason: "building_ocr_substitution",
+      });
+      value = normalizedBuilding;
+    }
   }
 
   const changed = value !== original;

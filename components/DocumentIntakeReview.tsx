@@ -164,6 +164,14 @@ export default function DocumentIntakeReview({
   const reportOrientationSource =
     profile.orientation.source === "previous_report" ? profile.orientation : null;
 
+  useEffect(() => {
+    if (selectedOrientation) return;
+    if (reportOrientationSource) return;
+    if (suggestedOrientation) {
+      setSelectedOrientation(suggestedOrientation.suggested_direction);
+    }
+  }, [selectedOrientation, reportOrientationSource, suggestedOrientation]);
+
   const terrainNotes = useMemo(() => {
     const notes =
       fusion?.inspector_raw_notes_v1?.notes ??
@@ -241,6 +249,13 @@ export default function DocumentIntakeReview({
     label ? (
       <p className="text-xs text-slate-500">Source : {label}</p>
     ) : null;
+
+  const confirmBadge = (label = "À confirmer") => (
+    <span className="ml-2 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-900">
+      <span aria-hidden>⚠</span>
+      <span>{label}</span>
+    </span>
+  );
 
   const persistLearningOnConfirm = (confirmed: { clientName: string; address: string }) => {
     captureInspectorLearningOnIntakeConfirm({
@@ -327,13 +342,13 @@ export default function DocumentIntakeReview({
               <dt className="text-slate-500">Client</dt>
               <dd className="font-medium text-gray-900">
                 {displayClientName || steveIntelligence?.client.name?.value || "—"}
-                {clientNeedsConfirmation ? (
-                  <span className="ml-2 text-xs font-normal text-amber-800">
-                    {clientHandwritingHeader
-                      ? "⚠ À confirmer (écriture manuscrite)"
-                      : "À confirmer"}
-                  </span>
-                ) : null}
+                {clientNeedsConfirmation
+                  ? confirmBadge(
+                      clientHandwritingHeader
+                        ? "À confirmer (écriture manuscrite)"
+                        : "À confirmer",
+                    )
+                  : null}
               </dd>
               {clientSourceLabel ? sourceTag(clientSourceLabel) : null}
             </div>
@@ -341,9 +356,9 @@ export default function DocumentIntakeReview({
               <div>
                 <dt className="text-slate-500">Courtier</dt>
                 <dd className="font-medium text-gray-900">{brokerDisplay}</dd>
-                {steveIntelligence?.contacts.broker_name?.requires_confirmation ? (
-                  <p className="text-xs text-amber-800">À confirmer</p>
-                ) : null}
+                {steveIntelligence?.contacts.broker_name?.requires_confirmation
+                  ? confirmBadge()
+                  : null}
                 {fusion?.broker.name?.source ? sourceTag(fusion.broker.name.source) : null}
               </div>
             ) : null}
@@ -351,9 +366,7 @@ export default function DocumentIntakeReview({
               <dt className="text-slate-500">Adresse</dt>
               <dd className="font-medium text-gray-900">
                 {displayAddress || steveIntelligence?.property.address?.value || "—"}
-                {addressNeedsConfirmation ? (
-                  <span className="ml-2 text-xs font-normal text-amber-800">À confirmer</span>
-                ) : null}
+                {addressNeedsConfirmation ? confirmBadge() : null}
                 {addressCorrectedFromOcr ? (
                   <span className="ml-2 text-xs font-normal text-blue-800">
                     ⚠ Corrigée depuis écriture
