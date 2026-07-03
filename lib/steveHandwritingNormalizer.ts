@@ -5,6 +5,7 @@ import { applySteveCorrectionMemory } from "@/lib/steveCorrectionMemory";
 import {
   cleanOcrSeparatorText,
   normalizeBuildingValue,
+  normalizeFrenchDescriptiveText,
   sanitizeAddressValue,
 } from "@/lib/documentIntakeSanitizer";
 import {
@@ -55,6 +56,9 @@ const OCR_TEXT_CLEAN_FIELDS = new Set<SteveFieldKind>([
   "water_heater",
   "generic",
 ]);
+
+/** Descriptive free-text fields that also get conservative French word restoration. */
+const OCR_FRENCH_TEXT_FIELDS = new Set<SteveFieldKind>(["roof", "heating", "generic"]);
 
 const FIELD_RULE_FILTER: Partial<Record<SteveFieldKind, (reason: string) => boolean>> = {
   address: (reason) =>
@@ -182,6 +186,14 @@ export function normalizeSteveFieldValue(input: {
     if (cleaned !== value) {
       corrections.push({ from: value, to: cleaned || "(removed)", reason: "ocr_separator_noise" });
       value = cleaned;
+    }
+  }
+
+  if (OCR_FRENCH_TEXT_FIELDS.has(input.field)) {
+    const frenchy = normalizeFrenchDescriptiveText(value);
+    if (frenchy !== value) {
+      corrections.push({ from: value, to: frenchy, reason: "french_ocr_normalization" });
+      value = frenchy;
     }
   }
 

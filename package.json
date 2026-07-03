@@ -114,6 +114,7 @@
     "test:inspector-learning-pilot-039": "tsx --test test/inspector-learning-pilot-039.test.ts",
     "test:document-intake-resolver-pilot-039-1": "tsx --test test/document-intake-resolver-pilot-039-1.test.ts",
     "test:pilot-hotfix-1-intake": "tsx --test test/pilot-hotfix-1-intake-data-quality.test.ts",
+    "test:pilot-hotfix-2-intake": "tsx --test test/pilot-hotfix-2-intake-polish.test.ts",
     "test:global-lock-right-pilot-037": "tsx --test test/global-lock-right-pilot-037.test.ts",
     "test:real-document-trace-pilot-06": "tsx --test test/real-document-trace-pilot-06.test.ts",
     "test:steve-real-document-trace-06": "tsx --test test/steve-real-document-trace-06.test.ts",

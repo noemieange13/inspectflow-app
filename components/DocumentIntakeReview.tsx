@@ -122,12 +122,37 @@ export default function DocumentIntakeReview({
   }, [resolvedPrefill.clientName, resolvedPrefill.address, resolvedPrefill.inspectionType]);
 
   const [showEditFields, setShowEditFields] = useState(false);
-  const initialOrientation =
+
+  const suggestedOrientation = useMemo(
+    () => suggestFacadeOrientation(address || analysis.property.address || ""),
+    [address, analysis.property.address],
+  );
+
+  const reportOrientationSource =
+    profile.orientation.source === "previous_report" ? profile.orientation : null;
+
+  // The selected radio must mirror the displayed suggestion until the inspector
+  // changes it manually; a confirmed report orientation always takes precedence.
+  const initialOrientation: BuildingProfileDirection =
+    reportOrientationSource?.facade_direction ||
+    suggestedOrientation?.suggested_direction ||
     profile.orientation.facade_direction ||
     analysis.orientation?.facade_direction ||
     "";
   const [selectedOrientation, setSelectedOrientation] =
     useState<BuildingProfileDirection>(initialOrientation);
+  const [orientationTouched, setOrientationTouched] = useState(false);
+
+  useEffect(() => {
+    if (orientationTouched) return;
+    const synced =
+      reportOrientationSource?.facade_direction ||
+      suggestedOrientation?.suggested_direction ||
+      "";
+    if (synced && synced !== selectedOrientation) {
+      setSelectedOrientation(synced);
+    }
+  }, [orientationTouched, reportOrientationSource, suggestedOrientation, selectedOrientation]);
 
   const showNeedsReview = needsReview || document.extraction_status === "needs_review";
   const mainDataMissing = !showNeedsReview && isMainIntakeDataMissing(resolvedPrefill);
@@ -155,22 +180,6 @@ export default function DocumentIntakeReview({
         : inspectionType === "condo"
           ? "Condominium"
           : buildingTypeLabel || "Résidentiel";
-
-  const suggestedOrientation = useMemo(
-    () => suggestFacadeOrientation(address || analysis.property.address || ""),
-    [address, analysis.property.address],
-  );
-
-  const reportOrientationSource =
-    profile.orientation.source === "previous_report" ? profile.orientation : null;
-
-  useEffect(() => {
-    if (selectedOrientation) return;
-    if (reportOrientationSource) return;
-    if (suggestedOrientation) {
-      setSelectedOrientation(suggestedOrientation.suggested_direction);
-    }
-  }, [selectedOrientation, reportOrientationSource, suggestedOrientation]);
 
   const terrainNotes = useMemo(() => {
     const notes =
@@ -482,7 +491,10 @@ export default function DocumentIntakeReview({
                         type="radio"
                         name="facade-orientation"
                         checked={checked}
-                        onChange={() => setSelectedOrientation(direction)}
+                        onChange={() => {
+                          setOrientationTouched(true);
+                          setSelectedOrientation(direction);
+                        }}
                         className="h-4 w-4"
                       />
                       <span>

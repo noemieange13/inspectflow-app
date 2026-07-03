@@ -53,11 +53,40 @@ export function cleanOcrSeparatorText(value: string): string {
   let out = stripOcrControlChars(value);
   // Any run of separators that contains a "+" is an OCR artifact → single comma.
   out = out.replace(/\s*[:+]*\+[:+]*\s*/g, ", ");
+  // Drop orphan colons left dangling between separators (", :, " → ", ").
+  out = out.replace(/,\s*:\s*,/g, ",");
+  // A lone colon padded by whitespace behaves like a separator, not a label.
+  out = out.replace(/\s+:\s+/g, ", ");
   // Collapse duplicated colons / commas produced by the pass above or by OCR.
   out = out.replace(/:{2,}/g, ":");
   out = out.replace(/(?:\s*,\s*){2,}/g, ", ");
   // Trim stray leading/trailing separators & punctuation.
   out = out.replace(/^[\s,:+.;·|-]+/, "").replace(/[\s,:+.;·|-]+$/, "");
+  return out.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Conservative French OCR word restoration for descriptive fields (roof /
+ * exterior / heating). Only fixes a small, dictionary-backed whitelist of
+ * common OCR splits and missing diacritics. Never invents new words.
+ */
+const FRENCH_OCR_WORD_FIXES: Array<[RegExp, string]> = [
+  [/\bdela\b/gi, "de la"],
+  [/\bFacade\b/g, "Façade"],
+  [/\bfacade\b/g, "façade"],
+  [/\bExterieur\b/g, "Extérieur"],
+  [/\bexterieur\b/g, "extérieur"],
+  [/\bBeton\b/g, "Béton"],
+  [/\bbeton\b/g, "béton"],
+  [/\barriere\b/g, "arrière"],
+];
+
+export function normalizeFrenchDescriptiveText(value: string): string {
+  if (!value) return value;
+  let out = value;
+  for (const [pattern, replacement] of FRENCH_OCR_WORD_FIXES) {
+    out = out.replace(pattern, replacement);
+  }
   return out.replace(/\s+/g, " ").trim();
 }
 

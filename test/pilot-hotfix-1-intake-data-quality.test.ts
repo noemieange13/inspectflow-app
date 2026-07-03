@@ -112,11 +112,11 @@ describe("Pilot Hotfix #1 — Issue 4 & 5: review UI", () => {
   const source = read("components/DocumentIntakeReview.tsx");
 
   it("pre-selects the suggested orientation when none is chosen", () => {
-    assert.match(source, /setSelectedOrientation\(suggestedOrientation\.suggested_direction\)/);
+    assert.match(source, /suggestedOrientation\?\.suggested_direction/);
   });
 
   it("still lets the inspector change orientation manually", () => {
-    assert.match(source, /onChange=\{\(\)\s*=>\s*setSelectedOrientation\(direction\)\}/);
+    assert.match(source, /setSelectedOrientation\(direction\)/);
   });
 
   it("highlights fields requiring confirmation with a warning badge", () => {
