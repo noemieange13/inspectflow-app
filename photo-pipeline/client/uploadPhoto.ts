@@ -8,6 +8,8 @@ export type UploadPhotoParams = {
   file: File;
   reportId: string;
   inspectionId?: string;
+  accessToken?: string;
+  supabaseAccessToken?: string | null;
   language?: "en" | "fr";
 };
 
@@ -63,12 +65,21 @@ export async function uploadPhotoViaApi(
   if (params.inspectionId) {
     form.append("inspection_id", params.inspectionId);
   }
+  if (params.accessToken?.trim()) {
+    form.append("access_token", params.accessToken.trim());
+  }
   if (params.language) {
     form.append("language", params.language);
   }
 
+  const headers =
+    params.supabaseAccessToken?.trim()
+      ? { Authorization: `Bearer ${params.supabaseAccessToken.trim()}` }
+      : undefined;
+
   const res = await fetch("/api/upload-photo", {
     method: "POST",
+    headers,
     body: form,
   });
 

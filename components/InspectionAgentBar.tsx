@@ -14,9 +14,15 @@ const STORAGE_LLM = "inspectflow:inspection-agent:use-llm";
 
 type Props = {
   reportId: string;
+  viewerAccessToken?: string;
+  supabaseAccessToken?: string | null;
 };
 
-export default function InspectionAgentBar({ reportId }: Props) {
+export default function InspectionAgentBar({
+  reportId,
+  viewerAccessToken,
+  supabaseAccessToken,
+}: Props) {
   const [agentMode, setAgentMode] = useState<"manual" | "agent">("manual");
   const [autonomy, setAutonomy] = useState<AgentAutonomyLevel>("semi");
   const [loading, setLoading] = useState(false);
@@ -76,9 +82,15 @@ export default function InspectionAgentBar({ reportId }: Props) {
       try {
         const res = await fetch("/api/inspection-agent", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(supabaseAccessToken?.trim()
+              ? { Authorization: `Bearer ${supabaseAccessToken.trim()}` }
+              : {}),
+          },
           body: JSON.stringify({
             report_id: reportId,
+            access_token: viewerAccessToken?.trim() ?? "",
             autonomy,
             execute,
             use_llm: useLlmDecider,
@@ -100,7 +112,7 @@ export default function InspectionAgentBar({ reportId }: Props) {
         setLoading(false);
       }
     },
-    [reportId, autonomy, useLlmDecider],
+    [reportId, viewerAccessToken, supabaseAccessToken, autonomy, useLlmDecider],
   );
 
   const summary = useMemo(() => {
