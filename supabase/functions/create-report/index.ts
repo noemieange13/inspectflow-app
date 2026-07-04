@@ -32,25 +32,27 @@ function optUuid(v: unknown): string | null {
 async function photoExists(
   supabase: ReturnType<typeof createClient>,
   id: string,
+  inspectionId: string,
 ): Promise<boolean> {
   const { data, error } = await supabase
     .from("photos")
-    .select("id")
+    .select("id, inspection_id")
     .eq("id", id)
     .maybeSingle();
   if (error) {
     console.warn("create-report photos lookup:", error.message);
     return false;
   }
-  return !!data?.id;
+  return !!data?.id && String(data.inspection_id ?? "") === inspectionId;
 }
 
 async function resolvePhotoId(
   supabase: ReturnType<typeof createClient>,
   candidate: string | null,
+  inspectionId: string,
 ): Promise<string | null> {
   if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  return (await photoExists(supabase, candidate, inspectionId)) ? candidate : null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -63,6 +65,12 @@ Deno.serve(async (req: Request) => {
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SERVICE_ROLE) {
       throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    }
+
+    const auth = req.headers.get("authorization") ?? "";
+    const apiKey = req.headers.get("apikey") ?? "";
+    if (auth !== `Bearer ${SERVICE_ROLE}` || apiKey !== SERVICE_ROLE) {
+      return json({ error: "Unauthorized" }, 401);
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -102,8 +110,6 @@ Deno.serve(async (req: Request) => {
       const jobInsp = job.inspection_id != null
         ? String(job.inspection_id)
         : null;
-      const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
-
       if (inspectionId && jobInsp && jobInsp !== inspectionId) {
         return json(
           {
@@ -116,9 +122,6 @@ Deno.serve(async (req: Request) => {
       }
       if (!inspectionId && jobInsp && isUuid(jobInsp)) {
         inspectionId = jobInsp;
-      }
-      if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -154,15 +157,6 @@ Deno.serve(async (req: Request) => {
       }
       jobId = jid;
       jobResolvedVia = "inspection";
-      const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
-      if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
-      }
-    }
-
-    if (body.photo_id !== undefined && body.photo_id !== null) {
-      const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
     }
 
     if (!inspectionId) {
@@ -184,6 +178,45 @@ Deno.serve(async (req: Request) => {
         },
         400,
       );
+    }
+
+    if (!photoId && jobId) {
+      const { data: jobPhotoRow, error: jobPhotoErr } = await supabase
+        .from("jobs")
+        .select("photo_id")
+        .eq("id", jobId)
+        .maybeSingle();
+      if (jobPhotoErr) {
+        return json(
+          { error: "job photo lookup failed", details: jobPhotoErr.message },
+          502,
+        );
+      }
+      const jobPhoto = jobPhotoRow?.photo_id != null ? String(jobPhotoRow.photo_id) : null;
+      if (jobPhoto && isUuid(jobPhoto)) {
+        photoId = await resolvePhotoId(supabase, jobPhoto, inspectionId);
+        if (!photoId) {
+          return json(
+            { error: "job.photo_id does not belong to inspection_id", photo_id: jobPhoto },
+            400,
+          );
+        }
+      }
+    }
+
+    if (body.photo_id !== undefined && body.photo_id !== null) {
+      const explicit = optUuid(body.photo_id);
+      if (!explicit) {
+        return json({ error: "invalid photo_id" }, 400);
+      }
+      const resolved = await resolvePhotoId(supabase, explicit, inspectionId);
+      if (!resolved) {
+        return json(
+          { error: "photo_id does not belong to inspection_id", photo_id: explicit },
+          400,
+        );
+      }
+      photoId = resolved;
     }
 
     const client = String(body.client ?? "À compléter");

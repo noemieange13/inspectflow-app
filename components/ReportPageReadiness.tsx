@@ -18,6 +18,7 @@ import { parsePayloadEntries } from "@/lib/qcSystemSections";
 import { QC_CERTIFICATION_RULESET_ID } from "@/lib/qcCertificationCheck";
 import { generateQcAiSuggestions } from "@/lib/qcAiSuggestions";
 import { flushQcEventQueue, emitQcTelemetry } from "@/lib/qcTelemetry";
+import { useSupabaseAccessToken } from "@/lib/useSupabaseAccessToken";
 import {
   buildSuggestionQcContext,
   qcStatsLookupKey,
@@ -56,6 +57,7 @@ export default function ReportPageReadiness({
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
+  const supabaseAccessToken = useSupabaseAccessToken();
 
   const initialGuidedStepZero = useMemo(() => {
     const raw = searchParams.get("fixStep");
@@ -358,7 +360,13 @@ export default function ReportPageReadiness({
         readinessRingPulse ? "ring-2 ring-emerald-400/70 ring-offset-2 ring-offset-slate-50" : ""
       }`}
     >
-      {!simpleMode ? <InspectionAgentBar reportId={reportId} /> : null}
+      {!simpleMode ? (
+        <InspectionAgentBar
+          reportId={reportId}
+          viewerAccessToken={viewerAccessToken}
+          supabaseAccessToken={supabaseAccessToken}
+        />
+      ) : null}
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
         État avant export PDF
       </p>

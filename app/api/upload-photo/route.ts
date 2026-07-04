@@ -1,4 +1,5 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -13,12 +14,37 @@ async function ensureBucket(supabase: Awaited<ReturnType<typeof createServiceRol
   await supabase.storage.createBucket(BUCKET, { public: true });
 }
 
+async function nextPhotoNumber(
+  supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
+  inspectionId: string,
+): Promise<number> {
+  const { data: rpcNum, error: rpcErr } = await supabase.rpc("next_photo_number", {
+    p_inspection_id: inspectionId,
+  });
+  if (!rpcErr && typeof rpcNum === "number" && Number.isFinite(rpcNum)) {
+    return rpcNum;
+  }
+
+  const { data: maxRow, error: maxErr } = await supabase
+    .from("photos")
+    .select("photo_number")
+    .eq("inspection_id", inspectionId)
+    .order("photo_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (maxErr) {
+    throw new Error(`photo_number resolution failed: ${maxErr.message}`);
+  }
+  return typeof maxRow?.photo_number === "number" ? maxRow.photo_number + 1 : 1;
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
+    const accessTokenRaw = formData.get("access_token") as string | null;
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
       langRaw === "en" || langRaw === "fr" ? langRaw : "fr";
@@ -40,7 +66,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -51,9 +77,36 @@ export async function POST(req: Request) {
       return Response.json({ error: "Report not found" }, { status: 404 });
     }
 
+    const gate = await assertReportAccessWithOptionalSession(
+      req,
+      reportId.trim(),
+      typeof accessTokenRaw === "string" ? accessTokenRaw : "",
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { error: gate.error, code: gate.code },
+        { status: gate.status },
+      );
+    }
+
+    const reportInspectionId =
+      typeof report.inspection_id === "string" && report.inspection_id.trim()
+        ? report.inspection_id.trim()
+        : null;
+    const requestedInspectionId =
+      typeof inspectionId === "string" && inspectionId.trim()
+        ? inspectionId.trim()
+        : null;
+    if (requestedInspectionId && reportInspectionId && requestedInspectionId !== reportInspectionId) {
+      return Response.json(
+        { error: "inspection_id does not match report.inspection_id", code: "inspection_mismatch" },
+        { status: 403 },
+      );
+    }
+
     const effectiveInspectionId =
-      inspectionId?.trim() ||
-      (typeof report.inspection_id === "string" ? report.inspection_id : null);
+      requestedInspectionId || reportInspectionId;
     const ownerId =
       typeof report.user_id === "string" ? report.user_id : "anonymous";
 
@@ -103,15 +156,7 @@ export async function POST(req: Request) {
     let photoId: string | null = null;
 
     if (effectiveInspectionId) {
-      const { data: maxRow } = await supabase
-        .from("photos")
-        .select("photo_number")
-        .eq("inspection_id", effectiveInspectionId)
-        .order("photo_number", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const nextNum =
-        typeof maxRow?.photo_number === "number" ? maxRow.photo_number + 1 : 1;
+      const nextNum = await nextPhotoNumber(supabase, effectiveInspectionId);
 
       const insertPayload = {
         inspection_id: effectiveInspectionId,
@@ -144,6 +189,12 @@ export async function POST(req: Request) {
             .maybeSingle();
           if (existing?.id) photoId = String(existing.id);
         }
+        if (!photoId) {
+          return Response.json(
+            { error: "Photo row insert failed", details: insertRes.error?.message ?? "unknown" },
+            { status: 500 },
+          );
+        }
       }
 
       // Analyse vision hors chemin critique : sinon chaque photo bloque la réponse HTTP
@@ -167,7 +218,11 @@ export async function POST(req: Request) {
               .update({ analysis: merged })
               .eq("id", pid);
             if (!updErr) {
-              await supabase.from("reports").update({ photo_id: pid }).eq("id", rid);
+              await supabase
+                .from("reports")
+                .update({ photo_id: pid })
+                .eq("id", rid)
+                .is("photo_id", null);
             }
           } catch {
             /* analyse optionnelle */

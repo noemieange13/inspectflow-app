@@ -1,26 +1,13 @@
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { ensureReportPayloadHtml } from "@/lib/ensureReportPayloadHtml";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { invokeReportsPdf } from "@/lib/triggerInspectionUltimate";
+import { hasExactTriggerSecret } from "@/lib/triggerSecretAuth";
 
 /** Génération PDF + appel Edge : peut dépasser le défaut Vercel (60s). */
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin = (origin && host && new URL(origin).host === host)
-      || (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
-      );
-    }
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -45,6 +32,40 @@ export async function POST(req: Request) {
       { success: false, error: "Missing report_id" },
       { status: 400 },
     );
+  }
+  const accessTokenRaw =
+    typeof body === "object" &&
+    body !== null &&
+    "access_token" in body &&
+    typeof (body as { access_token: unknown }).access_token === "string"
+      ? (body as { access_token: string }).access_token
+      : "";
+
+  if (!hasExactTriggerSecret(req)) {
+    const supabase = await createServiceRoleClient();
+    const { data: report, error: readError } = await supabase
+      .from("reports")
+      .select("id, access_token, token_expires_at, user_id")
+      .eq("id", report_id)
+      .maybeSingle();
+    if (readError) {
+      return Response.json(
+        { success: false, error: readError.message },
+        { status: 500 },
+      );
+    }
+    const gate = await assertReportAccessWithOptionalSession(
+      req,
+      report_id,
+      accessTokenRaw,
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { success: false, error: gate.error, code: gate.code },
+        { status: gate.status },
+      );
+    }
   }
 
   const t0 = Date.now();
