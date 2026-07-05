@@ -29,28 +29,32 @@ function optUuid(v: unknown): string | null {
   return isUuid(t) ? t : null;
 }
 
-async function photoExists(
+async function resolvePhotoIdForInspection(
   supabase: ReturnType<typeof createClient>,
   id: string,
-): Promise<boolean> {
+  inspectionId: string,
+): Promise<{ ok: true; id: string } | { ok: false; status: number; error: string }> {
   const { data, error } = await supabase
     .from("photos")
-    .select("id")
+    .select("id, inspection_id")
     .eq("id", id)
     .maybeSingle();
   if (error) {
-    console.warn("create-report photos lookup:", error.message);
-    return false;
+    console.error("create-report photos lookup:", error.message);
+    return { ok: false, status: 502, error: "photo lookup failed" };
   }
-  return !!data?.id;
-}
-
-async function resolvePhotoId(
-  supabase: ReturnType<typeof createClient>,
-  candidate: string | null,
-): Promise<string | null> {
-  if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  if (!data?.id) {
+    return { ok: false, status: 400, error: "photo not found" };
+  }
+  const photoInspectionId = data.inspection_id != null ? String(data.inspection_id) : "";
+  if (!isUuid(photoInspectionId) || photoInspectionId !== inspectionId) {
+    return {
+      ok: false,
+      status: 400,
+      error: "photo_id does not belong to the resolved inspection",
+    };
+  }
+  return { ok: true, id };
 }
 
 Deno.serve(async (req: Request) => {
@@ -78,7 +82,13 @@ Deno.serve(async (req: Request) => {
 
     let inspectionId = optUuid(body.inspection_id);
     let jobId = optUuid(body.job_id);
-    let photoId = optUuid(body.photo_id);
+    let photoId: string | null = null;
+    const explicitPhotoProvided = body.photo_id !== undefined && body.photo_id !== null;
+    const explicitPhotoId = explicitPhotoProvided ? optUuid(body.photo_id) : null;
+    if (explicitPhotoProvided && !explicitPhotoId) {
+      return json({ error: "Missing or invalid photo_id (uuid)" }, 400);
+    }
+    let candidatePhotoId: string | null = explicitPhotoId;
     let jobResolvedVia: "body" | "inspection" | null = jobId ? "body" : null;
 
     if (jobId) {
@@ -117,8 +127,8 @@ Deno.serve(async (req: Request) => {
       if (!inspectionId && jobInsp && isUuid(jobInsp)) {
         inspectionId = jobInsp;
       }
-      if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+      if (!candidatePhotoId && jobPhoto && isUuid(jobPhoto)) {
+        candidatePhotoId = jobPhoto;
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -155,14 +165,9 @@ Deno.serve(async (req: Request) => {
       jobId = jid;
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
-      if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+      if (!candidatePhotoId && jobPhoto && isUuid(jobPhoto)) {
+        candidatePhotoId = jobPhoto;
       }
-    }
-
-    if (body.photo_id !== undefined && body.photo_id !== null) {
-      const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
     }
 
     if (!inspectionId) {
@@ -184,6 +189,25 @@ Deno.serve(async (req: Request) => {
         },
         400,
       );
+    }
+
+    if (candidatePhotoId) {
+      const resolved = await resolvePhotoIdForInspection(
+        supabase,
+        candidatePhotoId,
+        inspectionId,
+      );
+      if (!resolved.ok) {
+        return json(
+          {
+            error: resolved.error,
+            photo_id: candidatePhotoId,
+            inspection_id: inspectionId,
+          },
+          resolved.status,
+        );
+      }
+      photoId = resolved.id;
     }
 
     const client = String(body.client ?? "À compléter");

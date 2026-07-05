@@ -129,6 +129,7 @@ type ReportPhotoSelectionDbInput = {
 async function persistReportPhotoSelectionDb(
   supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
   reportId: string,
+  inspectionId: string | null,
   sel: ReportPhotoSelectionDbInput,
 ): Promise<void> {
   const ids = [...new Set(sel.selectedPhotoIds.map((x) => x.trim()).filter((x) => x.length > 0))];
@@ -139,6 +140,24 @@ async function persistReportPhotoSelectionDb(
       .eq("report_id", reportId);
     if (error && error.code !== "42P01") throw error;
     return;
+  }
+
+  if (inspectionId) {
+    const { data: validRows, error: photoErr } = await supabase
+      .from("photos")
+      .select("id")
+      .eq("inspection_id", inspectionId)
+      .in("id", ids);
+    if (photoErr) throw photoErr;
+    const valid = new Set(
+      (validRows ?? [])
+        .map((r) => (r as { id?: unknown }).id)
+        .filter((x): x is string => typeof x === "string"),
+    );
+    const invalid = ids.filter((id) => !valid.has(id));
+    if (invalid.length > 0) {
+      throw new Error("Selected photos must belong to the report inspection");
+    }
   }
 
   const rows = ids.map((photoId) => ({
@@ -289,7 +308,7 @@ export async function POST(req: Request) {
         const supabase = await createServiceRoleClient();
         const { data: report, error: readError } = await supabase
           .from("reports")
-          .select("id, payload, is_locked, access_token, token_expires_at")
+          .select("id, payload, is_locked, access_token, token_expires_at, inspection_id")
           .eq("id", reportId)
           .maybeSingle();
 
@@ -302,6 +321,10 @@ export async function POST(req: Request) {
 
         const rec = report as Record<string, unknown>;
         const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
+        const reportInspectionId =
+          typeof rec.inspection_id === "string" && rec.inspection_id.trim()
+            ? rec.inspection_id.trim()
+            : null;
 
         if (dbToken) {
           if (!reportAccessTokensMatch(accessTokenRaw, dbToken)) {
@@ -479,8 +502,7 @@ export async function POST(req: Request) {
           undoVersionId = snap.versionId;
         }
 
-        const allowUnlock =
-          allowReportPayloadUnlock(req) || Boolean(dbToken);
+        const allowUnlock = allowReportPayloadUnlock(req);
 
         const lockErr = (m: string) =>
           /P0001|Finalized|locked|prevent_report/i.test(m);
@@ -513,7 +535,12 @@ export async function POST(req: Request) {
 
         if (dbSelectionInput) {
           try {
-            await persistReportPhotoSelectionDb(supabase, reportId, dbSelectionInput);
+            await persistReportPhotoSelectionDb(
+              supabase,
+              reportId,
+              reportInspectionId,
+              dbSelectionInput,
+            );
           } catch (selErr) {
             const msg = selErr instanceof Error ? selErr.message : String(selErr);
             return Response.json(

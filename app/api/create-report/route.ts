@@ -1,24 +1,14 @@
 import { invokeCreateReport } from "@/lib/invokeCreateReport";
+import { assertExactTriggerSecret } from "@/lib/triggerSecretAuth";
 
 /**
  * Crée une ligne `reports` via l’Edge `create-report` (job_id résolu depuis l’inspection si omis).
- * Même garde d’auth optionnelle que `trigger-inspection` lorsque `TRIGGER_INSPECTION_SECRET` est défini.
+ * Réservé aux appels serveur/scripts : exige `x-trigger-secret`.
  */
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret") ?? "";
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin = (origin && host && new URL(origin).host === host)
-      || (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json(
-        { success: false, error: "Unauthorized" },
-        { status: 401 },
-      );
-    }
+  const secretGate = assertExactTriggerSecret(req);
+  if (!secretGate.ok) {
+    return Response.json(secretGate.body, { status: secretGate.status });
   }
 
   let body: unknown;
