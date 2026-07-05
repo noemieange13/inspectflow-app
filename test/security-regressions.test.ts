@@ -54,7 +54,11 @@ describe("trigger secret auth", () => {
         },
       });
       assert.equal(hasExactTriggerSecret(sameOriginReq), false);
-      assert.equal(assertExactTriggerSecret(sameOriginReq).status, 401);
+      const sameOriginGate = assertExactTriggerSecret(sameOriginReq);
+      assert.equal(sameOriginGate.ok, false);
+      if (!sameOriginGate.ok) {
+        assert.equal(sameOriginGate.status, 401);
+      }
 
       const exactReq = new Request("https://app.example/api/create-report", {
         headers: { "x-trigger-secret": "s3cr3t" },
