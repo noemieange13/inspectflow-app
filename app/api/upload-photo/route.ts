@@ -1,4 +1,5 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportMutationAccess } from "@/lib/reportMutationAccess";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
+    const accessTokenRaw = formData.get("access_token") as string | null;
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
       langRaw === "en" || langRaw === "fr" ? langRaw : "fr";
@@ -40,7 +42,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at, photo_id, is_locked, finalized_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -51,25 +53,60 @@ export async function POST(req: Request) {
       return Response.json({ error: "Report not found" }, { status: 404 });
     }
 
-    const effectiveInspectionId =
-      inspectionId?.trim() ||
-      (typeof report.inspection_id === "string" ? report.inspection_id : null);
-    const ownerId =
-      typeof report.user_id === "string" ? report.user_id : "anonymous";
+    const gate = await assertReportMutationAccess(
+      req,
+      reportId.trim(),
+      typeof accessTokenRaw === "string" ? accessTokenRaw : "",
+      report,
+    );
+    if (!gate.ok) {
+      return Response.json(
+        { error: gate.error, code: gate.code },
+        { status: gate.status },
+      );
+    }
 
-    if (effectiveInspectionId) {
-      const { count, error: cntErr } = await supabase
-        .from("photos")
-        .select("id", { count: "exact", head: true })
-        .eq("inspection_id", effectiveInspectionId);
-      if (!cntErr && typeof count === "number" && count >= MAX_PHOTOS_PER_INSPECTION) {
-        return Response.json(
-          {
-            error: `Nombre maximum de photos atteint pour cette inspection (${MAX_PHOTOS_PER_INSPECTION}).`,
-          },
-          { status: 400 },
-        );
-      }
+    const reportRec = report as Record<string, unknown>;
+    if (reportRec.is_locked === true || reportRec.finalized_at != null) {
+      return Response.json(
+        { error: "Report is locked", code: "report_locked" },
+        { status: 403 },
+      );
+    }
+
+    const effectiveInspectionId =
+      typeof reportRec.inspection_id === "string" && reportRec.inspection_id.trim()
+        ? reportRec.inspection_id.trim()
+        : null;
+    const requestedInspectionId = inspectionId?.trim() || "";
+    if (requestedInspectionId && requestedInspectionId !== effectiveInspectionId) {
+      return Response.json(
+        { error: "inspection_id does not match report", code: "inspection_mismatch" },
+        { status: 403 },
+      );
+    }
+    if (!effectiveInspectionId) {
+      return Response.json(
+        { error: "Report has no inspection link", code: "missing_inspection_id" },
+        { status: 400 },
+      );
+    }
+    const ownerId =
+      typeof reportRec.user_id === "string" && reportRec.user_id.trim()
+        ? reportRec.user_id.trim()
+        : gate.userId ?? "anonymous";
+
+    const { count, error: cntErr } = await supabase
+      .from("photos")
+      .select("id", { count: "exact", head: true })
+      .eq("inspection_id", effectiveInspectionId);
+    if (!cntErr && typeof count === "number" && count >= MAX_PHOTOS_PER_INSPECTION) {
+      return Response.json(
+        {
+          error: `Nombre maximum de photos atteint pour cette inspection (${MAX_PHOTOS_PER_INSPECTION}).`,
+        },
+        { status: 400 },
+      );
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -102,78 +139,87 @@ export async function POST(req: Request) {
 
     let photoId: string | null = null;
 
-    if (effectiveInspectionId) {
-      const { data: maxRow } = await supabase
-        .from("photos")
-        .select("photo_number")
-        .eq("inspection_id", effectiveInspectionId)
-        .order("photo_number", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const nextNum =
-        typeof maxRow?.photo_number === "number" ? maxRow.photo_number + 1 : 1;
+    const { data: maxRow } = await supabase
+      .from("photos")
+      .select("photo_number")
+      .eq("inspection_id", effectiveInspectionId)
+      .order("photo_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const nextNum =
+      typeof maxRow?.photo_number === "number" ? maxRow.photo_number + 1 : 1;
 
-      const insertPayload = {
-        inspection_id: effectiveInspectionId,
-        owner_id: ownerId,
-        storage_path: storagePath,
-        file_hash: fileHash,
-        photo_number: nextNum,
-      };
+    const insertPayload = {
+      inspection_id: effectiveInspectionId,
+      owner_id: ownerId,
+      storage_path: storagePath,
+      file_hash: fileHash,
+      photo_number: nextNum,
+    };
 
-      const insertRes = await supabase
-        .from("photos")
-        .insert(insertPayload)
-        .select("id")
-        .single();
+    const insertRes = await supabase
+      .from("photos")
+      .insert(insertPayload)
+      .select("id")
+      .single();
 
-      if (!insertRes.error && insertRes.data?.id) {
-        photoId = String(insertRes.data.id);
-      } else {
-        const msg = String(insertRes.error?.message ?? "").toLowerCase();
-        const dup =
-          insertRes.error?.code === "23505" ||
-          (msg.includes("unique") && msg.includes("viol"));
-        if (dup) {
-          const { data: existing } = await supabase
+    if (!insertRes.error && insertRes.data?.id) {
+      photoId = String(insertRes.data.id);
+    } else {
+      const msg = String(insertRes.error?.message ?? "").toLowerCase();
+      const dup =
+        insertRes.error?.code === "23505" ||
+        (msg.includes("unique") && msg.includes("viol"));
+      if (dup) {
+        const { data: existing } = await supabase
+          .from("photos")
+          .select("id")
+          .eq("inspection_id", effectiveInspectionId)
+          .eq("owner_id", ownerId)
+          .eq("file_hash", fileHash)
+          .maybeSingle();
+        if (existing?.id) photoId = String(existing.id);
+      }
+      if (!photoId) {
+        return Response.json(
+          { error: insertRes.error?.message ?? "Photo row insert failed" },
+          { status: 500 },
+        );
+      }
+    }
+
+    if (photoId) {
+      await supabase
+        .from("reports")
+        .update({ photo_id: photoId })
+        .eq("id", reportId.trim())
+        .is("photo_id", null);
+    }
+
+    // Analyse vision hors chemin critique : sinon chaque photo bloque la réponse HTTP
+    // (séquence client = 2e/3e aperçu « figé » jusqu'à la fin d'OpenAI sur la 1re).
+    if (photoId && process.env.OPENAI_API_KEY?.trim()) {
+      const mime = file.type?.trim() || "image/jpeg";
+      const b64 = buffer.toString("base64");
+      const pid = photoId;
+      void (async () => {
+        try {
+          const vision = await analyzeInspectionPhotoVision({
+            imageBase64: b64,
+            mimeType: mime,
+            language: reportLanguage,
+          });
+          if (!vision) return;
+          const merged = { ...vision, analyzed_at: new Date().toISOString() };
+          const { error: updErr } = await supabase
             .from("photos")
-            .select("id")
-            .eq("inspection_id", effectiveInspectionId)
-            .eq("owner_id", ownerId)
-            .eq("file_hash", fileHash)
-            .maybeSingle();
-          if (existing?.id) photoId = String(existing.id);
+            .update({ analysis: merged })
+            .eq("id", pid);
+          if (updErr) console.warn("upload-photo analysis update:", updErr.message);
+        } catch {
+          /* analyse optionnelle */
         }
-      }
-
-      // Analyse vision hors chemin critique : sinon chaque photo bloque la réponse HTTP
-      // (séquence client = 2e/3e aperçu « figé » jusqu'à la fin d'OpenAI sur la 1re).
-      if (photoId && process.env.OPENAI_API_KEY?.trim()) {
-        const mime = file.type?.trim() || "image/jpeg";
-        const b64 = buffer.toString("base64");
-        const rid = reportId.trim();
-        const pid = photoId;
-        void (async () => {
-          try {
-            const vision = await analyzeInspectionPhotoVision({
-              imageBase64: b64,
-              mimeType: mime,
-              language: reportLanguage,
-            });
-            if (!vision) return;
-            const merged = { ...vision, analyzed_at: new Date().toISOString() };
-            const { error: updErr } = await supabase
-              .from("photos")
-              .update({ analysis: merged })
-              .eq("id", pid);
-            if (!updErr) {
-              await supabase.from("reports").update({ photo_id: pid }).eq("id", rid);
-            }
-          } catch {
-            /* analyse optionnelle */
-          }
-        })();
-      }
+      })();
     }
 
     return Response.json({

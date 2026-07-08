@@ -371,8 +371,21 @@ async function fetchPhotoAnalysesForReport(
       .select("id, analysis, inspection_id, photo_number, storage_path")
       .eq("id", links.photo_id)
       .maybeSingle();
-    if (!error && row) {
+    if (
+      !error &&
+      row &&
+      inspectionId &&
+      String((row as PhotoAnalysisRow).inspection_id ?? "") === inspectionId
+    ) {
       return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id" };
+    }
+    if (!error && row) {
+      logStructured("warn", "ai_photo_report_photo_id_ignored_scope_mismatch", {
+        report_id: reportId,
+        photo_id: links.photo_id,
+        inspection_id: inspectionId,
+        photo_inspection_id: String((row as PhotoAnalysisRow).inspection_id ?? ""),
+      });
     }
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_report_photo_id_failed", {
@@ -406,8 +419,22 @@ async function fetchPhotoAnalysesForReport(
           .select("id, analysis, inspection_id, photo_number, storage_path")
           .eq("id", job.photo_id)
           .maybeSingle();
-        if (!error && row) {
+        if (
+          !error &&
+          row &&
+          inspectionId &&
+          String((row as PhotoAnalysisRow).inspection_id ?? "") === inspectionId
+        ) {
           return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id" };
+        }
+        if (!error && row) {
+          logStructured("warn", "ai_photo_job_photo_id_ignored_scope_mismatch", {
+            report_id: reportId,
+            job_id: links.job_id,
+            photo_id: String(job.photo_id),
+            inspection_id: inspectionId,
+            photo_inspection_id: String((row as PhotoAnalysisRow).inspection_id ?? ""),
+          });
         }
         if (error) {
           logStructured("warn", "ai_photo_lookup_by_job_photo_id_failed", {
@@ -433,7 +460,7 @@ async function fetchPhotoAnalysesForReport(
       let rows = data as PhotoAnalysisRow[];
       if (wanted && wanted.size > 0) {
         const filtered = rows.filter((r) => wanted.has(String(r.id)));
-        if (filtered.length > 0) rows = filtered;
+        rows = filtered;
       }
       return {
         rows,
@@ -454,11 +481,18 @@ async function fetchPhotoAnalysesForReport(
   }
 
   if (wanted && wanted.size > 0) {
+    if (!inspectionId) {
+      logStructured("warn", "ai_photo_selection_ids_ignored_without_inspection", {
+        report_id: reportId,
+      });
+      return { rows: [], source: "selection_ids_without_inspection" };
+    }
     const ids = [...wanted];
     const { data, error } = await supabase
       .from("photos")
       .select("id, analysis, inspection_id, photo_number, storage_path")
       .in("id", ids)
+      .eq("inspection_id", inspectionId)
       .order("photo_number", { ascending: true })
       .limit(AI_PHOTO_FETCH_CAP);
     if (!error && Array.isArray(data) && data.length > 0) {

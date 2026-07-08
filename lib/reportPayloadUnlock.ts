@@ -52,14 +52,5 @@ export function allowReportPayloadUnlock(req: Request): boolean {
   if (process.env.NODE_ENV === "development") return true;
   if (isLocalRequest(req)) return true;
 
-  /**
-   * Hors Vercel (`VERCEL` absent) : typiquement `npm run dev` / `next start` / Docker local.
-   * Autorise le déverrouillage pour que POST /api/report-content ne renvoie pas 403 à cause d’un trigger.
-   * Sur un serveur de prod non-Vercel, définir `INSPECTFLOW_DEV_UNLOCK_REPORT=0` pour respecter `is_locked`.
-   */
-  if (process.env.VERCEL !== "1") {
-    return true;
-  }
-
   return false;
 }
