@@ -1,7 +1,7 @@
-import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 import { restoreReportToVersion } from "@/lib/reportVersions";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
+import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 
 /**
  * POST JSON `{ report_id, access_token, version_id }` — restaure le payload depuis une version.
@@ -34,21 +34,7 @@ export async function POST(req: Request) {
       return Response.json(gate.body, { status: gate.status });
     }
 
-    const { data: report, error: readErr } = await supabase
-      .from("reports")
-      .select("access_token")
-      .eq("id", reportId)
-      .maybeSingle();
-
-    if (readErr || !report) {
-      return Response.json({ ok: false, error: "Rapport introuvable." }, { status: 404 });
-    }
-
-    const dbToken =
-      typeof (report as { access_token?: string }).access_token === "string"
-        ? (report as { access_token: string }).access_token.trim()
-        : "";
-    const allowUnlock = allowReportPayloadUnlock(req) || Boolean(dbToken);
+    const allowUnlock = allowReportPayloadUnlock(req);
 
     const result = await restoreReportToVersion(supabase, {
       reportId,

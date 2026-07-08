@@ -26,8 +26,8 @@ export default function QuickInspectionForm() {
       });
       
       if (response.ok) {
-        const { reportId } = await response.json();
-        router.push(`/report/${reportId}`);
+        const { reportId, reportUrl } = await response.json();
+        router.push(typeof reportUrl === "string" ? reportUrl : `/report/${reportId}`);
       }
     } catch (error) {
       console.error("Erreur création inspection:", error);
