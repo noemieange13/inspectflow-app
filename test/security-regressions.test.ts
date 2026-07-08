@@ -17,6 +17,7 @@ import {
 } from "@/lib/triggerSecretAuth";
 
 const ROOT = process.cwd();
+const mutableEnv = process.env as Record<string, string | undefined>;
 
 function readWorkspaceFile(path: string): string {
   return readFileSync(join(ROOT, path), "utf8");
@@ -113,7 +114,7 @@ describe("report payload unlock policy", () => {
     const oldNodeEnv = process.env.NODE_ENV;
     const oldUnlock = process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
     const oldVercel = process.env.VERCEL;
-    process.env.NODE_ENV = "production";
+    mutableEnv.NODE_ENV = "production";
     delete process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
     delete process.env.VERCEL;
     try {
@@ -122,8 +123,8 @@ describe("report payload unlock policy", () => {
         false,
       );
     } finally {
-      if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = oldNodeEnv;
+      if (oldNodeEnv === undefined) delete mutableEnv.NODE_ENV;
+      else mutableEnv.NODE_ENV = oldNodeEnv;
       if (oldUnlock === undefined) delete process.env.INSPECTFLOW_DEV_UNLOCK_REPORT;
       else process.env.INSPECTFLOW_DEV_UNLOCK_REPORT = oldUnlock;
       if (oldVercel === undefined) delete process.env.VERCEL;
