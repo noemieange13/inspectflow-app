@@ -180,6 +180,46 @@ async function persistReportPhotoSelectionDb(
   }
 }
 
+async function validateReportPhotoSelectionIds(
+  supabase: Awaited<ReturnType<typeof createServiceRoleClient>>,
+  inspectionIdRaw: unknown,
+  selectedPhotoIds: string[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ids = [...new Set(selectedPhotoIds.map((x) => x.trim()).filter((x) => x.length > 0))];
+  if (ids.length === 0) return { ok: true };
+
+  const inspectionId =
+    typeof inspectionIdRaw === "string" ? inspectionIdRaw.trim() : "";
+  if (!inspectionId) {
+    return {
+      ok: false,
+      error: "Report is missing inspection_id; refusing photo selection persistence",
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("photos")
+    .select("id")
+    .eq("inspection_id", inspectionId)
+    .in("id", ids);
+
+  if (error) return { ok: false, error: error.message };
+
+  const allowed = new Set(
+    (data ?? [])
+      .map((row) => (row as { id?: unknown }).id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const invalid = ids.filter((id) => !allowed.has(id));
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      error: "Photo selection contains photos outside report inspection",
+    };
+  }
+  return { ok: true };
+}
+
 export async function POST(req: Request) {
   let body: unknown;
   try {
@@ -289,7 +329,7 @@ export async function POST(req: Request) {
         const supabase = await createServiceRoleClient();
         const { data: report, error: readError } = await supabase
           .from("reports")
-          .select("id, payload, is_locked, access_token, token_expires_at")
+          .select("id, payload, is_locked, inspection_id, access_token, token_expires_at")
           .eq("id", reportId)
           .maybeSingle();
 
@@ -436,6 +476,20 @@ export async function POST(req: Request) {
           } else {
             dbSelectionInput = { selectedPhotoIds: [], tiersByPhotoId: {} };
             delete nextPayloadRaw.report_photo_selection_v1;
+          }
+        }
+
+        if (dbSelectionInput) {
+          const selectionGate = await validateReportPhotoSelectionIds(
+            supabase,
+            (report as { inspection_id?: unknown }).inspection_id,
+            dbSelectionInput.selectedPhotoIds,
+          );
+          if (!selectionGate.ok) {
+            return Response.json(
+              { success: false, error: selectionGate.error },
+              { status: 400 },
+            );
           }
         }
 

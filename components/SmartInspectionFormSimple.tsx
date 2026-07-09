@@ -889,31 +889,6 @@ export default function SmartInspectionFormSimple() {
       
       // Stocker TOUTES les sections pour rapport complet (déjà fait ci-dessus)
       // (window as any).inspectionSections = sections; // dédoublonné
-      // #region agent log
-      fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "9bbe88" },
-        body: JSON.stringify({
-          sessionId: "9bbe88",
-          runId: "post-section-pools",
-          hypothesisId: "H-section-pools",
-          location: "SmartInspectionFormSimple.tsx:after-sections",
-          message: "photos per section constat (File.name only)",
-          data: {
-            poolSizes: { allPhotos: buildingPhotos.length },
-            fondationFirstConstatFiles:
-              sections.find((s) => s.name === "Fondation")?.constats?.[0]?.photos
-                ?.filter((p: unknown): p is File => p instanceof File)
-                .map((p: File) => p.name) ?? [],
-            toitureFirstConstatFiles:
-              sections.find((s) => s.name === "Toiture")?.constats?.[0]?.photos
-                ?.filter((p: unknown): p is File => p instanceof File)
-                .map((p: File) => p.name) ?? [],
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
     } catch (error) {
       console.error("Erreur description IA:", error);
     } finally {
@@ -1066,9 +1041,6 @@ export default function SmartInspectionFormSimple() {
       router.push(`/rapport/preview/${inspectionData.id}`);
     } catch (error) {
       console.error("Erreur création inspection:", error);
-      // #region agent log
-      fetch('http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9bbe88'},body:JSON.stringify({sessionId:'9bbe88',runId:'pre-fix',hypothesisId:'H5',location:'components/SmartInspectionFormSimple.tsx:672',message:'handleSubmit catch reached',data:{errorName:error instanceof Error?error.name:'unknown',errorMessage:error instanceof Error?error.message:String(error)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
     } finally {
       setIsProcessing(false);
     }
