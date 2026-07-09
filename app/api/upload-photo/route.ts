@@ -1,5 +1,6 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
 import { assertReportMutationAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
+import { resolveEffectiveInspectionId } from "@/lib/photoUploadInspection";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { createHash } from "crypto";
 
@@ -12,32 +13,6 @@ async function ensureBucket(supabase: Awaited<ReturnType<typeof createServiceRol
   const { data: buckets } = await supabase.storage.listBuckets();
   if (buckets?.some((b) => b.name === BUCKET)) return;
   await supabase.storage.createBucket(BUCKET, { public: true });
-}
-
-export function resolveEffectiveInspectionId(
-  reportInspectionIdRaw: unknown,
-  requestedInspectionIdRaw: unknown,
-): { ok: true; inspectionId: string } | { ok: false; status: number; error: string } {
-  const reportInspectionId =
-    typeof reportInspectionIdRaw === "string" ? reportInspectionIdRaw.trim() : "";
-  const requestedInspectionId =
-    typeof requestedInspectionIdRaw === "string" ? requestedInspectionIdRaw.trim() : "";
-
-  if (!reportInspectionId) {
-    return {
-      ok: false,
-      status: 400,
-      error: "Report is missing inspection_id; refusing orphan photo upload",
-    };
-  }
-  if (requestedInspectionId && requestedInspectionId !== reportInspectionId) {
-    return {
-      ok: false,
-      status: 403,
-      error: "inspection_id does not match report.inspection_id",
-    };
-  }
-  return { ok: true, inspectionId: reportInspectionId };
 }
 
 export async function POST(req: Request) {

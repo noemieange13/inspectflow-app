@@ -10,8 +10,8 @@ import {
   assertReportMutationAccessWithOptionalSession,
   validateReportAccessRow,
 } from "@/lib/assertReportAccessForApi";
+import { resolveEffectiveInspectionId } from "@/lib/photoUploadInspection";
 import { requireExactTriggerSecret } from "@/lib/triggerSecretAuth";
-import { resolveEffectiveInspectionId } from "@/app/api/upload-photo/route";
 
 const ROOT = process.cwd();
 
