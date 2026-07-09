@@ -86,3 +86,40 @@ export async function assertReportAccessWithOptionalSession(
   }
   return validateReportAccessRow(reportId, accessTokenRaw, row);
 }
+
+/**
+ * Mutation paths use service-role writes, so tokenless legacy reports must not
+ * become anonymously writable. They require owner JWT unless a stored report
+ * token exists and matches.
+ */
+export async function assertReportMutationAccessWithOptionalSession(
+  req: Request,
+  reportId: string,
+  accessTokenRaw: string,
+  row: ReportGateRow | null,
+): Promise<AssertReportAccessResult> {
+  if (!row) {
+    return { ok: false, status: 404, error: "Report not found" };
+  }
+  if (await verifyBearerMatchesReportOwner(req, row.user_id)) {
+    const uid = row.user_id;
+    const userId =
+      typeof uid === "string" && uid.length > 0 ? uid : null;
+    if (userId) {
+      return { ok: true, userId };
+    }
+  }
+
+  const dbToken =
+    typeof row.access_token === "string" ? row.access_token.trim() : "";
+  if (!dbToken) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Report mutation requires owner session",
+      code: "owner_session_required",
+    };
+  }
+
+  return validateReportAccessRow(reportId, accessTokenRaw, row);
+}

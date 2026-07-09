@@ -27,6 +27,7 @@ export async function persistBuildingSummaryV1(
   supabase: SupabaseClient,
   reportId: string,
   summary: BuildingSummaryV1Payload,
+  opts?: { allowUnlock?: boolean },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const { data: row, error: readErr } = await supabase
     .from("reports")
@@ -53,7 +54,7 @@ export async function persistBuildingSummaryV1(
     payload,
     source: "inspection-agent-building-summary",
     clearPdfPath: false,
-    allowUnlock: true,
+    allowUnlock: opts?.allowUnlock === true,
   });
 
   if (rpcErr) {

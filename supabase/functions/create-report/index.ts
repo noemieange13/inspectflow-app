@@ -45,12 +45,27 @@ async function photoExists(
   return !!data?.id;
 }
 
-async function resolvePhotoId(
+async function photoBelongsToInspection(
   supabase: ReturnType<typeof createClient>,
-  candidate: string | null,
-): Promise<string | null> {
-  if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  id: string,
+  inspectionId: string,
+): Promise<
+  | { ok: true; belongs: boolean }
+  | { ok: false; error: string }
+> {
+  const { data, error } = await supabase
+    .from("photos")
+    .select("id, inspection_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    console.warn("create-report photos ownership lookup:", error.message);
+    return { ok: false, error: error.message };
+  }
+  return {
+    ok: true,
+    belongs: !!data?.id && String(data.inspection_id ?? "") === inspectionId,
+  };
 }
 
 Deno.serve(async (req: Request) => {
@@ -63,6 +78,11 @@ Deno.serve(async (req: Request) => {
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SERVICE_ROLE) {
       throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    }
+    const auth = req.headers.get("authorization")?.trim() ?? "";
+    const apikey = req.headers.get("apikey")?.trim() ?? "";
+    if (auth !== `Bearer ${SERVICE_ROLE}` || apikey !== SERVICE_ROLE) {
+      return json({ error: "Unauthorized" }, 401);
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -118,7 +138,7 @@ Deno.serve(async (req: Request) => {
         inspectionId = jobInsp;
       }
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = (await photoExists(supabase, jobPhoto)) ? jobPhoto : null;
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -156,13 +176,13 @@ Deno.serve(async (req: Request) => {
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = (await photoExists(supabase, jobPhoto)) ? jobPhoto : null;
       }
     }
 
     if (body.photo_id !== undefined && body.photo_id !== null) {
       const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
+      photoId = explicit ? ((await photoExists(supabase, explicit)) ? explicit : null) : null;
     }
 
     if (!inspectionId) {
@@ -184,6 +204,26 @@ Deno.serve(async (req: Request) => {
         },
         400,
       );
+    }
+
+    if (photoId) {
+      const photoGate = await photoBelongsToInspection(supabase, photoId, inspectionId);
+      if (!photoGate.ok) {
+        return json(
+          { error: "photo lookup failed", details: photoGate.error },
+          502,
+        );
+      }
+      if (!photoGate.belongs) {
+        return json(
+          {
+            error: "photo_id does not belong to inspection_id",
+            photo_id: photoId,
+            inspection_id: inspectionId,
+          },
+          400,
+        );
+      }
     }
 
     const client = String(body.client ?? "À compléter");

@@ -371,7 +371,12 @@ async function fetchPhotoAnalysesForReport(
       .select("id, analysis, inspection_id, photo_number, storage_path")
       .eq("id", links.photo_id)
       .maybeSingle();
-    if (!error && row) {
+    if (
+      !error &&
+      row &&
+      inspectionId &&
+      String((row as PhotoAnalysisRow).inspection_id ?? "") === inspectionId
+    ) {
       return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id" };
     }
     if (error) {
@@ -406,7 +411,12 @@ async function fetchPhotoAnalysesForReport(
           .select("id, analysis, inspection_id, photo_number, storage_path")
           .eq("id", job.photo_id)
           .maybeSingle();
-        if (!error && row) {
+        if (
+          !error &&
+          row &&
+          inspectionId &&
+          String((row as PhotoAnalysisRow).inspection_id ?? "") === inspectionId
+        ) {
           return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id" };
         }
         if (error) {
@@ -455,10 +465,14 @@ async function fetchPhotoAnalysesForReport(
 
   if (wanted && wanted.size > 0) {
     const ids = [...wanted];
+    if (!inspectionId) {
+      return { rows: [], source: "selection_ids_without_inspection_ignored" };
+    }
     const { data, error } = await supabase
       .from("photos")
       .select("id, analysis, inspection_id, photo_number, storage_path")
       .in("id", ids)
+      .eq("inspection_id", inspectionId)
       .order("photo_number", { ascending: true })
       .limit(AI_PHOTO_FETCH_CAP);
     if (!error && Array.isArray(data) && data.length > 0) {
