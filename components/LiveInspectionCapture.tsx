@@ -6,6 +6,8 @@ import { emitProductEvent } from "@/lib/productTelemetry";
 
 type Props = {
   reportId: string;
+  viewerToken?: string;
+  supabaseAccessToken?: string | null;
   language: "fr" | "en";
   disabled?: boolean;
   /** Indication du guide terrain (ex. panneau électrique). */
@@ -18,6 +20,8 @@ type Props = {
  */
 export default function LiveInspectionCapture({
   reportId,
+  viewerToken,
+  supabaseAccessToken,
   language,
   disabled,
   guideHint,
@@ -91,9 +95,14 @@ export default function LiveInspectionCapture({
       const form = new FormData();
       form.append("file", file);
       form.append("report_id", reportId);
+      if (viewerToken?.trim()) form.append("access_token", viewerToken.trim());
       form.append("language", language);
       emitProductEvent("live_inspection_capture_upload", { report_id: reportId });
-      const res = await fetch("/api/upload-photo", { method: "POST", body: form });
+      const headers: Record<string, string> = {};
+      if (supabaseAccessToken?.trim()) {
+        headers.Authorization = `Bearer ${supabaseAccessToken.trim()}`;
+      }
+      const res = await fetch("/api/upload-photo", { method: "POST", headers, body: form });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -104,7 +113,7 @@ export default function LiveInspectionCapture({
     } finally {
       setBusy(false);
     }
-  }, [reportId, language, onPhotoUploaded]);
+  }, [reportId, viewerToken, supabaseAccessToken, language, onPhotoUploaded]);
 
   const labels =
     language === "en"

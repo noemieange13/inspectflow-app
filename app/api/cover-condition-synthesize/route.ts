@@ -87,8 +87,7 @@ export async function POST(req: Request) {
     }
 
     const rec = reportRow as Record<string, unknown>;
-    const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-    const allowUnlock = allowReportPayloadUnlock(req) || Boolean(dbToken);
+    const allowUnlock = allowReportPayloadUnlock(req);
 
     const currentPayload =
       rec.payload && typeof rec.payload === "object"
