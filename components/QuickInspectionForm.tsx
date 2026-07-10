@@ -26,8 +26,12 @@ export default function QuickInspectionForm() {
       });
       
       if (response.ok) {
-        const { reportId } = await response.json();
-        router.push(`/report/${reportId}`);
+        const { reportId, accessToken } = await response.json();
+        const tokenQ =
+          typeof accessToken === "string" && accessToken.trim()
+            ? `?token=${encodeURIComponent(accessToken.trim())}`
+            : "";
+        router.push(`/report/${reportId}${tokenQ}`);
       }
     } catch (error) {
       console.error("Erreur création inspection:", error);
