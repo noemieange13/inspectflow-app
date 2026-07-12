@@ -1,5 +1,5 @@
 import { appendAuditTrail } from "@/lib/auditTrailPayload";
-import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 import { updateReportPayloadWithUnlock } from "@/lib/updateReportPayloadWithUnlock";
@@ -289,7 +289,7 @@ export async function POST(req: Request) {
         const supabase = await createServiceRoleClient();
         const { data: report, error: readError } = await supabase
           .from("reports")
-          .select("id, payload, is_locked, access_token, token_expires_at")
+          .select("id, payload, is_locked, access_token, token_expires_at, user_id")
           .eq("id", reportId)
           .maybeSingle();
 
@@ -301,25 +301,12 @@ export async function POST(req: Request) {
         }
 
         const rec = report as Record<string, unknown>;
-        const dbToken = typeof rec.access_token === "string" ? rec.access_token.trim() : "";
-
-        if (dbToken) {
-          if (!reportAccessTokensMatch(accessTokenRaw, dbToken)) {
-            return Response.json(
-              { success: false, error: "Invalid access token", code: "access_denied" },
-              { status: 403 },
-            );
-          }
-          if (
-            rec.token_expires_at != null &&
-            String(rec.token_expires_at) !== "" &&
-            new Date(String(rec.token_expires_at)) < new Date()
-          ) {
-            return Response.json(
-              { success: false, error: "Access token expired", code: "access_denied" },
-              { status: 403 },
-            );
-          }
+        const gate = await assertReportAccessWithOptionalSession(req, reportId, accessTokenRaw, rec);
+        if (!gate.ok) {
+          return Response.json(
+            { success: false, error: gate.error, code: gate.code },
+            { status: gate.status },
+          );
         }
 
         const generated = buildStructuredReport(entries, language, jurisdiction);
@@ -479,8 +466,7 @@ export async function POST(req: Request) {
           undoVersionId = snap.versionId;
         }
 
-        const allowUnlock =
-          allowReportPayloadUnlock(req) || Boolean(dbToken);
+        const allowUnlock = allowReportPayloadUnlock(req);
 
         const lockErr = (m: string) =>
           /P0001|Finalized|locked|prevent_report/i.test(m);
