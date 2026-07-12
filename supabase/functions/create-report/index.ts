@@ -29,28 +29,45 @@ function optUuid(v: unknown): string | null {
   return isUuid(t) ? t : null;
 }
 
-async function photoExists(
+async function validatePhotoForInspection(
   supabase: ReturnType<typeof createClient>,
-  id: string,
-): Promise<boolean> {
+  photoId: string,
+  inspectionId: string,
+): Promise<
+  | { ok: true; photoId: string }
+  | { ok: false; status: number; body: Record<string, unknown> }
+> {
   const { data, error } = await supabase
     .from("photos")
-    .select("id")
-    .eq("id", id)
+    .select("id, inspection_id")
+    .eq("id", photoId)
     .maybeSingle();
   if (error) {
     console.warn("create-report photos lookup:", error.message);
-    return false;
+    return {
+      ok: false,
+      status: 502,
+      body: { error: "photo lookup failed", details: error.message },
+    };
   }
-  return !!data?.id;
-}
-
-async function resolvePhotoId(
-  supabase: ReturnType<typeof createClient>,
-  candidate: string | null,
-): Promise<string | null> {
-  if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  if (!data?.id) {
+    return { ok: false, status: 400, body: { error: "photo not found", photo_id: photoId } };
+  }
+  const photoInspectionId =
+    data.inspection_id != null ? String(data.inspection_id) : "";
+  if (photoInspectionId !== inspectionId) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "photo_id does not belong to resolved inspection_id",
+        photo_id: photoId,
+        photo_inspection_id: photoInspectionId || null,
+        inspection_id: inspectionId,
+      },
+    };
+  }
+  return { ok: true, photoId };
 }
 
 Deno.serve(async (req: Request) => {
@@ -69,6 +86,12 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
+    const authorization = req.headers.get("authorization") ?? "";
+    const apikey = req.headers.get("apikey") ?? "";
+    if (authorization !== `Bearer ${SERVICE_ROLE}` || apikey !== SERVICE_ROLE) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
     const userId = body.user_id;
@@ -79,6 +102,7 @@ Deno.serve(async (req: Request) => {
     let inspectionId = optUuid(body.inspection_id);
     let jobId = optUuid(body.job_id);
     let photoId = optUuid(body.photo_id);
+    const explicitPhotoProvided = body.photo_id !== undefined && body.photo_id !== null;
     let jobResolvedVia: "body" | "inspection" | null = jobId ? "body" : null;
 
     if (jobId) {
@@ -118,7 +142,7 @@ Deno.serve(async (req: Request) => {
         inspectionId = jobInsp;
       }
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = jobPhoto;
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -156,13 +180,16 @@ Deno.serve(async (req: Request) => {
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = jobPhoto;
       }
     }
 
-    if (body.photo_id !== undefined && body.photo_id !== null) {
+    if (explicitPhotoProvided) {
       const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
+      if (!explicit) {
+        return json({ error: "invalid photo_id" }, 400);
+      }
+      photoId = explicit;
     }
 
     if (!inspectionId) {
@@ -184,6 +211,18 @@ Deno.serve(async (req: Request) => {
         },
         400,
       );
+    }
+
+    if (photoId) {
+      const photoGate = await validatePhotoForInspection(supabase, photoId, inspectionId);
+      if (!photoGate.ok) {
+        if (explicitPhotoProvided) {
+          return json(photoGate.body, photoGate.status);
+        }
+        photoId = null;
+      } else {
+        photoId = photoGate.photoId;
+      }
     }
 
     const client = String(body.client ?? "À compléter");

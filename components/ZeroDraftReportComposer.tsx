@@ -1475,9 +1475,14 @@ export default function ZeroDraftReportComposer({
       const form = new FormData();
       form.append("file", file);
       form.append("report_id", reportId);
+      form.append("access_token", viewerToken ?? "");
       form.append("language", language);
       try {
-        const res = await fetch("/api/upload-photo", { method: "POST", body: form });
+        const headers: Record<string, string> = {};
+        if (supabaseAccessToken?.trim()) {
+          headers.Authorization = `Bearer ${supabaseAccessToken.trim()}`;
+        }
+        const res = await fetch("/api/upload-photo", { method: "POST", headers, body: form });
         const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         const suggested =
           typeof body.suggested_inspector_note === "string" && body.suggested_inspector_note.trim()
@@ -1541,7 +1546,7 @@ export default function ZeroDraftReportComposer({
         return false;
       }
     },
-    [reportId, language],
+    [reportId, viewerToken, language, supabaseAccessToken],
   );
 
   const schedulePhotoAnalysisRefresh = useCallback(() => {
@@ -2257,11 +2262,20 @@ export default function ZeroDraftReportComposer({
     let pdfRes: Response;
     try {
       pdfRes = await withTimeout(
-        fetch("/api/trigger-inspection", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ report_id: reportId }),
-        }),
+        (() => {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (supabaseAccessToken?.trim()) {
+            headers.Authorization = `Bearer ${supabaseAccessToken.trim()}`;
+          }
+          return fetch("/api/trigger-inspection", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              report_id: reportId,
+              access_token: viewerToken ?? "",
+            }),
+          });
+        })(),
         180_000,
         "trigger-inspection",
       );
@@ -2298,7 +2312,7 @@ export default function ZeroDraftReportComposer({
       );
     }
     return pdfBody.signed_url ?? pdfBody.pdf_url ?? null;
-  }, [reportId]);
+  }, [reportId, viewerToken, supabaseAccessToken]);
 
   const refreshPdfUrl = useCallback(async () => {
     if (!viewerToken) return;
@@ -3202,6 +3216,8 @@ export default function ZeroDraftReportComposer({
             </p>
             <LiveInspectionCapture
               reportId={reportId}
+              viewerToken={viewerToken}
+              supabaseAccessToken={supabaseAccessToken}
               language={language}
               disabled={loading || uploadingPhoto}
               guideHint={
