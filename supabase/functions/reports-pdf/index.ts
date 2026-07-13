@@ -372,7 +372,16 @@ async function fetchPhotoAnalysesForReport(
       .eq("id", links.photo_id)
       .maybeSingle();
     if (!error && row) {
-      return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id" };
+      const photoRow = row as PhotoAnalysisRow;
+      if (!inspectionId || photoRow.inspection_id === inspectionId) {
+        return { rows: [photoRow], source: "reports.photo_id" };
+      }
+      logStructured("warn", "ai_report_photo_id_inspection_mismatch", {
+        report_id: reportId,
+        photo_id: links.photo_id,
+        report_inspection_id: inspectionId,
+        photo_inspection_id: photoRow.inspection_id ?? null,
+      });
     }
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_report_photo_id_failed", {
@@ -407,7 +416,17 @@ async function fetchPhotoAnalysesForReport(
           .eq("id", job.photo_id)
           .maybeSingle();
         if (!error && row) {
-          return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id" };
+          const photoRow = row as PhotoAnalysisRow;
+          if (!inspectionId || photoRow.inspection_id === inspectionId) {
+            return { rows: [photoRow], source: "jobs.photo_id" };
+          }
+          logStructured("warn", "ai_job_photo_id_inspection_mismatch", {
+            report_id: reportId,
+            job_id: links.job_id,
+            photo_id: String(job.photo_id),
+            report_inspection_id: inspectionId,
+            photo_inspection_id: photoRow.inspection_id ?? null,
+          });
         }
         if (error) {
           logStructured("warn", "ai_photo_lookup_by_job_photo_id_failed", {
@@ -455,12 +474,16 @@ async function fetchPhotoAnalysesForReport(
 
   if (wanted && wanted.size > 0) {
     const ids = [...wanted];
-    const { data, error } = await supabase
+    let query = supabase
       .from("photos")
       .select("id, analysis, inspection_id, photo_number, storage_path")
       .in("id", ids)
       .order("photo_number", { ascending: true })
       .limit(AI_PHOTO_FETCH_CAP);
+    if (inspectionId) {
+      query = query.eq("inspection_id", inspectionId);
+    }
+    const { data, error } = await query;
     if (!error && Array.isArray(data) && data.length > 0) {
       return {
         rows: data as PhotoAnalysisRow[],

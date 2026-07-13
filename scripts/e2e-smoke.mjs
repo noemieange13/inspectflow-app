@@ -403,7 +403,7 @@ try {
   r2 = await fetchApi("/api/trigger-inspection", {
     method: "POST",
     headers,
-    body: JSON.stringify({ report_id: reportId }),
+    body: JSON.stringify({ report_id: reportId, access_token: accessToken }),
   });
   t2 = await r2.text();
 } catch (err) {

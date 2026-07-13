@@ -29,28 +29,68 @@ function optUuid(v: unknown): string | null {
   return isUuid(t) ? t : null;
 }
 
-async function photoExists(
+function hasServiceRoleCredentials(req: Request, serviceRoleKey: string): boolean {
+  const auth = (req.headers.get("authorization") ?? "").trim();
+  const match = /^Bearer\s+(.+)$/i.exec(auth);
+  const bearer = match?.[1]?.trim() ?? "";
+  const apikey = req.headers.get("apikey")?.trim() ?? "";
+  return bearer === serviceRoleKey && apikey === serviceRoleKey;
+}
+
+type PhotoResolution =
+  | { ok: true; photoId: string }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+async function resolvePhotoIdForInspection(
   supabase: ReturnType<typeof createClient>,
   id: string,
-): Promise<boolean> {
-  const { data, error } = await supabase
+  inspectionId: string,
+): Promise<PhotoResolution> {
+  if (!isUuid(id)) {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: "invalid photo_id", photo_id: id },
+    };
+  }
+
+  const { data: photo, error } = await supabase
     .from("photos")
-    .select("id")
+    .select("id, inspection_id")
     .eq("id", id)
     .maybeSingle();
   if (error) {
-    console.warn("create-report photos lookup:", error.message);
-    return false;
+    console.error("create-report photos lookup:", error);
+    return {
+      ok: false,
+      status: 502,
+      body: { error: "photo lookup failed", details: error.message },
+    };
   }
-  return !!data?.id;
-}
+  if (!photo?.id) {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: "photo not found", photo_id: id },
+    };
+  }
 
-async function resolvePhotoId(
-  supabase: ReturnType<typeof createClient>,
-  candidate: string | null,
-): Promise<string | null> {
-  if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  const photoInspectionId =
+    photo.inspection_id != null ? String(photo.inspection_id) : null;
+  if (photoInspectionId !== inspectionId) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "photo_id does not belong to inspection_id",
+        photo_id: id,
+        photo_inspection_id: photoInspectionId,
+        inspection_id: inspectionId,
+      },
+    };
+  }
+
+  return { ok: true, photoId: id };
 }
 
 Deno.serve(async (req: Request) => {
@@ -63,6 +103,9 @@ Deno.serve(async (req: Request) => {
     const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SERVICE_ROLE) {
       throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    }
+    if (!hasServiceRoleCredentials(req, SERVICE_ROLE)) {
+      return json({ error: "Unauthorized" }, 401);
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -118,7 +161,19 @@ Deno.serve(async (req: Request) => {
         inspectionId = jobInsp;
       }
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        if (!inspectionId) {
+          return json(
+            { error: "job.photo_id cannot be validated without inspection_id" },
+            400,
+          );
+        }
+        const resolved = await resolvePhotoIdForInspection(
+          supabase,
+          jobPhoto,
+          inspectionId,
+        );
+        if (!resolved.ok) return json(resolved.body, resolved.status);
+        photoId = resolved.photoId;
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -156,13 +211,14 @@ Deno.serve(async (req: Request) => {
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        const resolved = await resolvePhotoIdForInspection(
+          supabase,
+          jobPhoto,
+          inspectionId,
+        );
+        if (!resolved.ok) return json(resolved.body, resolved.status);
+        photoId = resolved.photoId;
       }
-    }
-
-    if (body.photo_id !== undefined && body.photo_id !== null) {
-      const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
     }
 
     if (!inspectionId) {
@@ -173,6 +229,20 @@ Deno.serve(async (req: Request) => {
         },
         400,
       );
+    }
+
+    if (body.photo_id !== undefined && body.photo_id !== null) {
+      const explicit = optUuid(body.photo_id);
+      if (!explicit) {
+        return json({ error: "invalid photo_id", photo_id: body.photo_id }, 400);
+      }
+      const resolved = await resolvePhotoIdForInspection(
+        supabase,
+        explicit,
+        inspectionId,
+      );
+      if (!resolved.ok) return json(resolved.body, resolved.status);
+      photoId = resolved.photoId;
     }
 
     if (!jobId) {

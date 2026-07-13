@@ -18,6 +18,7 @@
     "smoke:e2e": "node scripts/e2e-smoke.mjs",
     "test:inspection-demo": "node scripts/batch-upload-inspection-demo.mjs",
     "test:inspection-demo:all": "node scripts/batch-upload-inspection-demo.mjs --all",
+    "test:security": "tsx --test test/security-regressions.test.ts",
     "test:all": "tsx test-all.ts",
     "test:compliance": "tsx --test test/compliance-integrity.test.ts",
     "ci:compliance": "node scripts/run-compliance-ci.mjs"
