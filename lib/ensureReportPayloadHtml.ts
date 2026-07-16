@@ -9,6 +9,7 @@ import { evaluatePdfExportReadiness } from "@/lib/pdfExportReadiness";
 import { parseCoverV1FromUnknown } from "@/lib/inspectionCoverPayload";
 import {
   buildClauseSnapshots,
+  clauseSnapshotVersionsEqual,
   hashClauseSnapshotSha256,
   mergeClauseSnapshots,
 } from "@/lib/qcLegalClauseSnapshot";
@@ -71,7 +72,7 @@ export async function ensureReportPayloadHtml(
     legalClauseRowsFrForQc = undefined;
   }
 
-  const clauseSnapshot = coverForClauses
+  const candidateClauseSnapshot = coverForClauses
     ? mergeClauseSnapshots(
         legalClauseRows?.length
           ? buildClauseSnapshots(legalClauseRows, takenAt)
@@ -100,22 +101,46 @@ export async function ensureReportPayloadHtml(
   }
 
   const current = typeof payload.html === "string" ? payload.html : "";
+  const existingCompliance =
+    typeof payload.compliance === "object" && payload.compliance !== null
+      ? (payload.compliance as Record<string, unknown>)
+      : null;
+  const existingSnapshotGeneratedAt =
+    typeof existingCompliance?.clause_snapshot_generated_at === "string" &&
+      existingCompliance.clause_snapshot_generated_at.trim()
+      ? existingCompliance.clause_snapshot_generated_at
+      : null;
+  const canReuseExistingSnapshot =
+    !!existingSnapshotGeneratedAt &&
+    clauseSnapshotVersionsEqual(
+      existingCompliance?.clause_snapshot,
+      candidateClauseSnapshot,
+    );
+  const snapshotGeneratedAt = canReuseExistingSnapshot
+    ? existingSnapshotGeneratedAt
+    : takenAt;
+  const clauseSnapshot = canReuseExistingSnapshot
+    ? candidateClauseSnapshot.map((snapshot) => ({
+        ...snapshot,
+        taken_at: snapshotGeneratedAt,
+      }))
+    : candidateClauseSnapshot;
+  const clauseSnapshotPack =
+    coverForClauses?.compliance_profile_v1?.clauses_pack_version ??
+    "QC_2027_v1";
+  const clauseSnapshotSha256 =
+    clauseSnapshot.length > 0
+      ? hashClauseSnapshotSha256(clauseSnapshot)
+      : null;
 
   const complianceMerged =
     coverForClauses
       ? {
-          ...(typeof payload.compliance === "object" && payload.compliance !== null
-            ? (payload.compliance as Record<string, unknown>)
-            : {}),
+          ...(existingCompliance ?? {}),
           clause_snapshot: clauseSnapshot,
-          clause_snapshot_generated_at: takenAt,
-          clause_snapshot_pack:
-            coverForClauses.compliance_profile_v1?.clauses_pack_version ??
-            "QC_2027_v1",
-          clause_snapshot_sha256:
-            clauseSnapshot.length > 0
-              ? hashClauseSnapshotSha256(clauseSnapshot)
-              : null,
+          clause_snapshot_generated_at: snapshotGeneratedAt,
+          clause_snapshot_pack: clauseSnapshotPack,
+          clause_snapshot_sha256: clauseSnapshotSha256,
         }
       : null;
 
@@ -125,7 +150,17 @@ export async function ensureReportPayloadHtml(
     ...(complianceMerged ? { compliance: complianceMerged } : {}),
   };
 
-  if (built === current && !complianceMerged) {
+  const complianceUnchanged =
+    !complianceMerged ||
+    (
+      canReuseExistingSnapshot &&
+      JSON.stringify(existingCompliance?.clause_snapshot) ===
+        JSON.stringify(clauseSnapshot) &&
+      existingCompliance?.clause_snapshot_pack === clauseSnapshotPack &&
+      existingCompliance?.clause_snapshot_sha256 === clauseSnapshotSha256
+    );
+
+  if (built === current && complianceUnchanged) {
     return { ok: true, builtHtml: built };
   }
 
@@ -134,7 +169,7 @@ export async function ensureReportPayloadHtml(
     payload: nextPayload,
     source: "ensure-report-payload-html",
     clearPdfPath: true,
-    allowUnlock: true,
+    allowUnlock: false,
   });
   if (rpcErr) return { ok: false, error: rpcErr.message };
   return { ok: true, builtHtml: built };

@@ -46,6 +46,44 @@ export function hashClauseSnapshotSha256(snap: ClauseSnapshot[]): string {
     .digest("hex");
 }
 
+/**
+ * Compare le contenu juridique d'instantanés sans tenir compte de leur date de
+ * capture. Permet de conserver la date d'un instantané déjà persisté lorsque
+ * les mêmes versions de clauses sont toujours actives.
+ */
+export function clauseSnapshotVersionsEqual(
+  existing: unknown,
+  next: ClauseSnapshot[],
+): boolean {
+  if (!Array.isArray(existing) || existing.length !== next.length) return false;
+
+  const versionKey = (value: unknown): string | null => {
+    if (!value || typeof value !== "object") return null;
+    const row = value as Record<string, unknown>;
+    if (
+      typeof row.clause_code !== "string" ||
+      (row.language !== "fr" && row.language !== "en") ||
+      (row.version !== null && typeof row.version !== "string")
+    ) {
+      return null;
+    }
+    return JSON.stringify([
+      row.clause_code,
+      row.language,
+      row.version,
+    ]);
+  };
+
+  const existingKeys = existing.map(versionKey);
+  if (existingKeys.some((key) => key === null)) return false;
+
+  const sortedExistingKeys = existingKeys.sort();
+  const sortedNextKeys = next.map(versionKey).sort();
+  return sortedExistingKeys.every(
+    (key, index) => key === sortedNextKeys[index],
+  );
+}
+
 export function buildClauseSnapshots(
   rows: QcLegalClauseRow[],
   takenAt: string,
