@@ -3,11 +3,14 @@
  * `npm run test:compliance`
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { defaultCoverPayloadV1 } from "@/lib/inspectionCoverPayload";
 import {
   buildClauseSnapshots,
+  clauseSnapshotVersionsEqual,
   hashClauseSnapshotSha256,
   mergeClauseSnapshots,
   shouldFetchQuebecFrenchParallel,
@@ -75,6 +78,55 @@ describe("clause snapshots", () => {
     assert.equal(h1.length, 64);
   });
 
+  it("reconnaît les mêmes versions malgré un nouvel instant de génération", () => {
+    const row = mockRow({
+      clause: "Clause",
+      code: "STABLE",
+      resolved_language: "fr",
+      version: "2.0",
+    });
+    const persisted = buildClauseSnapshots(
+      [row],
+      "2026-04-29T12:00:00.000Z",
+    );
+    const regenerated = buildClauseSnapshots(
+      [row],
+      "2026-07-16T11:00:00.000Z",
+    );
+
+    assert.equal(
+      clauseSnapshotVersionsEqual(persisted, regenerated),
+      true,
+    );
+  });
+
+  it("détecte un changement de version juridique", () => {
+    const persisted = buildClauseSnapshots(
+      [
+        mockRow({
+          clause: "Clause",
+          code: "VERSIONED",
+          resolved_language: "fr",
+          version: "1.0",
+        }),
+      ],
+      "2026-04-29T12:00:00.000Z",
+    );
+    const changed = buildClauseSnapshots(
+      [
+        mockRow({
+          clause: "Clause",
+          code: "VERSIONED",
+          resolved_language: "fr",
+          version: "2.0",
+        }),
+      ],
+      "2026-07-16T11:00:00.000Z",
+    );
+
+    assert.equal(clauseSnapshotVersionsEqual(persisted, changed), false);
+  });
+
   it("QC + EN : snapshot fusionné contient EN et FR (symétrie audit / Charte)", () => {
     const takenAt = "2026-04-29T12:00:00.000Z";
     const enRows = [
@@ -98,6 +150,22 @@ describe("clause snapshots", () => {
     const hasFr = snapshot.some((c) => c.language === "fr");
     const hasEn = snapshot.some((c) => c.language === "en");
     assert.ok(hasFr && hasEn, "attendu EN+FR dans le même snapshot après merge");
+  });
+});
+
+describe("PDF payload preparation integrity", () => {
+  it("skips unchanged compliance writes and never unlocks finalized reports", () => {
+    const source = readFileSync(
+      join(process.cwd(), "lib/ensureReportPayloadHtml.ts"),
+      "utf8",
+    );
+
+    assert.match(
+      source,
+      /if \(built === current && complianceUnchanged\)/,
+    );
+    assert.match(source, /allowUnlock:\s*false/);
+    assert.doesNotMatch(source, /allowUnlock:\s*true/);
   });
 });
 
