@@ -3,6 +3,8 @@
  * `npm run test:compliance`
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { defaultCoverPayloadV1 } from "@/lib/inspectionCoverPayload";
@@ -98,6 +100,20 @@ describe("clause snapshots", () => {
     const hasFr = snapshot.some((c) => c.language === "fr");
     const hasEn = snapshot.some((c) => c.language === "en");
     assert.ok(hasFr && hasEn, "attendu EN+FR dans le même snapshot après merge");
+  });
+});
+
+describe("smart inspection draft integrity", () => {
+  it("ne supprime pas les autres inspections lors de la sauvegarde", () => {
+    const source = readFileSync(
+      join(process.cwd(), "components/SmartInspectionFormSimple.tsx"),
+      "utf8",
+    );
+
+    assert.doesNotMatch(
+      source,
+      /startsWith\(['"]inspection_['"]\)[\s\S]{0,500}removeItem\(/,
+    );
   });
 });
 
