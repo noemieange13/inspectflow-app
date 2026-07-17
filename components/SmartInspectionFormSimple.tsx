@@ -1017,23 +1017,8 @@ export default function SmartInspectionFormSimple() {
       // window.inspectionSections retains the full base64 data for the preview page.
       console.log('✅ Photos déjà converties en base64 par generateDescription, conversion ignorée');
 
-      // Issue 6 fix: purge stale inspection_* keys before writing the new one to avoid
-      // localStorage filling up with leftover data from previous sessions.
-      try {
-        const staleKeys: string[] = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith('inspection_') && k !== `inspection_${inspectionData.id}`) {
-            staleKeys.push(k);
-          }
-        }
-        staleKeys.forEach(k => localStorage.removeItem(k));
-        if (staleKeys.length > 0) {
-          console.log(`🧹 Anciennes inspections supprimées: ${staleKeys.join(', ')}`);
-        }
-      } catch {
-        /* non-critique — on continue */
-      }
+      // Les autres clés inspection_* sont des rapports/dossiers distincts. Elles doivent
+      // rester disponibles quand une nouvelle inspection est créée.
       // Strip base64/url from sections for localStorage (too large for Web Storage).
       // The preview page reads full base64 from window.inspectionSections.
       const inspectionDataForStorage = {
