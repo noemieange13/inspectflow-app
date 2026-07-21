@@ -32,11 +32,13 @@ function optUuid(v: unknown): string | null {
 async function photoExists(
   supabase: ReturnType<typeof createClient>,
   id: string,
+  inspectionId: string,
 ): Promise<boolean> {
   const { data, error } = await supabase
     .from("photos")
     .select("id")
     .eq("id", id)
+    .eq("inspection_id", inspectionId)
     .maybeSingle();
   if (error) {
     console.warn("create-report photos lookup:", error.message);
@@ -48,9 +50,12 @@ async function photoExists(
 async function resolvePhotoId(
   supabase: ReturnType<typeof createClient>,
   candidate: string | null,
+  inspectionId: string,
 ): Promise<string | null> {
   if (!candidate || !isUuid(candidate)) return null;
-  return (await photoExists(supabase, candidate)) ? candidate : null;
+  return (await photoExists(supabase, candidate, inspectionId))
+    ? candidate
+    : null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -117,8 +122,8 @@ Deno.serve(async (req: Request) => {
       if (!inspectionId && jobInsp && isUuid(jobInsp)) {
         inspectionId = jobInsp;
       }
-      if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+      if (inspectionId && !photoId && jobPhoto && isUuid(jobPhoto)) {
+        photoId = await resolvePhotoId(supabase, jobPhoto, inspectionId);
       }
     } else if (inspectionId) {
       const { data: job, error: jobByInspErr } = await supabase
@@ -156,13 +161,8 @@ Deno.serve(async (req: Request) => {
       jobResolvedVia = "inspection";
       const jobPhoto = job.photo_id != null ? String(job.photo_id) : null;
       if (!photoId && jobPhoto && isUuid(jobPhoto)) {
-        photoId = await resolvePhotoId(supabase, jobPhoto);
+        photoId = await resolvePhotoId(supabase, jobPhoto, inspectionId);
       }
-    }
-
-    if (body.photo_id !== undefined && body.photo_id !== null) {
-      const explicit = optUuid(body.photo_id);
-      photoId = explicit ? await resolvePhotoId(supabase, explicit) : null;
     }
 
     if (!inspectionId) {
@@ -173,6 +173,13 @@ Deno.serve(async (req: Request) => {
         },
         400,
       );
+    }
+
+    if (body.photo_id !== undefined && body.photo_id !== null) {
+      const explicit = optUuid(body.photo_id);
+      photoId = explicit
+        ? await resolvePhotoId(supabase, explicit, inspectionId)
+        : null;
     }
 
     if (!jobId) {
