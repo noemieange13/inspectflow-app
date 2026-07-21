@@ -47,8 +47,41 @@ export async function POST(req: Request) {
     );
   }
 
+  const t0 = Date.now();
+  // #region agent log
+  fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
+    body: JSON.stringify({
+      sessionId: "26655f",
+      location: "trigger-inspection/route.ts:POST",
+      message: "server trigger start",
+      data: { report_id },
+      timestamp: Date.now(),
+      hypothesisId: "D",
+    }),
+  }).catch(() => {});
+  // #endregion
   try {
     const ensured = await ensureReportPayloadHtml(report_id);
+    // #region agent log
+    fetch("http://127.0.0.1:7484/ingest/b4253399-7ba9-4a2c-bec3-d89dc53a4c29", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "26655f" },
+      body: JSON.stringify({
+        sessionId: "26655f",
+        location: "trigger-inspection/route.ts:POST",
+        message: "after ensureReportPayloadHtml",
+        data: {
+          ok: ensured.ok,
+          elapsedMs: Date.now() - t0,
+          err: ensured.ok ? undefined : ensured.error,
+        },
+        timestamp: Date.now(),
+        hypothesisId: "C",
+      }),
+    }).catch(() => {});
+    // #endregion
     if (!ensured.ok) {
       return Response.json({ success: false, error: ensured.error }, { status: 400 });
     }
