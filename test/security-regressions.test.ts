@@ -120,7 +120,7 @@ describe("critical route regression guards", () => {
     const source = read("app/api/create-inspection/route.ts");
     assert.match(source, /createReportPost/);
     assert.doesNotMatch(source, /createServiceRoleClient/);
-    assert.doesNotMatch(source, /\.from\(["']reports["']\)\s*\.insert/s);
+    assert.doesNotMatch(source, /\.from\(["']reports["']\)[\s\S]*?\.insert/);
   });
 
   it("rejects the legacy payload instead of creating a tokenless report", async () => {
