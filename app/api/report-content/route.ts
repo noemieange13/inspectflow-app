@@ -479,8 +479,7 @@ export async function POST(req: Request) {
           undoVersionId = snap.versionId;
         }
 
-        const allowUnlock =
-          allowReportPayloadUnlock(req) || Boolean(dbToken);
+        const allowUnlock = allowReportPayloadUnlock(req);
 
         const lockErr = (m: string) =>
           /P0001|Finalized|locked|prevent_report/i.test(m);
