@@ -1,5 +1,7 @@
 import { analyzeInspectionPhotoVision } from "@/lib/analyzeInspectionPhoto";
+import { assertReportAccessWithOptionalSession } from "@/lib/assertReportAccessForApi";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { hasExactTriggerSecret } from "@/lib/triggerSecretAuth";
 import { createHash } from "crypto";
 
 const BUCKET = "user-uploads";
@@ -19,6 +21,7 @@ export async function POST(req: Request) {
     const file = formData.get("file") as File | null;
     const reportId = formData.get("report_id") as string | null;
     const inspectionId = formData.get("inspection_id") as string | null;
+    const accessTokenRaw = formData.get("access_token") as string | null;
     const langRaw = formData.get("language") as string | null;
     const reportLanguage =
       langRaw === "en" || langRaw === "fr" ? langRaw : "fr";
@@ -40,7 +43,7 @@ export async function POST(req: Request) {
 
     const { data: report, error: reportErr } = await supabase
       .from("reports")
-      .select("id, inspection_id, user_id")
+      .select("id, inspection_id, user_id, access_token, token_expires_at")
       .eq("id", reportId.trim())
       .maybeSingle();
 
@@ -51,9 +54,46 @@ export async function POST(req: Request) {
       return Response.json({ error: "Report not found" }, { status: 404 });
     }
 
-    const effectiveInspectionId =
-      inspectionId?.trim() ||
-      (typeof report.inspection_id === "string" ? report.inspection_id : null);
+    if (!hasExactTriggerSecret(req)) {
+      const gate = await assertReportAccessWithOptionalSession(
+        req,
+        report.id,
+        typeof accessTokenRaw === "string" ? accessTokenRaw : "",
+        report,
+      );
+      if (!gate.ok) {
+        return Response.json(
+          { error: gate.error, code: gate.code },
+          { status: gate.status },
+        );
+      }
+    }
+
+    const reportInspectionId =
+      typeof report.inspection_id === "string" && report.inspection_id.trim()
+        ? report.inspection_id.trim()
+        : null;
+    const providedInspectionId = inspectionId?.trim() || null;
+
+    if (
+      providedInspectionId &&
+      reportInspectionId &&
+      providedInspectionId !== reportInspectionId
+    ) {
+      return Response.json(
+        { error: "inspection_id does not match report.inspection_id" },
+        { status: 400 },
+      );
+    }
+
+    if (!reportInspectionId) {
+      return Response.json(
+        { error: "Report is not linked to an inspection" },
+        { status: 400 },
+      );
+    }
+
+    const effectiveInspectionId = reportInspectionId;
     const ownerId =
       typeof report.user_id === "string" ? report.user_id : "anonymous";
 
@@ -146,9 +186,19 @@ export async function POST(req: Request) {
         }
       }
 
+      if (!photoId) {
+        return Response.json(
+          {
+            error: "Photo metadata insert failed",
+            details: insertRes.error?.message ?? "unknown",
+          },
+          { status: 500 },
+        );
+      }
+
       // Analyse vision hors chemin critique : sinon chaque photo bloque la réponse HTTP
       // (séquence client = 2e/3e aperçu « figé » jusqu'à la fin d'OpenAI sur la 1re).
-      if (photoId && process.env.OPENAI_API_KEY?.trim()) {
+      if (process.env.OPENAI_API_KEY?.trim()) {
         const mime = file.type?.trim() || "image/jpeg";
         const b64 = buffer.toString("base64");
         const rid = reportId.trim();
@@ -167,7 +217,11 @@ export async function POST(req: Request) {
               .update({ analysis: merged })
               .eq("id", pid);
             if (!updErr) {
-              await supabase.from("reports").update({ photo_id: pid }).eq("id", rid);
+              await supabase
+                .from("reports")
+                .update({ photo_id: pid })
+                .eq("id", rid)
+                .is("photo_id", null);
             }
           } catch {
             /* analyse optionnelle */
