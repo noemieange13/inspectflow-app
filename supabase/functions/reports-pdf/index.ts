@@ -12,6 +12,8 @@
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
+import { hasServiceRoleCredentials } from "../_shared/serviceRoleAuth.ts";
+
 const JSON_HDR = {
   "Content-Type": "application/json; charset=utf-8",
 } as const;
@@ -713,6 +715,11 @@ Deno.serve(async (req) => {
     if (!SERVICE_ROLE) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
     if (!PDF_API_KEY || PDF_API_KEY.length < 20) {
       throw new Error("Invalid PDF_API_KEY");
+    }
+
+    // Anon JWT must not rewrite payload.html / regenerate PDF for arbitrary report_ids.
+    if (!hasServiceRoleCredentials(req, SERVICE_ROLE)) {
+      return json({ success: false, error: "Unauthorized" }, 401);
     }
 
     supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
