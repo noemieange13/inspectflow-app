@@ -1,5 +1,7 @@
 /**
  * Mise à jour atomique du payload via RPC `update_report_payload_with_unlock` (FOR UPDATE, une transaction).
+ * Ne déverrouille PAS un rapport finalisé : `p_allow_unlock` reste false (notes / Edge ne doivent
+ * pas contourner le verrou métier — un jeton viewer n’est pas un credential d’unlock).
  * @see supabase/migrations/20260421110000_update_report_payload_with_unlock_rpc.sql
  */
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
@@ -22,7 +24,8 @@ export async function updateReportPayloadWithAutoUnlock(
     p_payload: nextPayload,
     p_source: opts.source,
     p_clear_pdf_path: opts.clearPdfPath ?? false,
-    p_allow_unlock: true,
+    // Finalized/locked reports must stay locked; viewer-token callers must not unlock.
+    p_allow_unlock: false,
   });
 
   if (error) {

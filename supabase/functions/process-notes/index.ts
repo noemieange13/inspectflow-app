@@ -15,12 +15,23 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+import { hasServiceRoleCredentials } from "../_shared/serviceRoleAuth.ts";
 import { updateReportPayloadWithAutoUnlock } from "../_shared/updateReportPayloadWithAutoUnlock.ts";
 
 const JSON_HDR = { "Content-Type": "application/json; charset=utf-8" } as const;
 
 function json(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HDR });
+}
+
+/** Avoid `btoa(String.fromCharCode(...buf))` stack overflow on multi-MB note photos/audio. */
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x2000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 const VISION_TIMEOUT_MS = 15_000;
@@ -231,6 +242,10 @@ Deno.serve(async (req: Request) => {
       throw new Error("Missing OPENAI_API_KEY");
     }
 
+    if (!hasServiceRoleCredentials(req, SERVICE_ROLE)) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
@@ -256,7 +271,7 @@ Deno.serve(async (req: Request) => {
 
       if (!dlErr && photoData) {
         const buffer = await photoData.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const base64 = bytesToBase64(new Uint8Array(buffer));
         const ocrText = await ocrHandwrittenNote(base64, OPENAI_KEY, language);
         if (ocrText) {
           rawNotes.push({ text: ocrText, source: "ocr" });
@@ -271,7 +286,7 @@ Deno.serve(async (req: Request) => {
 
       if (!audioErr && audioData) {
         const buffer = await audioData.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const base64 = bytesToBase64(new Uint8Array(buffer));
         const transcript = await transcribeAudio(base64, OPENAI_KEY);
         if (transcript) {
           rawNotes.push({ text: transcript, source: "voice" });
