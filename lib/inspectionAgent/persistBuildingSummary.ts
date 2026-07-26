@@ -53,7 +53,8 @@ export async function persistBuildingSummaryV1(
     payload,
     source: "inspection-agent-building-summary",
     clearPdfPath: false,
-    allowUnlock: true,
+    // Preview/assist must never clear finalized locks; writes require an unlocked report.
+    allowUnlock: false,
   });
 
   if (rpcErr) {
