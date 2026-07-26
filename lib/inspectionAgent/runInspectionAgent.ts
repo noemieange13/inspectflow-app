@@ -42,28 +42,6 @@ export async function runInspectionAgent(input: {
     payload,
   );
 
-  const persist = await persistBuildingSummaryV1(supabase, report.id, {
-    score: observation.building_market.score,
-    label_fr: observation.building_market.label_fr,
-    label_en: observation.building_market.label_en,
-    estimated_cost_cad: observation.building_market.estimated_cost_cad,
-    intrinsic_high_risk: observation.building_market.flags.intrinsic_high_risk,
-    score_below_60: observation.building_market.flags.score_below_60,
-    review_recommended: observation.building_market.flags.review_recommended,
-    summary: {
-      score: observation.building_market.score,
-      label_fr: observation.building_market.label_fr,
-      estimated_cost_cad: observation.building_market.estimated_cost_cad,
-    },
-    focus_systems: [...observation.building_market.focus_systems],
-    breakdown: observation.building_market.breakdown as Record<string, number>,
-    agent_state: observation.agent_state,
-    updated_at: new Date().toISOString(),
-  });
-  if (!persist.ok) {
-    console.warn("persistBuildingSummaryV1:", persist.error);
-  }
-
   let decisions = decideInspectionAgentActions(observation, input.autonomy);
 
   if (input.useLlm) {
@@ -92,6 +70,8 @@ export async function runInspectionAgent(input: {
   }
   const executed_steps: AgentExecutionStep[] = [];
 
+  // Preview/assist ("Analyser sans exécuter") must be read-only: no payload writes,
+  // and never unlock a finalized report via building_summary_v1 persistence.
   if (!input.execute) {
     return {
       autonomy: input.autonomy,
@@ -100,6 +80,28 @@ export async function runInspectionAgent(input: {
       decisions,
       executed_steps,
     };
+  }
+
+  const persist = await persistBuildingSummaryV1(supabase, report.id, {
+    score: observation.building_market.score,
+    label_fr: observation.building_market.label_fr,
+    label_en: observation.building_market.label_en,
+    estimated_cost_cad: observation.building_market.estimated_cost_cad,
+    intrinsic_high_risk: observation.building_market.flags.intrinsic_high_risk,
+    score_below_60: observation.building_market.flags.score_below_60,
+    review_recommended: observation.building_market.flags.review_recommended,
+    summary: {
+      score: observation.building_market.score,
+      label_fr: observation.building_market.label_fr,
+      estimated_cost_cad: observation.building_market.estimated_cost_cad,
+    },
+    focus_systems: [...observation.building_market.focus_systems],
+    breakdown: observation.building_market.breakdown as Record<string, number>,
+    agent_state: observation.agent_state,
+    updated_at: new Date().toISOString(),
+  });
+  if (!persist.ok) {
+    console.warn("persistBuildingSummaryV1:", persist.error);
   }
 
   for (const action of decisions) {
