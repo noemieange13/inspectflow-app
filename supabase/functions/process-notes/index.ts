@@ -15,6 +15,7 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+import { isOwnedInspectionNotePath } from "../_shared/noteStoragePath.ts";
 import { updateReportPayloadWithAutoUnlock } from "../_shared/updateReportPayloadWithAutoUnlock.ts";
 
 const JSON_HDR = { "Content-Type": "application/json; charset=utf-8" } as const;
@@ -250,9 +251,16 @@ Deno.serve(async (req: Request) => {
     }
 
     if (typeof body.note_photo_path === "string" && body.note_photo_path.trim()) {
+      const notePhotoPath = body.note_photo_path.trim();
+      if (!isOwnedInspectionNotePath(notePhotoPath, reportId)) {
+        return json(
+          { error: "note_photo_path must be under notes/<report_id>/", code: "note_path_forbidden" },
+          403,
+        );
+      }
       const { data: photoData, error: dlErr } = await supabase.storage
         .from("inspection-notes")
-        .download(body.note_photo_path.trim());
+        .download(notePhotoPath);
 
       if (!dlErr && photoData) {
         const buffer = await photoData.arrayBuffer();
@@ -265,9 +273,16 @@ Deno.serve(async (req: Request) => {
     }
 
     if (typeof body.note_audio_path === "string" && body.note_audio_path.trim()) {
+      const noteAudioPath = body.note_audio_path.trim();
+      if (!isOwnedInspectionNotePath(noteAudioPath, reportId)) {
+        return json(
+          { error: "note_audio_path must be under notes/<report_id>/", code: "note_path_forbidden" },
+          403,
+        );
+      }
       const { data: audioData, error: audioErr } = await supabase.storage
         .from("inspection-notes")
-        .download(body.note_audio_path.trim());
+        .download(noteAudioPath);
 
       if (!audioErr && audioData) {
         const buffer = await audioData.arrayBuffer();
