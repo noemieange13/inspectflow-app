@@ -89,6 +89,13 @@ function raceWithTimeout<T>(
   });
 }
 
+/** Empêche les écritures zombie après 504 : le travail peut continuer, mais ne doit plus persister. */
+function throwIfRouteTimedOut(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new ReportContentTimeoutError();
+  }
+}
+
 type IncomingEntry = {
   zone?: unknown;
   issue?: unknown;
@@ -459,6 +466,7 @@ export async function POST(req: Request) {
 
         let undoVersionId: string | undefined;
         if (saveUndoSnapshot) {
+          throwIfRouteTimedOut(routeAbort.signal);
           const statsKey = (body as { stats_key: string }).stats_key.trim();
           const snapshotPayload = JSON.parse(JSON.stringify(currentPayload)) as Record<string, unknown>;
           const snap = await insertReportVersion(supabase, {
@@ -485,6 +493,7 @@ export async function POST(req: Request) {
         const lockErr = (m: string) =>
           /P0001|Finalized|locked|prevent_report/i.test(m);
 
+        throwIfRouteTimedOut(routeAbort.signal);
         const { error: updateError } = await updateReportPayloadWithUnlock(
           supabase,
           reportId,
@@ -512,6 +521,7 @@ export async function POST(req: Request) {
         }
 
         if (dbSelectionInput) {
+          throwIfRouteTimedOut(routeAbort.signal);
           try {
             await persistReportPhotoSelectionDb(supabase, reportId, dbSelectionInput);
           } catch (selErr) {
