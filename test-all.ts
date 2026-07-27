@@ -16,8 +16,9 @@ loadDotenv({ path: resolve(process.cwd(), ".env.local") });
 loadDotenv({ path: resolve(process.cwd(), ".env") });
 
 const BASE_URL = (process.env.TEST_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+/** 1×1 JPEG — data URL (les URL https sont refusées côté serveur anti-SSRF). */
 const TEST_IMAGE =
-  "https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=800&q=80";
+  "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCwAA8A/9k=";
 /** Aligné sur `GEMINI_VISION_MODEL` / `lib/services/gemini.ts`, sinon `TEST_GEMINI_MODEL`, sinon défaut. */
 const GEMINI_TEST_MODEL =
   process.env.TEST_GEMINI_MODEL?.trim() ||
@@ -85,15 +86,14 @@ async function test2bEnvOpenRouter() {
 }
 
 async function test3ImageFetch() {
-  log("TEST 3 — FETCH image distante");
+  log("TEST 3 — data URL image (entrée analyze)");
   try {
-    const res = await fetch(TEST_IMAGE);
-    console.log("STATUS:", res.status);
-    if (!res.ok) {
-      fail(`HTTP ${res.status}`);
+    if (!TEST_IMAGE.startsWith("data:image/") || !TEST_IMAGE.includes(";base64,")) {
+      fail("TEST_IMAGE doit être une data URL image/base64");
       return;
     }
-    const buffer = await res.arrayBuffer();
+    const b64 = TEST_IMAGE.split(",")[1] ?? "";
+    const buffer = Buffer.from(b64, "base64");
     console.log("BUFFER SIZE:", buffer.byteLength);
     if (buffer.byteLength > 0) pass();
     else fail("buffer vide");

@@ -1,4 +1,5 @@
 import { cleanNotes } from "@/lib/cleanNotes";
+import { isOwnedInspectionNotePath } from "@/lib/noteStoragePath";
 import { insertReportVersion } from "@/lib/reportVersions";
 import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
@@ -123,6 +124,25 @@ export async function POST(req: Request) {
       const gate = await assertReportViewerAccess(supabase, reportId, accessTokenRaw);
       if (!gate.ok) {
         return Response.json(gate.body, { status: gate.status });
+      }
+
+      if (notePhotoPath && !isOwnedInspectionNotePath(notePhotoPath, reportId)) {
+        return Response.json(
+          {
+            error: "note_photo_path must be under notes/<report_id>/",
+            code: "note_path_forbidden",
+          },
+          { status: 403 },
+        );
+      }
+      if (noteAudioPath && !isOwnedInspectionNotePath(noteAudioPath, reportId)) {
+        return Response.json(
+          {
+            error: "note_audio_path must be under notes/<report_id>/",
+            code: "note_path_forbidden",
+          },
+          { status: 403 },
+        );
       }
     }
 
