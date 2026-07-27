@@ -20,7 +20,8 @@ export async function GET() {
 }
 
 /**
- * POST JSON `{ type?: "inspection" | "roof", images: string[] }` — data URL image, base64, ou https.
+ * POST JSON `{ type?: "inspection" | "roof", images: string[] }` — data URL image ou base64
+ * (pas d’URL https : évite SSRF sur cette route publique).
  * Réponse : toujours un `InspectionResult` complet.
  */
 export async function POST(req: NextRequest) {

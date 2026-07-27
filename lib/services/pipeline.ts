@@ -30,10 +30,8 @@ export function validateImageInputs(images: string[]): void {
       }
       continue;
     }
-    if (t.startsWith("https://")) {
-      continue;
-    }
-    if (t.startsWith("http://")) {
+    // Remote URLs rejected (SSRF / quota abuse on unauthenticated /api/analyze).
+    if (t.startsWith("https://") || t.startsWith("http://")) {
       throw new Error(INVALID_IMAGE_FORMAT);
     }
     const b64 = t.replace(/\s/g, "");

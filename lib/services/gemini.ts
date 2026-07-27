@@ -1,6 +1,7 @@
 /**
  * Analyse d’images via Gemini (serveur uniquement — importer depuis des Route Handlers).
- * Chaque entrée peut être : base64 brut, data URL `data:image/...;base64,...`, ou URL `https://...` publique.
+ * Chaque entrée peut être : base64 brut ou data URL `data:image/...;base64,...`.
+ * Les URL `https://` sont refusées (SSRF + abus de quota sur route non authentifiée).
  */
 
 /** Surchargeable : les IDs `gemini-1.5-pro` / `flash` peuvent 404 selon compte et version API. */
@@ -28,20 +29,10 @@ async function inlinePartFromImageInput(image: string): Promise<{
     return { inline_data: { mime_type: dataUrl.mime, data: dataUrl.data } };
   }
 
-  if (/^https:\/\//i.test(trimmed)) {
-    const res = await fetch(trimmed, { method: "GET" });
-    if (!res.ok) {
-      throw new Error(`Téléchargement image HTTP ${res.status}`);
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    const ct = res.headers.get("content-type")?.split(";")[0]?.trim();
-    const mime =
-      ct && ct.startsWith("image/")
-        ? ct
-        : trimmed.toLowerCase().endsWith(".png")
-          ? "image/png"
-          : "image/jpeg";
-    return { inline_data: { mime_type: mime, data: buf.toString("base64") } };
+  if (/^https?:\/\//i.test(trimmed)) {
+    throw new Error(
+      "URL distante refusée. Envoyez une data URL (data:image/…;base64,…) ou du base64 brut.",
+    );
   }
 
   return {
