@@ -11,6 +11,7 @@
  * sans vérif des signed URLs, sans timeout PDF, avec HTML de repli factice, ou sans release du lock — régression fréquente.
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { patchReportPayloadKeys } from "../_shared/patchReportPayloadKeys.ts";
 
 const JSON_HDR = {
   "Content-Type": "application/json; charset=utf-8",
@@ -778,9 +779,11 @@ Deno.serve(async (req) => {
 
     claimed = true;
 
+    // Re-read full payload after lock. Writes below must patch keys only — never
+    // replace the whole pre-lock payload (concurrent cover/content saves).
     const { data: fresh } = await supabase
       .from("reports")
-      .select("pdf_path")
+      .select("pdf_path, payload")
       .eq("id", reportId)
       .single();
 
@@ -807,9 +810,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const payload = (report.payload && typeof report.payload === "object")
-      ? { ...(report.payload as Record<string, unknown>) }
-      : {};
+    const payload = (fresh?.payload && typeof fresh.payload === "object")
+      ? (fresh.payload as Record<string, unknown>)
+      : (report.payload && typeof report.payload === "object")
+        ? (report.payload as Record<string, unknown>)
+        : {};
     const language = normalizeReportLanguage(payload.language ?? payload.lang);
     const complianceBlock =
       payload.compliance && typeof payload.compliance === "object"
@@ -826,11 +831,12 @@ Deno.serve(async (req) => {
       htmlForPdfFromClient &&
       htmlForPdfFromClient !== currentHtml
     ) {
-      payload.html = htmlForPdfFromClient;
-      const { error: syncErr } = await supabase
-        .from("reports")
-        .update({ payload })
-        .eq("id", report.id);
+      const { error: syncErr } = await patchReportPayloadKeys(
+        supabase,
+        report.id,
+        { html: htmlForPdfFromClient },
+        "reports-pdf-html-sync",
+      );
       if (syncErr) {
         logStructured("warn", "payload_html_sync_failed", {
           report_id: reportId,
@@ -855,7 +861,7 @@ Deno.serve(async (req) => {
         );
         if (aiNarrative) {
           htmlForPdf = mergeAiSectionIntoHtml(htmlForPdf, aiNarrative, language);
-          payload.ai_minimal = {
+          const aiMinimal = {
             mode: aiNarrative.mode,
             language,
             source: photoAnalyses.source,
@@ -869,12 +875,13 @@ Deno.serve(async (req) => {
             compliance_notice_en:
               "AI-generated draft for writing support. Compliance with NBC, provincial/territorial codes, and CSA standards must be validated on site by qualified professionals in Canada.",
           };
-          payload.html = htmlForPdf;
 
-          const { error: payloadErr } = await supabase
-            .from("reports")
-            .update({ payload })
-            .eq("id", report.id);
+          const { error: payloadErr } = await patchReportPayloadKeys(
+            supabase,
+            report.id,
+            { html: htmlForPdf, ai_minimal: aiMinimal },
+            "reports-pdf-ai-minimal",
+          );
           if (payloadErr) {
             logStructured("warn", "ai_payload_update_failed", {
               report_id: reportId,
