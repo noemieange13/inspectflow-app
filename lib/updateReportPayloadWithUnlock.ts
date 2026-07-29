@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { rpcUpdateReportPayloadWithUnlock } from "@/lib/rpcUpdateReportPayload";
+import {
+  rpcUpdateReportPayloadKeysWithUnlock,
+  rpcUpdateReportPayloadWithUnlock,
+} from "@/lib/rpcUpdateReportPayload";
 
 /**
  * Déverrouille pour édition (Zero Draft, PDF, etc.) : avec le verrou métier
@@ -79,6 +82,39 @@ export async function updateReportPayloadWithUnlock(
     source: "nextjs-updateReportPayloadWithUnlock",
     clearPdfPath: options?.clearStoredPdf ?? false,
     allowUnlock,
+  });
+
+  if (error) {
+    return { error };
+  }
+
+  return { error: null };
+}
+
+/**
+ * Shallow-merge route-owned keys into `reports.payload` (FOR UPDATE + optional unlock).
+ * Prefer this over full-payload replace when the caller held a stale clone across awaits.
+ */
+export async function updateReportPayloadKeysWithUnlock(
+  supabase: SupabaseClient,
+  reportId: string,
+  patch: Record<string, unknown>,
+  allowUnlock: boolean,
+  options?: {
+    clearStoredPdf?: boolean;
+    removeKeys?: string[];
+    auditEntry?: Record<string, unknown> | null;
+    source?: string;
+  },
+): Promise<{ error: { message: string } | null }> {
+  const { error } = await rpcUpdateReportPayloadKeysWithUnlock(supabase, {
+    reportId,
+    patch,
+    source: options?.source ?? "nextjs-updateReportPayloadKeysWithUnlock",
+    clearPdfPath: options?.clearStoredPdf ?? false,
+    allowUnlock,
+    removeKeys: options?.removeKeys,
+    auditEntry: options?.auditEntry,
   });
 
   if (error) {

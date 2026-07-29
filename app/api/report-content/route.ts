@@ -1,8 +1,8 @@
-import { appendAuditTrail } from "@/lib/auditTrailPayload";
+import { buildAuditTrailEntry } from "@/lib/auditTrailPayload";
 import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import { allowReportPayloadUnlock } from "@/lib/reportPayloadUnlock";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
-import { updateReportPayloadWithUnlock } from "@/lib/updateReportPayloadWithUnlock";
+import { updateReportPayloadKeysWithUnlock } from "@/lib/updateReportPayloadWithUnlock";
 import {
   buildClientFacingSection,
   buildStructuredReport,
@@ -391,8 +391,9 @@ export async function POST(req: Request) {
           }
         }
 
-        const nextPayloadRaw: Record<string, unknown> = {
-          ...currentPayload,
+        // Owned keys only — never spread a pre-polish payload clone into a full replace.
+        // Concurrent cover/notes keys are preserved by update_report_payload_keys_with_unlock.
+        const contentPatch: Record<string, unknown> = {
           title,
           summary: generated.summary,
           sections: sectionsForPayload,
@@ -418,6 +419,7 @@ export async function POST(req: Request) {
         };
 
         let dbSelectionInput: ReportPhotoSelectionDbInput | null = null;
+        const removeKeys: string[] = [];
         if (
           typeof body === "object" &&
           body !== null &&
@@ -429,17 +431,17 @@ export async function POST(req: Request) {
           const tiersByPhotoId = parseReportPhotoSelectionTiers(rawSel);
           if (ids !== null) {
             dbSelectionInput = { selectedPhotoIds: ids, tiersByPhotoId };
-            nextPayloadRaw.report_photo_selection_v1 = buildReportPhotoSelectionV1(ids, {
+            contentPatch.report_photo_selection_v1 = buildReportPhotoSelectionV1(ids, {
               locked,
               tiersByPhotoId,
             });
           } else {
             dbSelectionInput = { selectedPhotoIds: [], tiersByPhotoId: {} };
-            delete nextPayloadRaw.report_photo_selection_v1;
+            removeKeys.push("report_photo_selection_v1");
           }
         }
 
-        const nextPayload = appendAuditTrail(nextPayloadRaw, {
+        const auditEntry = buildAuditTrailEntry({
           field_path: "payload.report_content",
           old_preview: "[previous]",
           new_preview: `entries=${entries.length} sections=${generated.sections.length}`,
@@ -485,12 +487,17 @@ export async function POST(req: Request) {
         const lockErr = (m: string) =>
           /P0001|Finalized|locked|prevent_report/i.test(m);
 
-        const { error: updateError } = await updateReportPayloadWithUnlock(
+        const { error: updateError } = await updateReportPayloadKeysWithUnlock(
           supabase,
           reportId,
-          nextPayload,
+          contentPatch,
           allowUnlock,
-          { clearStoredPdf: true },
+          {
+            clearStoredPdf: true,
+            removeKeys: removeKeys.length > 0 ? removeKeys : undefined,
+            auditEntry,
+            source: "nextjs-report-content",
+          },
         );
 
         if (updateError) {

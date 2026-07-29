@@ -21,6 +21,22 @@ export function truncatePreview(s: string): string {
   return t.length <= MAX_PREVIEW ? t : `${t.slice(0, MAX_PREVIEW)}…`;
 }
 
+export function buildAuditTrailEntry(
+  partial: Omit<AuditTrailEntryV1, "schema_version" | "t" | "old_preview" | "new_preview"> & {
+    old_preview: string;
+    new_preview: string;
+  },
+): AuditTrailEntryV1 {
+  return {
+    schema_version: 1,
+    t: new Date().toISOString(),
+    field_path: partial.field_path,
+    old_preview: truncatePreview(partial.old_preview),
+    new_preview: truncatePreview(partial.new_preview),
+    source: partial.source,
+  };
+}
+
 export function appendAuditTrail(
   payload: Record<string, unknown>,
   partial: Omit<AuditTrailEntryV1, "schema_version" | "t" | "old_preview" | "new_preview"> & {
@@ -31,14 +47,7 @@ export function appendAuditTrail(
   const prev = Array.isArray(payload.audit_trail_v1)
     ? (payload.audit_trail_v1 as unknown[])
     : [];
-  const entry: AuditTrailEntryV1 = {
-    schema_version: 1,
-    t: new Date().toISOString(),
-    field_path: partial.field_path,
-    old_preview: truncatePreview(partial.old_preview),
-    new_preview: truncatePreview(partial.new_preview),
-    source: partial.source,
-  };
+  const entry = buildAuditTrailEntry(partial);
   const next = [...prev, entry].slice(-MAX_ENTRIES);
   return { ...payload, audit_trail_v1: next };
 }
