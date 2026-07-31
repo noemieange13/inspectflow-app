@@ -1,5 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabaseServer";
-import { rpcUpdateReportPayloadWithUnlock } from "@/lib/rpcUpdateReportPayload";
+import { rpcUpdateReportPayloadKeysWithUnlock } from "@/lib/rpcUpdateReportPayload";
 
 import {
   buildHtmlFromReportPayload,
@@ -119,19 +119,20 @@ export async function ensureReportPayloadHtml(
         }
       : null;
 
-  const nextPayload = {
-    ...payload,
-    html: built,
-    ...(complianceMerged ? { compliance: complianceMerged } : {}),
-  };
-
   if (built === current && !complianceMerged) {
     return { ok: true, builtHtml: built };
   }
 
-  const { error: rpcErr } = await rpcUpdateReportPayloadWithUnlock(supabase, {
+  // Patch only owned keys under FOR UPDATE. A stale full-payload replace here
+  // (after async clause loads) would wipe concurrent cover/content/notes saves.
+  const patch: Record<string, unknown> = { html: built };
+  if (complianceMerged) {
+    patch.compliance = complianceMerged;
+  }
+
+  const { error: rpcErr } = await rpcUpdateReportPayloadKeysWithUnlock(supabase, {
     reportId,
-    payload: nextPayload,
+    patch,
     source: "ensure-report-payload-html",
     clearPdfPath: true,
     allowUnlock: true,
