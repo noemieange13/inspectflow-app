@@ -512,22 +512,31 @@ export default function ZeroDraftReportComposer({
     const serverIdSet = new Set(
       list.map((p) => p.serverPhotoId?.trim()).filter((x): x is string => Boolean(x && x.length > 0)),
     );
+    /**
+     * Epoch 0 : hydrater depuis payload puis lignes API.
+     * Après refresh (epoch > 0) : si sélection verrouillée, garder payload / tiers API —
+     * sinon un refresh d’analyse (upload) marquait tout « excluded » quand
+     * `report_photo_selections` est vide alors que le payload a encore la sélection.
+     * Déverrouillé : laisser le recalcul auto après refresh.
+     */
+    const keepPersistedSelection =
+      photoAnalysisRefreshEpoch === 0 || photoSelectionLocked;
     const persistedFromPayload =
-      photoAnalysisRefreshEpoch === 0 && selectionIdsFromServerPayload?.length
+      keepPersistedSelection && selectionIdsFromServerPayload?.length
         ? selectionIdsFromServerPayload.filter((id) => serverIdSet.has(id))
         : [];
-    const persistedFromRows =
-      photoAnalysisRefreshEpoch === 0
-        ? list
-            .filter(
-              (p) =>
-                p.serverPhotoId?.trim() &&
-                p.report_tier != null &&
-                p.report_tier !== "excluded",
-            )
-            .map((p) => p.serverPhotoId!.trim())
-        : [];
-    const persisted = persistedFromPayload.length > 0 ? persistedFromPayload : persistedFromRows;
+    const persistedFromRows = keepPersistedSelection
+      ? list
+          .filter(
+            (p) =>
+              p.serverPhotoId?.trim() &&
+              p.report_tier != null &&
+              p.report_tier !== "excluded",
+          )
+          .map((p) => p.serverPhotoId!.trim())
+      : [];
+    const persisted =
+      persistedFromRows.length > 0 ? persistedFromRows : persistedFromPayload;
     const persistOnly = photoSelectionLocked;
     if (persistOnly && persisted.length === 0) return;
     let sel: Set<string>;
