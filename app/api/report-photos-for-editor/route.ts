@@ -3,6 +3,7 @@ import { reportAccessTokensMatch } from "@/lib/reportAccessToken";
 import { getUserUploadPublicUrl } from "@/lib/reportPhotoPublicUrl";
 import { loadPhotoRowsForReport } from "@/lib/reportPhotosForReport";
 import type { ZoneCode } from "@/lib/reportNarrative";
+import { resolveEditorPhotoSelectionTiers } from "@/lib/resolveEditorPhotoSelectionTiers";
 import { createServiceRoleClient } from "@/lib/supabaseServer";
 
 export const maxDuration = 60;
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
     const supabase = await createServiceRoleClient();
     const { data: report, error: readError } = await supabase
       .from("reports")
-      .select("id, access_token, token_expires_at")
+      .select("id, access_token, token_expires_at, payload")
       .eq("id", reportId)
       .maybeSingle();
 
@@ -76,11 +77,21 @@ export async function POST(req: Request) {
       }
     }
 
+    const payloadSelectionRaw =
+      rec.payload && typeof rec.payload === "object" && !Array.isArray(rec.payload)
+        ? (rec.payload as Record<string, unknown>).report_photo_selection_v1
+        : undefined;
+    const tierByPhotoId = resolveEditorPhotoSelectionTiers(
+      rows.map((r) => r.id),
+      selectionByPhotoId,
+      payloadSelectionRaw,
+    );
+
     const photos = rows.map((r) => {
       const inferred = inferLinkedZoneFromPhotoAnalysis(r.analysis);
       const linked_zone: ZoneCode = inferred ?? "autre";
       const url = getUserUploadPublicUrl(supabase, r.storage_path);
-      const tier = selectionByPhotoId.get(r.id) ?? "excluded";
+      const tier = tierByPhotoId.get(r.id) ?? "excluded";
       return {
         id: r.id,
         photo_number: r.photo_number ?? null,
