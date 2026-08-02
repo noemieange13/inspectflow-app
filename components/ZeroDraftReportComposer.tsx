@@ -3631,6 +3631,7 @@ export default function ZeroDraftReportComposer({
           <NotesCapture
             reportId={reportId}
             language={language}
+            accessToken={viewerToken}
             onNotesProcessed={handleNotesProcessed}
           />
 

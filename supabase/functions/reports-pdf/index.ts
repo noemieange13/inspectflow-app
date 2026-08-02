@@ -433,16 +433,30 @@ async function fetchPhotoAnalysesForReport(
       let rows = data as PhotoAnalysisRow[];
       if (wanted && wanted.size > 0) {
         const filtered = rows.filter((r) => wanted.has(String(r.id)));
-        if (filtered.length > 0) rows = filtered;
+        // Selection miss on this page must not fail-open to the unfiltered set —
+        // fall through to the explicit `.in("id", wanted)` query below.
+        if (filtered.length === 0) {
+          logStructured("warn", "ai_photo_selection_miss_on_inspection_page", {
+            report_id: reportId,
+            inspection_id: inspectionId,
+            page_count: rows.length,
+            wanted_count: wanted.size,
+          });
+        } else {
+          rows = filtered;
+          return {
+            rows,
+            source: wantedDb && wantedDb.size > 0
+              ? "photos.by_inspection_id+db_selection"
+              : "photos.by_inspection_id+payload_selection",
+          };
+        }
+      } else {
+        return {
+          rows,
+          source: "photos.by_inspection_id",
+        };
       }
-      return {
-        rows,
-        source: wantedDb && wantedDb.size > 0
-          ? "photos.by_inspection_id+db_selection"
-          : wantedPayload && wantedPayload.size > 0
-            ? "photos.by_inspection_id+payload_selection"
-            : "photos.by_inspection_id",
-      };
     }
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_inspection_failed", {

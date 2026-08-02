@@ -2,6 +2,8 @@
 
 import { useCallback, useRef, useState } from "react";
 
+import { appendProcessNotesAuthFields } from "@/lib/processNotesFormAuth";
+
 type ProcessedNote = {
   original: string;
   enhanced: string;
@@ -14,10 +16,17 @@ type ProcessedNote = {
 type Props = {
   reportId: string;
   language: "fr" | "en";
+  /** Viewer token — required when `reports.access_token` is set (create-report always mints one). */
+  accessToken?: string;
   onNotesProcessed: (notes: ProcessedNote[]) => void;
 };
 
-export default function NotesCapture({ reportId, language, onNotesProcessed }: Props) {
+export default function NotesCapture({
+  reportId,
+  language,
+  accessToken,
+  onNotesProcessed,
+}: Props) {
   const [noteText, setNoteText] = useState("");
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +84,13 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
       modeManualHint: "Repli : saisie ou collage libre.",
     };
 
+  const appendAuthFields = useCallback(
+    (form: FormData) => {
+      appendProcessNotesAuthFields(form, { reportId, language, accessToken });
+    },
+    [reportId, language, accessToken],
+  );
+
   const sendToApi = useCallback(async (form: FormData) => {
     setProcessing(true);
     setError(null);
@@ -98,21 +114,19 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
   const handleTextSubmit = useCallback(() => {
     if (!noteText.trim()) return;
     const form = new FormData();
-    form.append("report_id", reportId);
+    appendAuthFields(form);
     form.append("note_text", noteText.trim());
-    form.append("language", language);
     sendToApi(form);
-  }, [noteText, reportId, language, sendToApi]);
+  }, [noteText, appendAuthFields, sendToApi]);
 
   const handlePhotoUpload = useCallback((files: FileList) => {
     const file = files[0];
     if (!file) return;
     const form = new FormData();
-    form.append("report_id", reportId);
+    appendAuthFields(form);
     form.append("note_photo", file);
-    form.append("language", language);
     sendToApi(form);
-  }, [reportId, language, sendToApi]);
+  }, [appendAuthFields, sendToApi]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -126,9 +140,8 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         const form = new FormData();
-        form.append("report_id", reportId);
+        appendAuthFields(form);
         form.append("note_audio", blob, "memo.webm");
-        form.append("language", language);
         sendToApi(form);
       };
       recorder.start();
@@ -137,7 +150,7 @@ export default function NotesCapture({ reportId, language, onNotesProcessed }: P
     } catch {
       setError(labels.noMic);
     }
-  }, [reportId, language, sendToApi, labels.noMic]);
+  }, [appendAuthFields, sendToApi, labels.noMic]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
