@@ -20,6 +20,8 @@
     "test:inspection-demo:all": "node scripts/batch-upload-inspection-demo.mjs --all",
     "test:all": "tsx test-all.ts",
     "test:compliance": "tsx --test test/compliance-integrity.test.ts",
+    "test:process-notes-auth": "tsx --test test/process-notes-form-auth.test.ts",
+    "test:reports-pdf-selection": "tsx --test test/reports-pdf-selection-failopen.test.ts",
     "ci:compliance": "node scripts/run-compliance-ci.mjs"
   },
   "dependencies": {
