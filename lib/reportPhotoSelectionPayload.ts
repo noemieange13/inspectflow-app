@@ -58,3 +58,46 @@ export function buildReportPhotoSelectionV1(
   }
   return v;
 }
+
+export type ReportPhotoSelectionRow = {
+  serverPhotoId?: string | null;
+  report_tier?: "critical" | "support" | "excluded" | null;
+  selected_for_report?: boolean;
+};
+
+/**
+ * Builds `report_photo_selection_v1` for `/api/report-content`.
+ * Non-empty selections always serialize. Empty selections are omitted unless
+ * `allowEmptyClear` is true — otherwise autosave before the editor hydrates
+ * (or before the user touches selection) would wipe a persisted allowlist.
+ * An explicit empty object is required so the API key is present and the
+ * server can clear payload + `report_photo_selections` rows.
+ */
+export function resolveReportPhotoSelectionForSave(
+  photos: ReportPhotoSelectionRow[],
+  opts: {
+    locked: boolean;
+    allowEmptyClear: boolean;
+  },
+): ReportPhotoSelectionV1 | undefined {
+  const selected = photos.filter(
+    (p) =>
+      Boolean(p.serverPhotoId?.trim()) &&
+      (p.report_tier ? p.report_tier !== "excluded" : p.selected_for_report === true),
+  );
+  const ids = selected.map((p) => p.serverPhotoId!.trim());
+  const tiersByPhotoId: Record<string, "critical" | "support"> = {};
+  for (const p of selected) {
+    const sid = p.serverPhotoId?.trim();
+    if (!sid) continue;
+    tiersByPhotoId[sid] = p.report_tier === "critical" ? "critical" : "support";
+  }
+  if (ids.length > 0) {
+    return buildReportPhotoSelectionV1(ids, {
+      locked: opts.locked,
+      tiersByPhotoId,
+    });
+  }
+  if (!opts.allowEmptyClear) return undefined;
+  return buildReportPhotoSelectionV1([], { locked: opts.locked });
+}

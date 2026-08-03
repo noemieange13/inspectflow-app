@@ -47,10 +47,10 @@ import {
   type ReportPhotoTier,
 } from "@/lib/reportPhotoSelection";
 import {
-  buildReportPhotoSelectionV1,
   parseReportPhotoSelectionIds,
   parseReportPhotoSelectionLocked,
   parseReportPhotoSelectionTiers,
+  resolveReportPhotoSelectionForSave,
 } from "@/lib/reportPhotoSelectionPayload";
 import { computeTerrainGuideStep } from "@/lib/terrainFieldGuide";
 import {
@@ -275,6 +275,10 @@ export default function ZeroDraftReportComposer({
       (pay as Record<string, unknown>).report_photo_selection_v1,
     );
   });
+  /** True after `/api/report-photos-for-editor` succeeds for the current report/epoch. */
+  const [photoEditorHydrated, setPhotoEditorHydrated] = useState(false);
+  /** User manually changed include/exclude/tier/lock — required before persisting an empty clear. */
+  const [photoSelectionUserTouched, setPhotoSelectionUserTouched] = useState(false);
   /** Raisons courtes (sélection auto) par clé `photoRowKey` — vide si chargement depuis payload serveur. */
   const [photoSelectionReasonsByKey, setPhotoSelectionReasonsByKey] = useState<
     Record<string, { fr: string; en: string }>
@@ -439,27 +443,14 @@ export default function ZeroDraftReportComposer({
     return acc;
   }, [photos]);
 
-  const reportPhotoSelectionForPayload = useMemo(() => {
-    const selected = photos.filter(
-      (p) =>
-        p.serverPhotoId?.trim() &&
-        (p.report_tier ? p.report_tier !== "excluded" : p.selected_for_report === true),
-    );
-    const ids = selected.map((p) => p.serverPhotoId!.trim());
-    const tiersByPhotoId: Record<string, "critical" | "support"> = {};
-    for (const p of selected) {
-      const sid = p.serverPhotoId?.trim();
-      if (!sid) continue;
-      const tier = p.report_tier === "critical" ? "critical" : "support";
-      tiersByPhotoId[sid] = tier;
-    }
-    return ids.length > 0
-      ? buildReportPhotoSelectionV1(ids, {
-          locked: photoSelectionLocked,
-          tiersByPhotoId,
-        })
-      : undefined;
-  }, [photos, photoSelectionLocked]);
+  const reportPhotoSelectionForPayload = useMemo(
+    () =>
+      resolveReportPhotoSelectionForSave(photos, {
+        locked: photoSelectionLocked,
+        allowEmptyClear: photoEditorHydrated && photoSelectionUserTouched,
+      }),
+    [photos, photoSelectionLocked, photoEditorHydrated, photoSelectionUserTouched],
+  );
 
   const selectionIdsFromServerPayload = useMemo(() => {
     if (!initialData?.payload || typeof initialData.payload !== "object") return null;
@@ -583,6 +574,8 @@ export default function ZeroDraftReportComposer({
     setQcAutoSaveHint(null);
     setAutoSavingAfterQc(false);
     setPhotoSelectionReasonsByKey({});
+    setPhotoEditorHydrated(false);
+    setPhotoSelectionUserTouched(false);
     const pay = initialDataRef.current?.payload;
     if (pay && typeof pay === "object") {
       setPhotoSelectionLocked(
@@ -645,6 +638,7 @@ export default function ZeroDraftReportComposer({
         };
         if (cancelled || !res.ok || body.success !== true || !Array.isArray(body.photos)) return;
         lastPhotoEditorFetchKeyRef.current = fetchKey;
+        setPhotoEditorHydrated(true);
         setPhotos((prev) => {
           const merged = [...prev];
           for (const ph of body.photos!) {
@@ -3238,7 +3232,10 @@ export default function ZeroDraftReportComposer({
                   type="checkbox"
                   className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-amber-400 text-amber-700 focus:ring-amber-600"
                   checked={photoSelectionLocked}
-                  onChange={(e) => setPhotoSelectionLocked(e.target.checked)}
+                  onChange={(e) => {
+                    setPhotoSelectionUserTouched(true);
+                    setPhotoSelectionLocked(e.target.checked);
+                  }}
                   disabled={loading || uploadingPhoto}
                 />
                 <span>
@@ -3410,7 +3407,8 @@ export default function ZeroDraftReportComposer({
                       <button
                         type="button"
                         className="mt-1 text-[10px] font-medium text-blue-700 underline"
-                        onClick={() =>
+                        onClick={() => {
+                          setPhotoSelectionUserTouched(true);
                           setPhotos((prev) =>
                             prev.map((p) =>
                               p.id === photo.id
@@ -3421,8 +3419,8 @@ export default function ZeroDraftReportComposer({
                                   }
                                 : p,
                             ),
-                          )
-                        }
+                          );
+                        }}
                       >
                         {selectedForReport
                           ? language === "en"
@@ -3443,6 +3441,7 @@ export default function ZeroDraftReportComposer({
                           value={currentTier}
                           onChange={(e) => {
                             const t = e.target.value === "critical" ? "critical" : "support";
+                            setPhotoSelectionUserTouched(true);
                             setPhotos((prev) =>
                               prev.map((p) =>
                                 p.id === photo.id
