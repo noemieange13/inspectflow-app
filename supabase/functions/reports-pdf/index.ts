@@ -338,6 +338,38 @@ async function fetchDbPhotoSelectionIds(
   return ids.length > 0 ? new Set(ids) : null;
 }
 
+async function resolveInspectionIdFromPhotoId(
+  supabase: SupabaseClient,
+  photoId: string,
+  reportId: string,
+  context: "reports.photo_id" | "jobs.photo_id",
+): Promise<string | null> {
+  const { data: row, error } = await supabase
+    .from("photos")
+    .select("inspection_id")
+    .eq("id", photoId)
+    .maybeSingle();
+  if (error) {
+    logStructured("warn", "ai_photo_lookup_for_inspection_failed", {
+      report_id: reportId,
+      photo_id: photoId,
+      context,
+      err: error.message,
+    });
+    return null;
+  }
+  const insp = row?.inspection_id;
+  return insp != null && String(insp) !== "" ? String(insp) : null;
+}
+
+/**
+ * Charge les analyses photo pour le PDF AI.
+ *
+ * `reports.photo_id` / `jobs.photo_id` ne sont que des pointeurs de bootstrap
+ * (souvent la dernière photo uploadée) : on les utilise pour résoudre
+ * `inspection_id`, puis on charge le lot — jamais un early-return sur une seule
+ * photo quand une inspection est connue (aligné sur `lib/reportPhotosForReport.ts`).
+ */
 async function fetchPhotoAnalysesForReport(
   supabase: SupabaseClient,
   reportId: string,
@@ -362,28 +394,23 @@ async function fetchPhotoAnalysesForReport(
     });
   } else {
     links = (reportLinks as ReportPhotoLinks | null) ?? null;
-    inspectionId = links?.inspection_id ?? null;
+    inspectionId =
+      links?.inspection_id != null && String(links.inspection_id) !== ""
+        ? String(links.inspection_id)
+        : null;
   }
 
-  if (links?.photo_id && (!wanted || wanted.size === 0)) {
-    const { data: row, error } = await supabase
-      .from("photos")
-      .select("id, analysis, inspection_id, photo_number, storage_path")
-      .eq("id", links.photo_id)
-      .maybeSingle();
-    if (!error && row) {
-      return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id" };
-    }
-    if (error) {
-      logStructured("warn", "ai_photo_lookup_by_report_photo_id_failed", {
-        report_id: reportId,
-        photo_id: links.photo_id,
-        err: error.message,
-      });
-    }
+  if (!inspectionId && links?.photo_id) {
+    inspectionId = await resolveInspectionIdFromPhotoId(
+      supabase,
+      String(links.photo_id),
+      reportId,
+      "reports.photo_id",
+    );
   }
 
-  if (links?.job_id && (!wanted || wanted.size === 0)) {
+  let jobBootstrapPhotoId: string | null = null;
+  if (links?.job_id) {
     const { data: job, error: jobErr } = await supabase
       .from("jobs")
       .select("photo_id, inspection_id")
@@ -396,27 +423,20 @@ async function fetchPhotoAnalysesForReport(
         job_id: links.job_id,
         err: jobErr.message,
       });
-    } else {
-      if (!inspectionId && job?.inspection_id) {
+    } else if (job) {
+      if (!inspectionId && job.inspection_id != null && String(job.inspection_id) !== "") {
         inspectionId = String(job.inspection_id);
       }
-      if (job?.photo_id) {
-        const { data: row, error } = await supabase
-          .from("photos")
-          .select("id, analysis, inspection_id, photo_number, storage_path")
-          .eq("id", job.photo_id)
-          .maybeSingle();
-        if (!error && row) {
-          return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id" };
-        }
-        if (error) {
-          logStructured("warn", "ai_photo_lookup_by_job_photo_id_failed", {
-            report_id: reportId,
-            job_id: links.job_id,
-            photo_id: String(job.photo_id),
-            err: error.message,
-          });
-        }
+      if (job.photo_id != null && String(job.photo_id) !== "") {
+        jobBootstrapPhotoId = String(job.photo_id);
+      }
+      if (!inspectionId && jobBootstrapPhotoId) {
+        inspectionId = await resolveInspectionIdFromPhotoId(
+          supabase,
+          jobBootstrapPhotoId,
+          reportId,
+          "jobs.photo_id",
+        );
       }
     }
   }
@@ -470,6 +490,44 @@ async function fetchPhotoAnalysesForReport(
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_selection_ids_failed", {
         report_id: reportId,
+        err: error.message,
+      });
+    }
+  }
+
+  /* Dernier recours : une seule photo liée, sans inspection résolvable */
+  if (links?.photo_id) {
+    const { data: row, error } = await supabase
+      .from("photos")
+      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .eq("id", links.photo_id)
+      .maybeSingle();
+    if (!error && row) {
+      return { rows: [row as PhotoAnalysisRow], source: "reports.photo_id_only" };
+    }
+    if (error) {
+      logStructured("warn", "ai_photo_lookup_by_report_photo_id_failed", {
+        report_id: reportId,
+        photo_id: links.photo_id,
+        err: error.message,
+      });
+    }
+  }
+
+  if (jobBootstrapPhotoId) {
+    const { data: row, error } = await supabase
+      .from("photos")
+      .select("id, analysis, inspection_id, photo_number, storage_path")
+      .eq("id", jobBootstrapPhotoId)
+      .maybeSingle();
+    if (!error && row) {
+      return { rows: [row as PhotoAnalysisRow], source: "jobs.photo_id_only" };
+    }
+    if (error) {
+      logStructured("warn", "ai_photo_lookup_by_job_photo_id_failed", {
+        report_id: reportId,
+        job_id: links?.job_id ?? null,
+        photo_id: jobBootstrapPhotoId,
         err: error.message,
       });
     }
