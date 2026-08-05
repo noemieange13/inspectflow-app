@@ -25,6 +25,7 @@ import {
 } from "@/lib/refineClientSectionAi";
 import { runDefectClassificationPipeline } from "@/lib/runDefectClassificationPipeline";
 import { insertReportVersion } from "@/lib/reportVersions";
+import { mergeReportSectionRecommendations } from "@/lib/mergeReportSectionRecommendations";
 import {
   buildReportPhotoSelectionV1,
   parseReportPhotoSelectionIds,
@@ -324,38 +325,23 @@ export async function POST(req: Request) {
 
         const generated = buildStructuredReport(entries, language, jurisdiction);
 
-        const mergeRecoOverrides = (
-          sections: Array<Record<string, unknown>>,
-          raw: unknown,
-        ): Array<Record<string, unknown>> => {
-          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return sections;
-          const out = sections.map((s) => ({ ...s }));
-          for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
-            const i = Number.parseInt(key, 10);
-            if (!Number.isFinite(i) || i < 0 || i >= out.length) continue;
-            if (typeof val !== "string") continue;
-            const t = val.trim();
-            if (!t) continue;
-            out[i] = { ...out[i], recommendation: t };
-          }
-          return out;
-        };
-
         const rawRecoOv =
           typeof body === "object" &&
           body !== null &&
           "section_recommendation_overrides" in body
             ? (body as { section_recommendation_overrides?: unknown }).section_recommendation_overrides
             : undefined;
-        const sectionsForPayload = mergeRecoOverrides(
-          generated.sections as Array<Record<string, unknown>>,
-          rawRecoOv,
-        );
 
         const currentPayload =
           report.payload && typeof report.payload === "object"
             ? (report.payload as Record<string, unknown>)
             : {};
+
+        const sectionsForPayload = mergeReportSectionRecommendations(
+          generated.sections as Array<Record<string, unknown>>,
+          currentPayload.sections,
+          rawRecoOv,
+        );
 
         let clientSection =
           clientSectionFromBody ||
