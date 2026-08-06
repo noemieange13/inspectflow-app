@@ -182,6 +182,32 @@ export async function listReportVersions(
 }
 
 /**
+ * Orchestration atomique « fail-closed » pour restore :
+ * historiser d’abord, puis muter le payload live, puis pointer.
+ * Un échec d’insert ne doit jamais laisser `reports.payload` / `pdf_path` déjà écrasés.
+ */
+export async function runRestoreReportMutation(steps: {
+  insertVersion: () => Promise<
+    { versionId: string; versionNumber: number } | { error: string }
+  >;
+  updatePayload: () => Promise<{ error: { message: string } | null }>;
+  bumpPointer: (versionId: string) => Promise<void>;
+}): Promise<{ newVersionNumber: number } | { error: string }> {
+  const ins = await steps.insertVersion();
+  if ("error" in ins) {
+    return { error: ins.error };
+  }
+
+  const { error: upErr } = await steps.updatePayload();
+  if (upErr) {
+    return { error: upErr.message };
+  }
+
+  await steps.bumpPointer(ins.versionId);
+  return { newVersionNumber: ins.versionNumber };
+}
+
+/**
  * Applique le snapshot d’une version au rapport, puis enregistre une nouvelle entrée d’historique.
  */
 export async function restoreReportToVersion(
@@ -206,34 +232,39 @@ export async function restoreReportToVersion(
   const payload = ver.payload as Record<string, unknown>;
   const fromNum = (ver as { version_number: number }).version_number;
 
-  const { error: upErr } = await updateReportPayloadWithUnlock(
-    supabase,
-    input.reportId,
-    payload,
-    input.allowUnlock,
-    { clearStoredPdf: true },
-  );
-  if (upErr) {
-    return { error: upErr.message };
-  }
-
-  const ins = await insertReportVersion(supabase, {
-    reportId: input.reportId,
-    createdBy: "user",
-    source: "restore",
-    payload,
-    diffSummary: `Rapport restauré depuis la version n°${fromNum}`,
-    metadata: {
-      restored_from_version_id: input.versionId,
-      restored_from_version_number: fromNum,
+  return runRestoreReportMutation({
+    insertVersion: () =>
+      insertReportVersion(supabase, {
+        reportId: input.reportId,
+        createdBy: "user",
+        source: "restore",
+        payload,
+        diffSummary: `Rapport restauré depuis la version n°${fromNum}`,
+        metadata: {
+          restored_from_version_id: input.versionId,
+          restored_from_version_number: fromNum,
+        },
+        isMajor: true,
+        editEventType: "RESTORE",
+        fieldPath: "payload",
+        bumpCurrentPointer: false,
+      }),
+    updatePayload: () =>
+      updateReportPayloadWithUnlock(
+        supabase,
+        input.reportId,
+        payload,
+        input.allowUnlock,
+        { clearStoredPdf: true },
+      ),
+    bumpPointer: async (versionId) => {
+      const { error: ptrErr } = await supabase
+        .from("reports")
+        .update({ current_version_id: versionId })
+        .eq("id", input.reportId);
+      if (ptrErr) {
+        console.error("[restoreReportToVersion] current_version_id", ptrErr);
+      }
     },
-    isMajor: true,
-    editEventType: "RESTORE",
-    fieldPath: "payload",
   });
-
-  if ("error" in ins) {
-    return { error: ins.error };
-  }
-  return { newVersionNumber: ins.versionNumber };
 }
