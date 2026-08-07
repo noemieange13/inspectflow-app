@@ -175,11 +175,32 @@ function resultInvalidImages(): InspectionResult {
   };
 }
 
+function resultEmptyVision(): InspectionResult {
+  return {
+    ok: false,
+    summary: "",
+    severity: "low",
+    issues: [],
+    nextStep: "",
+    urgency: "low",
+    error: "EMPTY_VISION",
+    hint: "L'analyse visuelle n'a produit aucun texte. Réessaie avec d'autres photos.",
+  };
+}
+
 function modelPayloadToRecord(data: unknown): Record<string, unknown> {
   if (data && typeof data === "object" && !Array.isArray(data)) {
     return data as Record<string, unknown>;
   }
   return {};
+}
+
+/**
+ * Fail-closed gate: empty/whitespace Gemini text must not reach OpenRouter,
+ * which would invent an inspection JSON from a blank prompt.
+ */
+export function isUsableVisionText(raw: string): boolean {
+  return typeof raw === "string" && raw.trim().length > 0;
 }
 
 /**
@@ -198,6 +219,10 @@ export async function analyzeInspection(images: string[]): Promise<InspectionRes
 
   try {
     const raw = await analyzeImagesWithGemini(images);
+    if (!isUsableVisionText(raw)) {
+      console.error("[analyzeInspection] empty Gemini vision text");
+      return resultEmptyVision();
+    }
     const structured = await structureInspectionResultFromModelText(raw);
     const rec = modelPayloadToRecord(structured);
     return normalizeResult(rec);
