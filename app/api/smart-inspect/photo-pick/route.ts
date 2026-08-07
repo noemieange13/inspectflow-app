@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { requireInternalApiSecret } from "@/lib/internalApiSecret";
 
 export const maxDuration = 60;
 
@@ -19,6 +20,14 @@ function clampInt(n: unknown, min: number, max: number): number {
  * Réduit le volume stocké et aligne visuellement les constats avec les photos pertinentes.
  */
 export async function POST(req: NextRequest) {
+  const gate = requireInternalApiSecret(req);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { ok: false, error: gate.error, code: gate.code, assignments: {} },
+      { status: gate.status },
+    );
+  }
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json(
