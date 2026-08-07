@@ -8,6 +8,7 @@ export type UploadPhotoParams = {
   file: File;
   reportId: string;
   inspectionId?: string;
+  accessToken?: string;
   language?: "en" | "fr";
 };
 
@@ -62,6 +63,9 @@ export async function uploadPhotoViaApi(
   form.append("report_id", params.reportId);
   if (params.inspectionId) {
     form.append("inspection_id", params.inspectionId);
+  }
+  if (params.accessToken?.trim()) {
+    form.append("access_token", params.accessToken.trim());
   }
   if (params.language) {
     form.append("language", params.language);
