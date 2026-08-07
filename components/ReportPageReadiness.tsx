@@ -358,7 +358,12 @@ export default function ReportPageReadiness({
         readinessRingPulse ? "ring-2 ring-emerald-400/70 ring-offset-2 ring-offset-slate-50" : ""
       }`}
     >
-      {!simpleMode ? <InspectionAgentBar reportId={reportId} /> : null}
+      {!simpleMode ? (
+        <InspectionAgentBar
+          reportId={reportId}
+          viewerAccessToken={viewerAccessToken}
+        />
+      ) : null}
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
         État avant export PDF
       </p>

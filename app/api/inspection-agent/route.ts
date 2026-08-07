@@ -1,4 +1,7 @@
 import { runInspectionAgent } from "@/lib/inspectionAgent/runInspectionAgent";
+import { assertReportViewerAccess } from "@/lib/reportViewerAccess";
+import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { isTriggerSecretAuthorized } from "@/lib/triggerSecretAuth";
 import type { AgentAutonomyLevel } from "@/lib/inspectionAgent/types";
 
 export const maxDuration = 120;
@@ -9,20 +12,6 @@ function parseAutonomy(raw: unknown): AgentAutonomyLevel {
 }
 
 export async function POST(req: Request) {
-  const secret = process.env.TRIGGER_INSPECTION_SECRET;
-  if (secret) {
-    const provided = req.headers.get("x-trigger-secret");
-    const origin = req.headers.get("origin") ?? "";
-    const referer = req.headers.get("referer") ?? "";
-    const host = req.headers.get("host") ?? "";
-    const isSameOrigin =
-      (origin && host && new URL(origin).host === host) ||
-      (referer && host && new URL(referer).host === host);
-    if (provided !== secret && !isSameOrigin) {
-      return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -37,11 +26,24 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "Missing report_id" }, { status: 400 });
   }
 
+  const accessTokenRaw =
+    typeof o.access_token === "string" ? o.access_token : "";
   const autonomy = parseAutonomy(o.autonomy);
   const execute = o.execute === true;
   const useLlm = o.use_llm === true;
 
   try {
+    if (!isTriggerSecretAuthorized(req)) {
+      const supabase = await createServiceRoleClient();
+      const gate = await assertReportViewerAccess(supabase, report_id, accessTokenRaw);
+      if (!gate.ok) {
+        return Response.json(
+          { ok: false, ...gate.body },
+          { status: gate.status },
+        );
+      }
+    }
+
     const result = await runInspectionAgent({
       reportId: report_id,
       autonomy,

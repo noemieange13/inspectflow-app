@@ -2260,7 +2260,10 @@ export default function ZeroDraftReportComposer({
         fetch("/api/trigger-inspection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ report_id: reportId }),
+          body: JSON.stringify({
+            report_id: reportId,
+            access_token: viewerToken ?? "",
+          }),
         }),
         180_000,
         "trigger-inspection",
