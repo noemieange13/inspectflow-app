@@ -1,44 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceRoleClient } from "@/lib/supabaseServer";
+import { buildCreateReportPayloadFromInspectionRequest } from "@/lib/createInspectionRequest";
+import { invokeCreateReport } from "@/lib/invokeCreateReport";
 
 export async function POST(request: NextRequest) {
+  let body: unknown;
   try {
-    const { clientName, address, inspectionType, language } = await request.json();
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "Invalid JSON body" },
+      { status: 400 },
+    );
+  }
 
-    const supabase = await createServiceRoleClient();
+  const built = buildCreateReportPayloadFromInspectionRequest(body);
+  if (!built.ok) {
+    return NextResponse.json(
+      { success: false, error: built.error },
+      { status: built.status },
+    );
+  }
 
-    // Créer une nouvelle inspection avec les données de base
-    const { data, error } = await supabase
-      .from("reports")
-      .insert({
-        payload: {
-          cover_v1: {
-            client_name: clientName,
-            address: address,
-            inspection_type: inspectionType,
-            language: language,
-            created_at: new Date().toISOString(),
-          },
-        },
-        created_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
+  try {
+    const res = await invokeCreateReport(built.payload);
+    const text = await res.text();
+    let parsed: unknown = text;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      /* non-JSON */
+    }
 
-    if (error) {
-      console.error("Erreur création inspection:", error);
+    if (!res.ok) {
       return NextResponse.json(
-        { error: "Erreur lors de la création de l'inspection" },
-        { status: 500 }
+        {
+          success: false,
+          error: "create-report returned an error",
+          status: res.status,
+          body: parsed,
+        },
+        { status: 502 },
       );
     }
 
-    return NextResponse.json({ reportId: data.id });
+    return NextResponse.json(
+      typeof parsed === "object" && parsed !== null
+        ? { success: true, ...parsed }
+        : { success: true, raw: parsed },
+    );
   } catch (error) {
     console.error("Erreur API création inspection:", error);
+    const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Erreur serveur" },
-      { status: 500 }
+      { success: false, error: message },
+      { status: 500 },
     );
   }
 }
