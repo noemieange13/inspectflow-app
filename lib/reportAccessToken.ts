@@ -31,3 +31,39 @@ export function reportAccessTokensMatch(
     normalizeReportAccessTokenInput(dbStored)
   );
 }
+
+export type ReportAccessTokenValidation =
+  | { ok: true }
+  | { ok: false; reason: "invalid" | "expired" };
+
+/**
+ * Enforces the public report-viewer contract: a DB token makes the request
+ * token mandatory. Reports without a DB token keep the historical open access.
+ */
+export function validateReportAccessToken(args: {
+  accessTokenRaw: string | null | undefined;
+  dbTokenRaw: unknown;
+  tokenExpiresAt?: unknown;
+}): ReportAccessTokenValidation {
+  const dbToken =
+    typeof args.dbTokenRaw === "string" ? args.dbTokenRaw.trim() : "";
+
+  if (!dbToken) {
+    return { ok: true };
+  }
+
+  const raw = typeof args.accessTokenRaw === "string" ? args.accessTokenRaw : "";
+  if (!reportAccessTokensMatch(raw, dbToken)) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  if (
+    args.tokenExpiresAt != null &&
+    String(args.tokenExpiresAt) !== "" &&
+    new Date(String(args.tokenExpiresAt)) < new Date()
+  ) {
+    return { ok: false, reason: "expired" };
+  }
+
+  return { ok: true };
+}
