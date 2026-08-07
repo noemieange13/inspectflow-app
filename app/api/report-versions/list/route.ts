@@ -1,3 +1,7 @@
+import {
+  type ReportVersionListAccessRow,
+  validateReportVersionListViewerAccess,
+} from "@/lib/reportVersionListAccess"
 import { createClient } from "@supabase/supabase-js"
 
 function parseBasicAuth(req: Request): { user: string; pass: string } | null {
@@ -26,7 +30,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.json()
     const report_id = body?.report_id
-    const access_token = body?.access_token
+    const access_token =
+      typeof body?.access_token === "string" ? body.access_token.trim() : ""
 
     if (!report_id) {
       return Response.json(
@@ -70,6 +75,33 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
+
+    if (!isLegacy) {
+      const { data: report, error: reportErr } = await supabase
+        .from("reports")
+        .select("access_token, token_expires_at")
+        .eq("id", report_id)
+        .maybeSingle()
+
+      if (reportErr) {
+        console.error("DB REPORT ACCESS ERROR:", reportErr)
+        return Response.json(
+          { data: [], error: "DB_ERROR", meta: { max_versions: MAX_VERSIONS } },
+          { status: 500 }
+        )
+      }
+
+      const access = validateReportVersionListViewerAccess(
+        report as ReportVersionListAccessRow | null,
+        access_token,
+      )
+      if (!access.ok) {
+        return Response.json(
+          { data: [], error: access.error, meta: { max_versions: MAX_VERSIONS } },
+          { status: access.status }
+        )
+      }
+    }
 
     const { data, error } = await supabase
       .from("report_versions")
