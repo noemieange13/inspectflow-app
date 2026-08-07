@@ -154,9 +154,18 @@ export default function SmartInspectionForm() {
       if (response.ok) {
         const { reportId } = await response.json();
         router.push(`/inspection/${reportId}/mobile`);
+        return;
       }
+
+      const body = await response.json().catch(() => null) as { error?: unknown } | null;
+      alert(
+        typeof body?.error === "string"
+          ? body.error
+          : "Impossible de créer l'inspection avec ce formulaire.",
+      );
     } catch (error) {
       console.error("Erreur création inspection:", error);
+      alert("Erreur réseau pendant la création de l'inspection.");
     } finally {
       setIsProcessing(false);
     }
