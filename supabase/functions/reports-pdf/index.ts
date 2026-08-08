@@ -11,6 +11,7 @@
  * sans vérif des signed URLs, sans timeout PDF, avec HTML de repli factice, ou sans release du lock — régression fréquente.
  */
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { resolveInspectionPageSelection } from "../_shared/inspectionPagePhotoSelection.ts";
 
 const JSON_HDR = {
   "Content-Type": "application/json; charset=utf-8",
@@ -430,19 +431,34 @@ async function fetchPhotoAnalysesForReport(
       .limit(AI_PHOTO_FETCH_CAP);
 
     if (!error && Array.isArray(data) && data.length > 0) {
-      let rows = data as PhotoAnalysisRow[];
+      const rows = data as PhotoAnalysisRow[];
       if (wanted && wanted.size > 0) {
-        const filtered = rows.filter((r) => wanted.has(String(r.id)));
-        if (filtered.length > 0) rows = filtered;
+        const resolved = resolveInspectionPageSelection(rows, wanted);
+        // Partial hits (e.g. selection spans past AI_PHOTO_FETCH_CAP) and total
+        // misses must not return an incomplete/unfiltered page — fall through to
+        // the explicit `.in("id", wanted)` query below.
+        if (resolved.kind === "incomplete") {
+          logStructured("warn", "ai_photo_selection_incomplete_on_inspection_page", {
+            report_id: reportId,
+            inspection_id: inspectionId,
+            wanted_count: wanted.size,
+            matched_count: resolved.matchedCount,
+            page_count: rows.length,
+          });
+        } else {
+          return {
+            rows: resolved.rows,
+            source: wantedDb && wantedDb.size > 0
+              ? "photos.by_inspection_id+db_selection"
+              : "photos.by_inspection_id+payload_selection",
+          };
+        }
+      } else {
+        return {
+          rows,
+          source: "photos.by_inspection_id",
+        };
       }
-      return {
-        rows,
-        source: wantedDb && wantedDb.size > 0
-          ? "photos.by_inspection_id+db_selection"
-          : wantedPayload && wantedPayload.size > 0
-            ? "photos.by_inspection_id+payload_selection"
-            : "photos.by_inspection_id",
-      };
     }
     if (error) {
       logStructured("warn", "ai_photo_lookup_by_inspection_failed", {
