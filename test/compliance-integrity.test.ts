@@ -10,7 +10,9 @@ import {
   buildClauseSnapshots,
   hashClauseSnapshotSha256,
   mergeClauseSnapshots,
+  mergeCompliancePreservingClauseTrace,
   shouldFetchQuebecFrenchParallel,
+  shouldPreservePriorClauseSnapshot,
 } from "@/lib/qcLegalClauseSnapshot";
 import { buildQc2027HtmlFromPayload } from "@/lib/qc2027PdfTemplate";
 import type { QcLegalClauseRow } from "@/lib/qcLegalClauses";
@@ -39,6 +41,52 @@ describe("shouldFetchQuebecFrenchParallel", () => {
   });
   it("autre province → pas de parallèle QC", () => {
     assert.equal(shouldFetchQuebecFrenchParallel("ca_on", "en"), false);
+  });
+});
+
+describe("clause snapshot wipe guards", () => {
+  it("shouldPreservePriorClauseSnapshot when new load is empty and prior exists", () => {
+    assert.equal(
+      shouldPreservePriorClauseSnapshot(0, {
+        clause_snapshot: [{ clause_code: "A", version: "1", language: "fr", taken_at: "t" }],
+      }),
+      true,
+    );
+    assert.equal(shouldPreservePriorClauseSnapshot(0, { clause_snapshot: [] }), false);
+    assert.equal(
+      shouldPreservePriorClauseSnapshot(2, {
+        clause_snapshot: [{ clause_code: "A", version: "1", language: "fr", taken_at: "t" }],
+      }),
+      false,
+    );
+  });
+
+  it("mergeCompliancePreservingClauseTrace keeps audit keys omitted by Zero Draft", () => {
+    const takenAt = "2026-08-09T11:00:00.000Z";
+    const snap = buildClauseSnapshots(
+      [mockRow({ clause: "x", code: "AUDIT", resolved_language: "fr" })],
+      takenAt,
+    );
+    const sha = hashClauseSnapshotSha256(snap);
+    const prior = {
+      clause_snapshot: snap,
+      clause_snapshot_generated_at: takenAt,
+      clause_snapshot_pack: "QC_2027_v1",
+      clause_snapshot_sha256: sha,
+      legal_notice: "old notice",
+    };
+    const next = {
+      jurisdiction: "ca_qc",
+      legal_notice: "new notice",
+      bilingual_notice: "notice",
+      checklist: [{ item: "x" }],
+    };
+    const merged = mergeCompliancePreservingClauseTrace(prior, next);
+    assert.equal(merged.legal_notice, "new notice");
+    assert.deepEqual(merged.clause_snapshot, snap);
+    assert.equal(merged.clause_snapshot_generated_at, takenAt);
+    assert.equal(merged.clause_snapshot_pack, "QC_2027_v1");
+    assert.equal(merged.clause_snapshot_sha256, sha);
   });
 });
 

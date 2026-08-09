@@ -31,6 +31,7 @@ import {
   parseReportPhotoSelectionLocked,
   parseReportPhotoSelectionTiers,
 } from "@/lib/reportPhotoSelectionPayload";
+import { mergeCompliancePreservingClauseTrace } from "@/lib/qcLegalClauseSnapshot";
 
 function mapAiFailureToPolishOutcome(
   reason: AiFailureReason,
@@ -397,7 +398,11 @@ export async function POST(req: Request) {
           summary: generated.summary,
           sections: sectionsForPayload,
           risk_level: generated.risk_level,
-          compliance: generated.compliance,
+          // Zero Draft checklist must not wipe ensureReportPayloadHtml audit fields.
+          compliance: mergeCompliancePreservingClauseTrace(
+            currentPayload.compliance,
+            generated.compliance as Record<string, unknown>,
+          ),
           inspector_note: inspectorNote || null,
           client_section: clientSection,
           language,

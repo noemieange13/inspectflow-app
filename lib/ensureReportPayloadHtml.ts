@@ -11,6 +11,8 @@ import {
   buildClauseSnapshots,
   hashClauseSnapshotSha256,
   mergeClauseSnapshots,
+  priorClauseSnapshotLength,
+  shouldPreservePriorClauseSnapshot,
 } from "@/lib/qcLegalClauseSnapshot";
 import { loadLegalClausesForReportPayload } from "@/lib/loadLegalClausesForReportPayload";
 
@@ -101,12 +103,33 @@ export async function ensureReportPayloadHtml(
 
   const current = typeof payload.html === "string" ? payload.html : "";
 
+  const priorCompliance =
+    typeof payload.compliance === "object" &&
+    payload.compliance !== null &&
+    !Array.isArray(payload.compliance)
+      ? (payload.compliance as Record<string, unknown>)
+      : {};
+
+  // Fail closed on wipe: empty load (DB blip / swallow) must not erase a prior
+  // non-empty clause_snapshot. Omit compliance from the write so ...payload keeps it.
+  const preservePriorClauseTrace =
+    Boolean(coverForClauses) &&
+    shouldPreservePriorClauseSnapshot(clauseSnapshot.length, priorCompliance);
+
+  if (preservePriorClauseTrace) {
+    console.warn(
+      "ensureReportPayloadHtml: preserving prior clause_snapshot after empty clause load",
+      {
+        report_id: reportId,
+        prior_count: priorClauseSnapshotLength(priorCompliance),
+      },
+    );
+  }
+
   const complianceMerged =
-    coverForClauses
+    coverForClauses && !preservePriorClauseTrace
       ? {
-          ...(typeof payload.compliance === "object" && payload.compliance !== null
-            ? (payload.compliance as Record<string, unknown>)
-            : {}),
+          ...priorCompliance,
           clause_snapshot: clauseSnapshot,
           clause_snapshot_generated_at: takenAt,
           clause_snapshot_pack:
