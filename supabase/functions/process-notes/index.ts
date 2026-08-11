@@ -15,7 +15,7 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-import { updateReportPayloadWithAutoUnlock } from "../_shared/updateReportPayloadWithAutoUnlock.ts";
+import { appendReportProcessedNotes } from "../_shared/appendReportProcessedNotes.ts";
 
 const JSON_HDR = { "Content-Type": "application/json; charset=utf-8" } as const;
 
@@ -285,47 +285,31 @@ Deno.serve(async (req: Request) => {
 
     const processed = await enhanceAndClassifyNotes(rawNotes, OPENAI_KEY, language);
 
-    const { data: report, error: reportReadErr } = await supabase
-      .from("reports")
-      .select("id, payload")
-      .eq("id", reportId)
-      .maybeSingle();
-
-    if (reportReadErr) {
-      return json({ error: reportReadErr.message, code: "report_read_failed" }, 500);
-    }
-
-    if (report) {
-      const payload = (report.payload && typeof report.payload === "object")
-        ? { ...(report.payload as Record<string, unknown>) }
-        : {};
-
-      const existingNotes = Array.isArray(payload.processed_notes)
-        ? payload.processed_notes as ProcessedNote[]
-        : [];
-
-      payload.processed_notes = [...existingNotes, ...processed];
-      payload.notes_processed_at = new Date().toISOString();
-
-      const { error: upErr } = await updateReportPayloadWithAutoUnlock(
-        supabase,
-        reportId,
-        payload,
-        { source: "process-notes" },
-      );
-      if (upErr) {
-        const code = /locked|immutable/i.test(upErr.message)
-          ? "unlock_or_update_failed"
-          : "report_update_failed";
-        const status = code === "unlock_or_update_failed" ? 403 : 500;
-        return json({ error: upErr.message, code }, status);
+    // Atomic append under FOR UPDATE — avoids lost notes (and sibling payload key
+    // wipes) from concurrent stale full-payload read-modify-write.
+    const { error: upErr, notesTotal } = await appendReportProcessedNotes(
+      supabase,
+      reportId,
+      processed,
+      { source: "process-notes" },
+    );
+    if (upErr) {
+      const msg = upErr.message ?? "";
+      if (/report not found/i.test(msg)) {
+        return json({ error: msg, code: "report_not_found" }, 404);
       }
+      const code = /locked|immutable/i.test(msg)
+        ? "unlock_or_update_failed"
+        : "report_update_failed";
+      const status = code === "unlock_or_update_failed" ? 403 : 500;
+      return json({ error: msg, code }, status);
     }
 
     return json({
       success: true,
       report_id: reportId,
       notes_count: rawNotes.length,
+      notes_total: notesTotal ?? null,
       processed: processed,
     }, 200);
   } catch (err: unknown) {
