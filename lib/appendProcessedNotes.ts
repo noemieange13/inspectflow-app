@@ -36,10 +36,10 @@ export function simulateStaleFullPayloadAppendRace(
   atA: string,
   atB: string,
 ): Record<string, unknown> {
-  const writeA = mergeProcessedNotesAppend(basePayload, notesA, atA);
-  const writeB = mergeProcessedNotesAppend(basePayload, notesB, atB);
+  // Both writers start from the same base snapshot (classic RMW race).
+  mergeProcessedNotesAppend(basePayload, notesA, atA);
   // Last writer wins with a full replace (B overwrites A).
-  return writeB;
+  return mergeProcessedNotesAppend(basePayload, notesB, atB);
 }
 
 /**
