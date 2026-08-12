@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { mapProcessedNotesToEntries } from "@/lib/mapProcessedNotesToEntries";
 import {
   buildClientFacingSection,
   buildStructuredReport,
@@ -1450,17 +1451,7 @@ export default function ZeroDraftReportComposer({
     suggested_issue: string | null;
     confidence: number;
   }>) => {
-    const newEntries: ReportEntryInput[] = notes
-      .filter((n) => n.confidence > 0.3)
-      .map((n) => {
-        const zone = ZONES.some((z) => z.value === n.suggested_zone)
-          ? (n.suggested_zone as ZoneCode)
-          : "salon";
-        const issue = ISSUES.some((i) => i.value === n.suggested_issue)
-          ? (n.suggested_issue as IssueCode)
-          : "water_infiltration";
-        return { zone, issue, severity: "medium" as const, note: n.enhanced };
-      });
+    const newEntries = mapProcessedNotesToEntries(notes);
     if (newEntries.length > 0) {
       setEntries((prev) => [...prev, ...newEntries]);
     }
