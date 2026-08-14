@@ -15,6 +15,7 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+import { bytesToBase64 } from "../_shared/bytesToBase64.ts";
 import { updateReportPayloadWithAutoUnlock } from "../_shared/updateReportPayloadWithAutoUnlock.ts";
 
 const JSON_HDR = { "Content-Type": "application/json; charset=utf-8" } as const;
@@ -256,7 +257,7 @@ Deno.serve(async (req: Request) => {
 
       if (!dlErr && photoData) {
         const buffer = await photoData.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const base64 = bytesToBase64(new Uint8Array(buffer));
         const ocrText = await ocrHandwrittenNote(base64, OPENAI_KEY, language);
         if (ocrText) {
           rawNotes.push({ text: ocrText, source: "ocr" });
@@ -271,7 +272,7 @@ Deno.serve(async (req: Request) => {
 
       if (!audioErr && audioData) {
         const buffer = await audioData.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const base64 = bytesToBase64(new Uint8Array(buffer));
         const transcript = await transcribeAudio(base64, OPENAI_KEY);
         if (transcript) {
           rawNotes.push({ text: transcript, source: "voice" });
