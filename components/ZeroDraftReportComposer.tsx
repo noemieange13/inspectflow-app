@@ -63,6 +63,10 @@ import {
   type UserAgentProfile,
 } from "@/lib/userAgentProfile";
 import { useSupabaseAccessToken } from "@/lib/useSupabaseAccessToken";
+import {
+  createCoalescingLatestWriter,
+  type CoalescingLatestWriter,
+} from "@/lib/coalesceLatestWrite";
 
 /** Limite « soft » UI — ne pas descendre sous 250 (usage réel 150–300+ photos). */
 const MAX_BULK_SOFT = 250;
@@ -1983,6 +1987,103 @@ export default function ZeroDraftReportComposer({
     ],
   );
 
+  const buildReportContentBodyRef = useRef(buildReportContentBody);
+  buildReportContentBodyRef.current = buildReportContentBody;
+  const languageRef = useRef(language);
+  languageRef.current = language;
+  const reportIdRef = useRef(reportId);
+  reportIdRef.current = reportId;
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const autosaveTriggerRef = useRef<"qc_photo_apply" | "idle_debounce">("qc_photo_apply");
+  const performAutosaveRef = useRef<() => Promise<void>>(async () => {});
+  const autosaveWriterRef = useRef<CoalescingLatestWriter | null>(null);
+  if (autosaveWriterRef.current == null) {
+    autosaveWriterRef.current = createCoalescingLatestWriter(() => performAutosaveRef.current());
+  }
+
+  performAutosaveRef.current = async () => {
+    if (savingDraftRef.current) return;
+    const bodySnapshot = buildReportContentBodyRef.current;
+    if (!bodySnapshot.access_token?.trim()) return;
+    if (!Array.isArray(bodySnapshot.entries) || bodySnapshot.entries.length === 0) return;
+
+    const trigger = autosaveTriggerRef.current;
+    const lang = languageRef.current;
+    const rid = reportIdRef.current;
+    setAutoSavingAfterQc(true);
+    try {
+      const saveRes = await withTimeout(
+        fetch("/api/report-content", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...bodySnapshot, polish_client: false }),
+        }),
+        180_000,
+        "report-content",
+      );
+      const saveBody = await readResponseJson<{
+        success?: boolean;
+        error?: string;
+        code?: string;
+      }>(saveRes);
+      if (!saveRes.ok || !saveBody?.success) {
+        if (trigger === "qc_photo_apply") {
+          if (saveBody?.code === "report_locked") {
+            setQcAutoSaveHint(
+              lang === "en"
+                ? "Auto-save skipped — report is locked. Use Save draft or unlock in admin."
+                : "Sauvegarde auto impossible — rapport verrouillé. Enregistrez à la main ou déverrouillez en admin.",
+            );
+          } else {
+            setQcAutoSaveHint(
+              lang === "en"
+                ? "Auto-save failed — use “Save draft to server (no PDF)” below."
+                : "Échec de la sauvegarde auto — utilisez « Enregistrer le brouillon (serveur, sans PDF) » ci-dessous.",
+            );
+          }
+        }
+        return;
+      }
+      emitProductEvent("report_draft_saved", { report_id: rid, trigger });
+      try {
+        localStorage.removeItem(`zero-draft:${rid}`);
+      } catch {
+        /* ignore */
+      }
+      draftBaselineRef.current = {
+        title: bodySnapshot.title.trim(),
+        inspectorNote: bodySnapshot.inspector_note,
+        clientFacingSnapshot: bodySnapshot.client_section,
+        entriesJson: serializeEntriesForBaseline(bodySnapshot.entries),
+      };
+      draftBaselineCapturedRef.current = true;
+      routerRef.current.refresh();
+      const okHint =
+        trigger === "idle_debounce"
+          ? lang === "en"
+            ? "Draft synced to the server while you edit."
+            : "Brouillon synchronisé sur le serveur pendant vos modifications."
+          : lang === "en"
+            ? "Also saved to the server (you can keep working)."
+            : "Également enregistré sur le serveur — vous pouvez continuer sereinement.";
+      setQcAutoSaveHint(okHint);
+      window.setTimeout(() => {
+        setQcAutoSaveHint((cur) => (cur === okHint ? null : cur));
+      }, trigger === "idle_debounce" ? 8_000 : 10_000);
+    } catch {
+      if (trigger === "qc_photo_apply") {
+        setQcAutoSaveHint(
+          lang === "en"
+            ? "Auto-save failed — check the connection and use Save draft."
+            : "Sauvegarde auto échouée — vérifiez la connexion puis « Enregistrer le brouillon ».",
+        );
+      }
+    } finally {
+      setAutoSavingAfterQc(false);
+    }
+  };
+
   const postReportContent = useCallback(async () => {
     const reportContentMs = polishClient ? 240_000 : 180_000;
     const saveRes = await withTimeout(
@@ -2022,10 +2123,12 @@ export default function ZeroDraftReportComposer({
       return;
     }
     if (entries.length === 0) return;
+    savingDraftRef.current = true;
     setSavingDraft(true);
     setError(null);
     setContentSaveErrorCode(null);
     try {
+      await autosaveWriterRef.current?.whenIdle();
       const saveBody = await postReportContent();
       let done =
         language === "en"
@@ -2062,6 +2165,7 @@ export default function ZeroDraftReportComposer({
       setError(e instanceof Error ? e.message : String(e));
       setStatus(null);
     } finally {
+      savingDraftRef.current = false;
       setSavingDraft(false);
     }
   }, [
@@ -2082,95 +2186,14 @@ export default function ZeroDraftReportComposer({
   useEffect(() => {
     if (qcAutoSaveNonce === 0) return;
     if (!viewerToken?.trim()) return;
-    if (entries.length === 0) return;
-    let cancelled = false;
-    setAutoSavingAfterQc(true);
+    // Only nonce should start this save. Listing live draft fields here used to
+    // fire a new POST on every keystroke after the first QC apply, and the
+    // cancelled flag did not abort the in-flight request — a slower first save
+    // could overwrite later findings.
+    autosaveTriggerRef.current = "qc_photo_apply";
     setQcAutoSaveHint(null);
-    void (async () => {
-      try {
-        const body = { ...buildReportContentBody, polish_client: false };
-        const saveRes = await withTimeout(
-          fetch("/api/report-content", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          }),
-          180_000,
-          "report-content",
-        );
-        const saveBody = await readResponseJson<{
-          success?: boolean;
-          error?: string;
-          code?: string;
-        }>(saveRes);
-        if (cancelled) return;
-        if (!saveRes.ok || !saveBody?.success) {
-          if (saveBody?.code === "report_locked") {
-            setQcAutoSaveHint(
-              language === "en"
-                ? "Auto-save skipped — report is locked. Use Save draft or unlock in admin."
-                : "Sauvegarde auto impossible — rapport verrouillé. Enregistrez à la main ou déverrouillez en admin.",
-            );
-          } else {
-            setQcAutoSaveHint(
-              language === "en"
-                ? "Auto-save failed — use “Save draft to server (no PDF)” below."
-                : "Échec de la sauvegarde auto — utilisez « Enregistrer le brouillon (serveur, sans PDF) » ci-dessous.",
-            );
-          }
-          return;
-        }
-        emitProductEvent("report_draft_saved", { report_id: reportId, trigger: "qc_photo_apply" });
-        try {
-          localStorage.removeItem(storageKey);
-        } catch {
-          /* ignore */
-        }
-        draftBaselineRef.current = {
-          title: title.trim(),
-          inspectorNote,
-          clientFacingSnapshot: clientSectionValue,
-          entriesJson: serializeEntriesForBaseline(entries),
-        };
-        draftBaselineCapturedRef.current = true;
-        router.refresh();
-        const okHint =
-          language === "en"
-            ? "Also saved to the server (you can keep working)."
-            : "Également enregistré sur le serveur — vous pouvez continuer sereinement.";
-        setQcAutoSaveHint(okHint);
-        window.setTimeout(() => {
-          setQcAutoSaveHint((cur) => (cur === okHint ? null : cur));
-        }, 10_000);
-      } catch {
-        if (!cancelled) {
-          setQcAutoSaveHint(
-            language === "en"
-              ? "Auto-save failed — check the connection and use Save draft."
-              : "Sauvegarde auto échouée — vérifiez la connexion puis « Enregistrer le brouillon ».",
-          );
-        }
-      } finally {
-        if (!cancelled) setAutoSavingAfterQc(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    qcAutoSaveNonce,
-    viewerToken,
-    entries.length,
-    entries,
-    buildReportContentBody,
-    language,
-    router,
-    storageKey,
-    title,
-    inspectorNote,
-    clientSectionValue,
-    reportId,
-  ]);
+    void autosaveWriterRef.current?.enqueue();
+  }, [qcAutoSaveNonce, viewerToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2189,49 +2212,11 @@ export default function ZeroDraftReportComposer({
     }
     manualSaveDebounceTimerRef.current = window.setTimeout(() => {
       manualSaveDebounceTimerRef.current = null;
-      if (savingDraftRef.current || autoSavingAfterQcRef.current) return;
+      if (savingDraftRef.current) return;
       const rt = viewerToken?.trim();
       if (!rt) return;
-      void (async () => {
-        try {
-          const body = { ...buildReportContentBody, polish_client: false };
-          const saveRes = await withTimeout(
-            fetch("/api/report-content", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-            }),
-            180_000,
-            "report-content",
-          );
-          const saveBody = await readResponseJson<{ success?: boolean; code?: string }>(saveRes);
-          if (!saveRes.ok || !saveBody?.success) return;
-          emitProductEvent("report_draft_saved", { report_id: reportId, trigger: "idle_debounce" });
-          try {
-            localStorage.removeItem(storageKey);
-          } catch {
-            /* ignore */
-          }
-          draftBaselineRef.current = {
-            title: title.trim(),
-            inspectorNote,
-            clientFacingSnapshot: clientSectionValue,
-            entriesJson: serializeEntriesForBaseline(entries),
-          };
-          draftBaselineCapturedRef.current = true;
-          router.refresh();
-          const idleHint =
-            language === "en"
-              ? "Draft synced to the server while you edit."
-              : "Brouillon synchronisé sur le serveur pendant vos modifications.";
-          setQcAutoSaveHint(idleHint);
-          window.setTimeout(() => {
-            setQcAutoSaveHint((cur) => (cur === idleHint ? null : cur));
-          }, 8000);
-        } catch {
-          /* ignore */
-        }
-      })();
+      autosaveTriggerRef.current = "idle_debounce";
+      void autosaveWriterRef.current?.enqueue();
     }, 5200);
     return () => {
       if (manualSaveDebounceTimerRef.current != null) {
@@ -2246,10 +2231,7 @@ export default function ZeroDraftReportComposer({
     title,
     inspectorNote,
     clientSectionValue,
-    buildReportContentBody,
     language,
-    router,
-    storageKey,
     reportId,
   ]);
 
@@ -2393,7 +2375,16 @@ export default function ZeroDraftReportComposer({
       setStatus(
         "Etape 1/2: generation du contenu structure… (1er appel : jusqu’a ~3 min si Next compile la route ou disque lent)",
       );
-      const saveBody = await postReportContent();
+      savingDraftRef.current = true;
+      setSavingDraft(true);
+      let saveBody: Awaited<ReturnType<typeof postReportContent>>;
+      try {
+        await autosaveWriterRef.current?.whenIdle();
+        saveBody = await postReportContent();
+      } finally {
+        savingDraftRef.current = false;
+        setSavingDraft(false);
+      }
 
       setStatus("Etape 2/2: generation du PDF...");
       const nextPdfLink = await requestPdfGeneration();
